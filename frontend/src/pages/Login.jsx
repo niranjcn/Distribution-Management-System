@@ -1,16 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth, DEMO_USERS } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 import { 
-  Box, 
   Eye, 
   EyeOff, 
   LogIn, 
   AlertCircle,
-  Truck,
-  Users,
-  Shield,
-  Package
+  Truck
 } from 'lucide-react';
 
 const Login = () => {
@@ -35,40 +31,6 @@ const Login = () => {
       setError(result.error);
     }
     setLoading(false);
-  };
-
-  const handleDemoLogin = async (user) => {
-    setEmail(user.email);
-    setPassword(user.password);
-    setLoading(true);
-    
-    const result = await login(user.email, user.password);
-    if (result.success) {
-      navigate('/');
-    }
-    setLoading(false);
-  };
-
-  const getRoleIcon = (role) => {
-    switch (role) {
-      case 'admin': return <Shield className="w-4 h-4" />;
-      case 'manager': return <Users className="w-4 h-4" />;
-      case 'distributor': return <Truck className="w-4 h-4" />;
-      case 'sub-distributor': return <Package className="w-4 h-4" />;
-      case 'operator': return <Box className="w-4 h-4" />;
-      default: return null;
-    }
-  };
-
-  const getRoleColor = (role) => {
-    switch (role) {
-      case 'admin': return 'bg-purple-100 text-purple-700 border-purple-200';
-      case 'manager': return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'distributor': return 'bg-green-100 text-green-700 border-green-200';
-      case 'sub-distributor': return 'bg-orange-100 text-orange-700 border-orange-200';
-      case 'operator': return 'bg-gray-100 text-gray-700 border-gray-200';
-      default: return 'bg-gray-100 text-gray-700 border-gray-200';
-    }
   };
 
   return (
@@ -204,27 +166,6 @@ const Login = () => {
               )}
             </button>
           </form>
-
-          {/* Demo Accounts */}
-          <div className="border-t border-gray-200 pt-6">
-            <p className="text-sm text-gray-500 text-center mb-4">Demo Accounts (Click to Login)</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {DEMO_USERS.map((user) => (
-                <button
-                  key={user.id}
-                  onClick={() => handleDemoLogin(user)}
-                  disabled={loading}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-all hover:shadow-md disabled:opacity-50 ${getRoleColor(user.role)}`}
-                >
-                  {getRoleIcon(user.role)}
-                  <span className="capitalize">{user.role.replace('-', ' ')}</span>
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-gray-400 text-center mt-3">
-              Password for all demo accounts follows the pattern: role + 123
-            </p>
-          </div>
         </div>
       </div>
     </div>
