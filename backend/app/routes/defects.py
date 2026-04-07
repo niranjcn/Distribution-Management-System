@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -19,6 +20,8 @@ from app.services import defect_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager, require_management, require_any_role
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 PAYMENT_BILL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads" / "defect_payments"
 PAYMENT_BILL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -54,9 +57,10 @@ async def get_replacement_defects(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve replacement mappings: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -83,9 +87,10 @@ async def get_pending_replacement_defects(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve pending replacement defects: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -110,9 +115,10 @@ async def get_pending_due_users(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve pending dues users: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -138,9 +144,10 @@ async def get_pending_dues_for_user(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve pending dues details: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -168,9 +175,10 @@ async def get_my_pending_dues(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve pending payments: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -230,9 +238,10 @@ async def get_defects(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve defect reports: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -264,9 +273,10 @@ async def forward_defect_to_management(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to forward defect '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -293,9 +303,10 @@ async def get_defect(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve defect report '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -326,9 +337,10 @@ async def create_defect(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create defect report: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -363,9 +375,10 @@ async def update_defect(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update defect report '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -393,9 +406,10 @@ async def delete_defect(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete defect report '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -442,9 +456,10 @@ async def update_defect_status(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update defect status '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -494,9 +509,10 @@ async def upload_defect_payment_bill(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload payment bill: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -528,9 +544,10 @@ async def confirm_defect_payment(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to confirm defect payment '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -569,9 +586,10 @@ async def resolve_defect(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to resolve defect '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -619,9 +637,10 @@ async def replace_defect_device(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to replace device for defect '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -653,9 +672,10 @@ async def confirm_replacement_receipt(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to confirm replacement receipt for defect '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -693,9 +713,10 @@ async def enquire_replacement_status(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to send replacement enquiry for defect '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -725,9 +746,10 @@ async def resend_replacement_confirmation(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to resend replacement confirmation for defect '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -759,8 +781,12 @@ async def mark_replacement_waiting(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to mark replacement waiting for defect '{defect_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
 

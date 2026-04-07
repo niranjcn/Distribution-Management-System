@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from app.models.auth import LoginRequest, RefreshTokenRequest, Token
@@ -11,6 +12,8 @@ from app.core.activity_logger import log_api_activity
 from app.config import settings
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/login", response_model=dict)
@@ -113,9 +116,10 @@ async def login(request: Request, response: Response, credentials: LoginRequest)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -148,9 +152,10 @@ async def logout(
             "message": "Logout successful"
         }
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Logout failed: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -183,9 +188,10 @@ async def refresh_token(request: Request, refresh_req: RefreshTokenRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Token refresh failed: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -204,9 +210,10 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve user info: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -248,9 +255,10 @@ async def change_password(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to change password: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -328,7 +336,11 @@ async def complete_forced_update(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to complete forced update: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
+
+
+

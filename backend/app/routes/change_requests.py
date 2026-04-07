@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
 from typing import Optional
 from pydantic import BaseModel
@@ -11,6 +12,8 @@ from datetime import datetime, timezone
 import uuid
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _looks_like_bcrypt_hash(value: Optional[str]) -> bool:
@@ -196,9 +199,10 @@ async def submit_change_request(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to submit change request: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -252,9 +256,10 @@ async def get_change_requests(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve change requests: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -353,13 +358,13 @@ async def review_change_request(
                             update_fields.append("password_hash = ?")
                             update_params.append(get_password_hash(password_to_set))
                         elif stored_password_value:
+                            if not _looks_like_bcrypt_hash(stored_password_value):
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail="Insecure stored password material detected; recreate this request",
+                                )
                             update_fields.append("password_hash = ?")
-                            if _looks_like_bcrypt_hash(stored_password_value):
-                                update_params.append(stored_password_value)
-                            else:
-                                if len(stored_password_value) < 6:
-                                    raise HTTPException(status_code=400, detail="Stored password is invalid")
-                                update_params.append(get_password_hash(stored_password_value))
+                            update_params.append(stored_password_value)
 
                     if update_fields:
                         update_fields.append("updated_at = ?")
@@ -522,8 +527,12 @@ async def review_change_request(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to review change request '{request_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
 

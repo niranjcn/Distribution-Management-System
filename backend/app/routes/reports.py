@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -7,6 +8,8 @@ from app.services import report_service
 from app.middleware.auth_middleware import require_admin_or_manager_or_md
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 BACKUP_DOCUMENTS_DIR = Path(__file__).resolve().parents[2] / "uploads" / "backup_documents"
 BACKUP_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,9 +43,10 @@ async def get_inventory_report(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate inventory report: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -62,9 +66,10 @@ async def get_distribution_summary(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate distribution summary: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -84,9 +89,10 @@ async def get_defect_summary(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate defect summary: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -106,9 +112,10 @@ async def get_return_summary(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate return summary: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -128,9 +135,10 @@ async def get_user_activity_report(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate user activity report: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -150,9 +158,10 @@ async def get_device_utilization_report(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate device utilization report: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -178,9 +187,10 @@ async def export_report(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to export report: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -207,9 +217,10 @@ async def download_device_backup(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download device backup: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -236,9 +247,10 @@ async def download_returns_defects_backup(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download returns/defects backup: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -280,9 +292,10 @@ async def list_backup_documents(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch backup documents: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -328,9 +341,10 @@ async def upload_backup_document(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload backup document: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -367,7 +381,11 @@ async def download_backup_document(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download backup document: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+

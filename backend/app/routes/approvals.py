@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status as http_status, Depends, Query
 from typing import Optional
 from app.models.approval import ApprovalAction, RoleRoutingUpdateRequest
@@ -5,6 +6,8 @@ from app.services import approval_service
 from app.middleware.auth_middleware import get_current_user, require_admin, require_management
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -36,9 +39,10 @@ async def get_approvals(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve approvals: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -55,9 +59,10 @@ async def get_approval_role_routing_config(
             "data": config,
         }
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve approval routing config: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -79,9 +84,10 @@ async def update_approval_role_routing_config(
             "data": updated,
         }
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update approval routing config: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -108,9 +114,10 @@ async def get_approval(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve approval '{approval_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -154,9 +161,10 @@ async def approve_request(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to approve request '{approval_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -199,9 +207,13 @@ async def reject_request(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to reject request '{approval_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
 
 

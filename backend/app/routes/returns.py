@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from typing import Optional
 from app.models.return_device import ReturnCreate, ReturnStatusUpdate
@@ -5,6 +6,8 @@ from app.services import return_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_not_md_director(current_user: dict) -> None:
@@ -49,9 +52,10 @@ async def get_returns(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve return requests: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -78,9 +82,10 @@ async def get_return(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve return request '{return_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -111,9 +116,10 @@ async def create_return(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create return request: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -160,9 +166,10 @@ async def update_return_status(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update return status '{return_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -198,8 +205,12 @@ async def cancel_return(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to cancel return request '{return_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
 

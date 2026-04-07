@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File
 from typing import Optional, Dict, Any
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceType
@@ -6,6 +7,8 @@ from app.middleware.auth_middleware import get_current_user, require_admin_or_ma
 from app.utils.roles import normalize_role
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
@@ -76,9 +79,10 @@ async def get_devices(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve devices: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -88,7 +92,7 @@ async def get_devices_for_replacement(
     current_user: dict = Depends(get_current_user)
 ):
     """Get all devices available as replacements (status=available or returned).
-    Management only — returns full stock regardless of holder. Used in the Replace Device modal."""
+    Management only - returns full stock regardless of holder. Used in the Replace Device modal."""
     if current_user["role"] not in ["super_admin", "manager", "pdic_staff"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -106,9 +110,10 @@ async def get_devices_for_replacement(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve replacement devices: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -135,9 +140,10 @@ async def get_available_devices(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve available devices: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -183,9 +189,10 @@ async def get_my_device_overview(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get device overview: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -211,9 +218,10 @@ async def repair_device_holder(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to repair device holder: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -259,7 +267,7 @@ async def request_device_edit(
         for admin_id in admin_ids:
             await notification_service.create_notification(
                 user_id=admin_id,
-                title="⚙️ Device Edit Approval Request",
+                title="Device Edit Approval Request",
                 message=message,
                 notification_type="device_edit_request",
                 reference_id=device_id,
@@ -273,9 +281,10 @@ async def request_device_edit(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to submit edit request: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -302,9 +311,10 @@ async def track_device_by_serial(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to track device '{serial_number}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -331,9 +341,10 @@ async def get_device(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve device '{device_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -362,9 +373,10 @@ async def get_device_history(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve history for device '{device_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -574,9 +586,10 @@ async def bulk_upload_devices(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process file: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -613,9 +626,10 @@ async def create_device(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to register device: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -648,9 +662,10 @@ async def update_device(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update device '{device_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -681,9 +696,10 @@ async def delete_device(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete device '{device_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -744,8 +760,12 @@ async def update_device_status(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update status for device '{device_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
 
