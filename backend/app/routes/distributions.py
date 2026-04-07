@@ -1,3 +1,4 @@
+import logging
 import csv
 import io
 
@@ -10,6 +11,8 @@ from app.services import distribution_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager, require_management
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
@@ -197,9 +200,10 @@ async def bulk_upload_distribution(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process file: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -216,10 +220,10 @@ async def sync_distribution_devices(
             "data": result
         }
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+            detail="An internal error occurred. Please try again later.")
 
 
 @router.get("")
@@ -254,9 +258,10 @@ async def get_distributions(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve distributions: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -276,9 +281,10 @@ async def get_pending_distributions(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve pending distributions: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -309,9 +315,10 @@ async def download_distribution_manifest(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download manifest for distribution '{distribution_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -348,9 +355,10 @@ async def download_distribution_mac_nuid(
             detail=message
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download MAC/NUID export for distribution '{distribution_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -377,9 +385,10 @@ async def get_distribution(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve distribution '{distribution_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -417,9 +426,10 @@ async def create_distribution(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create distribution: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -430,8 +440,8 @@ async def confirm_distribution_receipt(
     current_user: dict = Depends(get_current_user)
 ):
     """Recipient confirms or disputes receipt of a distribution.
-    - received=true  → Distribution becomes APPROVED; receiver can now redistribute devices
-    - received=false → Distribution becomes DISPUTED; admin/manager + sender are notified
+    - received=true  -> Distribution becomes APPROVED; receiver can now redistribute devices
+    - received=false -> Distribution becomes DISPUTED; admin/manager + sender are notified
     """
     _ensure_not_md_director(current_user)
 
@@ -456,9 +466,10 @@ async def confirm_distribution_receipt(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to confirm receipt: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -490,9 +501,10 @@ async def confirm_disputed_distribution_return(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to confirm disputed return: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -537,9 +549,10 @@ async def update_distribution_status(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update distribution status '{distribution_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -575,8 +588,13 @@ async def cancel_distribution(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to cancel distribution '{distribution_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
+
 

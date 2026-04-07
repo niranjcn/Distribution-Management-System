@@ -1,5 +1,4 @@
 // API Configuration
-import { getAuthToken } from '../utils/authStorage';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 const isDev = import.meta.env.DEV;
@@ -16,24 +15,25 @@ const getCookieValue = (name) => {
 
 const isUnsafeMethod = (method) => !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method.toUpperCase());
 
+const buildCsrfHeader = (method) => {
+  const csrfToken = getCookieValue('csrftoken');
+  return csrfToken && isUnsafeMethod(method) ? { 'X-CSRFToken': csrfToken } : {};
+};
+
 // API request helper
 const apiRequest = async (endpoint, options = {}) => {
   const url = `${API_BASE_URL}${endpoint}`;
-  const token = getAuthToken();
   const method = (options.method || 'GET').toUpperCase();
-  const csrfToken = getCookieValue('csrftoken');
 
   log('[API] Making request:', {
     method: options.method || 'GET',
     endpoint,
-    hasToken: !!token,
     url
   });
 
   const headers = {
     'Content-Type': 'application/json',
-    ...(token && { Authorization: `Bearer ${token}` }),
-    ...(csrfToken && isUnsafeMethod(method) && { 'X-CSRFToken': csrfToken }),
+    ...buildCsrfHeader(method),
     ...options.headers,
   };
 
@@ -321,13 +321,15 @@ export const devicesAPI = {
   },
 
   bulkUpload: async (file) => {
-    const token = getAuthToken();
     const formData = new FormData();
     formData.append('file', file);
     const url = `${API_BASE_URL}/devices/bulk-upload`;
     const response = await fetch(url, {
       method: 'POST',
-      headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+      credentials: 'include',
+      headers: {
+        ...buildCsrfHeader('POST'),
+      },
       body: formData,
     });
     const data = await response.json();
@@ -381,7 +383,6 @@ export const distributionsAPI = {
       throw new Error('No file selected for upload');
     }
 
-    const token = getAuthToken();
     const formData = new FormData();
 
     // Create an in-memory snapshot to avoid browser disk-change upload errors.
@@ -396,8 +397,9 @@ export const distributionsAPI = {
 
     const response = await fetch(`${API_BASE_URL}/distributions/bulk-upload`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
+        ...buildCsrfHeader('POST'),
       },
       body: formData,
     });
@@ -412,13 +414,10 @@ export const distributionsAPI = {
   },
 
   downloadManifest: async (distributionId) => {
-    const token = getAuthToken();
     const url = `${API_BASE_URL}/distributions/${distributionId}/manifest`;
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -440,13 +439,10 @@ export const distributionsAPI = {
   },
 
   downloadMacNuidExport: async (distributionId, format = 'csv') => {
-    const token = getAuthToken();
     const url = `${API_BASE_URL}/distributions/${distributionId}/export-mac-nuid?format=${encodeURIComponent(format)}`;
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -538,7 +534,6 @@ export const defectsAPI = {
   },
 
   uploadPaymentBill: async (defectId, file) => {
-    const token = getAuthToken();
     const formData = new FormData();
     formData.append('file', file);
     const url = `${API_BASE_URL}/defects/${defectId}/payment-bill`;
@@ -546,7 +541,7 @@ export const defectsAPI = {
       method: 'POST',
       credentials: 'include',
       headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
+        ...buildCsrfHeader('POST'),
       },
       body: formData,
     });
@@ -590,15 +585,11 @@ export const defectsAPI = {
   },
 
   fetchPaymentBillBlob: async (billPath) => {
-    const token = getAuthToken();
     const apiOrigin = API_BASE_URL.replace(/\/api\/?$/, '');
     const url = /^https?:\/\//i.test(billPath) ? billPath : `${apiOrigin}${billPath}`;
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
     });
     if (!response.ok) {
       throw new Error('Failed to fetch bill file');
@@ -910,13 +901,13 @@ export const externalInventoryAPI = {
   },
 
   bulkUploadItems: async (file) => {
-    const token = getAuthToken();
     const formData = new FormData();
     formData.append('file', file);
 
     const response = await fetch(`${API_BASE_URL}/external-inventory/items/bulk-upload`, {
       method: 'POST',
-      headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+      credentials: 'include',
+      headers: { ...buildCsrfHeader('POST') },
       body: formData,
     });
 
@@ -936,13 +927,13 @@ export const externalInventoryAPI = {
   },
 
   uploadItemImage: async (inventoryId, file) => {
-    const token = getAuthToken();
     const formData = new FormData();
     formData.append('image', file);
 
     const response = await fetch(`${API_BASE_URL}/external-inventory/items/${inventoryId}/image`, {
       method: 'POST',
-      headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+      credentials: 'include',
+      headers: { ...buildCsrfHeader('POST') },
       body: formData,
     });
 
@@ -1029,14 +1020,10 @@ export const reportsAPI = {
   },
 
   downloadDeviceBackup: async (format = 'xlsx') => {
-    const token = getAuthToken();
     const url = `${API_BASE_URL}/reports/device-backup?format=${encodeURIComponent(format)}`;
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
     });
 
     if (!response.ok) {
@@ -1058,14 +1045,10 @@ export const reportsAPI = {
   },
 
   downloadReturnsDefectsBackup: async (format = 'xlsx') => {
-    const token = getAuthToken();
     const url = `${API_BASE_URL}/reports/returns-defects-backup?format=${encodeURIComponent(format)}`;
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
     });
 
     if (!response.ok) {
@@ -1096,8 +1079,6 @@ export const reportsAPI = {
       throw new Error('Please select a file to upload');
     }
 
-    const token = getAuthToken();
-    const csrfToken = getCookieValue('csrftoken');
     const formData = new FormData();
     formData.append('file', file);
 
@@ -1105,8 +1086,7 @@ export const reportsAPI = {
       method: 'POST',
       credentials: 'include',
       headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-        ...(csrfToken && { 'X-CSRFToken': csrfToken }),
+        ...buildCsrfHeader('POST'),
       },
       body: formData,
     });
@@ -1127,14 +1107,10 @@ export const reportsAPI = {
   },
 
   downloadBackupDocument: async (storedName) => {
-    const token = getAuthToken();
     const url = `${API_BASE_URL}/reports/backup-documents/${encodeURIComponent(storedName)}`;
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
     });
 
     if (!response.ok) {

@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
 from typing import Optional
 
@@ -21,6 +22,8 @@ from app.utils.roles import (
 )
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 ALLOWED_CREATE_BY_ROLE = {
@@ -204,7 +207,8 @@ async def get_users(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve users: {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.get("/{user_id}")
@@ -221,7 +225,8 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve user '{user_id}': {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -301,7 +306,8 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create user: {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.put("/{user_id}")
@@ -331,7 +337,8 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update user '{user_id}': {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.delete("/{user_id}")
@@ -372,7 +379,8 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete user '{user_id}': {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.patch("/{user_id}/status")
@@ -414,7 +422,8 @@ async def update_user_status(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update status for user '{user_id}': {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.patch("/{user_id}/credentials")
@@ -483,7 +492,8 @@ async def admin_update_credentials(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update credentials for user '{user_id}': {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.get("/role/{role}")
@@ -504,4 +514,9 @@ async def get_users_by_role(role: str, current_user: dict = Depends(get_current_
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve users by role '{role}': {str(e)}")
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
+
+
+
+

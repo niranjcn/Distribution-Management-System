@@ -1,6 +1,6 @@
+import logging
 import csv
 import io
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -40,9 +40,10 @@ async def get_external_inventory_dashboard(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve external inventory dashboard: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -74,9 +75,10 @@ async def get_external_inventory_items(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve external inventory items: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -95,9 +97,10 @@ async def create_external_inventory_item(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create external inventory item: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -195,9 +198,10 @@ async def bulk_upload_external_inventory_items(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process import file: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -227,9 +231,10 @@ async def update_external_inventory_item(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update external inventory item '{inventory_id}': {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -278,9 +283,10 @@ async def upload_external_inventory_item_image(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload item image: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -302,9 +308,10 @@ async def create_external_inventory_adjustment(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to apply stock adjustment: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -343,9 +350,10 @@ async def get_external_inventory_purchase_orders(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve purchase orders: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -367,7 +375,7 @@ async def create_external_inventory_purchase_order(
         logger.exception("Failed to create external inventory purchase order", exc_info=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create purchase order: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -391,9 +399,10 @@ async def receive_external_inventory_purchase_order(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to receive purchase order '{po_id}': {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -419,9 +428,10 @@ async def get_external_inventory_receipts(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve receipts: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -451,8 +461,13 @@ async def get_external_inventory_movements(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve stock movements: {str(e)}",
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
+
 

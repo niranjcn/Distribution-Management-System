@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from typing import Optional
 from app.models.operator import OperatorCreate, OperatorUpdate
@@ -5,6 +6,8 @@ from app.services import operator_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -39,9 +42,10 @@ async def get_operators(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve operators: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -68,9 +72,10 @@ async def get_operator(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve operator '{operator_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -99,9 +104,10 @@ async def get_operator_devices(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve devices for operator '{operator_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -137,9 +143,10 @@ async def create_operator(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create operator: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -181,9 +188,10 @@ async def update_operator(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update operator '{operator_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -223,8 +231,12 @@ async def delete_operator(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete operator '{operator_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
 

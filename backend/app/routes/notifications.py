@@ -1,9 +1,12 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from typing import Optional
 from app.services import notification_service
 from app.middleware.auth_middleware import get_current_user
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -31,9 +34,10 @@ async def get_notifications(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve notifications: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -53,9 +57,10 @@ async def get_unread_count(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve unread notification count: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -79,9 +84,10 @@ async def get_latest_notifications(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve latest notifications: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -110,9 +116,10 @@ async def mark_as_read(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to mark notification as read: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -132,9 +139,10 @@ async def mark_all_as_read(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to mark all notifications as read: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -159,3 +167,6 @@ async def delete_notification(
         "success": True,
         "message": "Notification deleted successfully"
     }
+
+
+

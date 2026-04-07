@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from typing import Optional
 from app.models.batch import BatchCreate, BatchUpdate
@@ -5,6 +6,8 @@ from app.services import batch_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -31,9 +34,10 @@ async def get_batches(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve batches: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -60,9 +64,10 @@ async def get_batch(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve batch '{batch_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -96,9 +101,10 @@ async def get_batch_devices(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve devices for batch '{batch_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -128,9 +134,10 @@ async def create_batch(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create batch: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -163,9 +170,10 @@ async def update_batch(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update batch '{batch_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -196,7 +204,11 @@ async def delete_batch(
             detail=str(e)
         )
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete batch '{batch_id}': {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+

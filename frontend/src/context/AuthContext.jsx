@@ -75,17 +75,13 @@ export const AuthProvider = ({ children }) => {
       const storedUser = getStoredUser();
       if (storedUser) {
         try {
-          const userData = storedUser;
-          const storedToken = userData.token;
-          console.log('[AuthContext] Found stored user, validating token');
+          console.log('[AuthContext] Found stored user, validating session');
           
-          // Validate token with backend
+          // Validate cookie-backed auth session with backend
           const response = await authAPI.getCurrentUser();
           if (response.success) {
             const validatedUser = response.data;
             validatedUser.role = normalizeRole(validatedUser.role);
-            // Preserve the token from the existing stored session
-            validatedUser.token = storedToken;
             // Add avatar initials
             validatedUser.avatar = validatedUser.name.split(' ').map(n => n[0]).join('').toUpperCase();
             setUser(validatedUser);
@@ -127,14 +123,13 @@ export const AuthProvider = ({ children }) => {
       const response = await authAPI.login(email, password);
       
       if (response.success) {
-        const { user: userData, access_token } = response.data;
+        const { user: userData } = response.data;
         userData.role = normalizeRole(userData.role);
         
         // Add avatar initials
         userData.avatar = userData.name.split(' ').map(n => n[0]).join('').toUpperCase();
-        userData.token = access_token;
         
-        // Store user with token in session storage only.
+        // Store user metadata only; auth cookies remain httpOnly.
         saveStoredUser(userData);
         setUser(userData);
         
@@ -179,9 +174,8 @@ export const AuthProvider = ({ children }) => {
       return { success: false, error: 'Forced credential update failed' };
     }
 
-    const { user: updatedUser, access_token } = response.data;
+    const { user: updatedUser } = response.data;
     updatedUser.role = normalizeRole(updatedUser.role);
-    updatedUser.token = access_token;
     updatedUser.avatar = updatedUser.name.split(' ').map(n => n[0]).join('').toUpperCase();
 
     saveStoredUser(updatedUser);

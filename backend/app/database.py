@@ -5,9 +5,16 @@ from typing import Any, Iterable, Optional
 import aiomysql
 
 from app.config import settings
+from app.utils.security import get_password_hash
 
 
 _pool: Optional[aiomysql.Pool] = None
+
+
+def _looks_like_bcrypt_hash(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    return value.startswith("$2a$") or value.startswith("$2b$") or value.startswith("$2y$")
 
 
 def _translate_sql(sql: str) -> str:
@@ -634,6 +641,23 @@ async def init_db():
             VALUES ('defect', 1, 1, 1, 'system', UTC_TIMESTAMP())
             """
         )
+
+        # Security migration: hash any legacy plaintext values in change_requests.new_password.
+        cursor = await db.execute(
+            """
+            SELECT id, new_password
+            FROM change_requests
+            WHERE new_password IS NOT NULL AND new_password != ''
+            """
+        )
+        for row in await cursor.fetchall():
+            password_value = row.get("new_password")
+            if _looks_like_bcrypt_hash(password_value):
+                continue
+            await db.execute(
+                "UPDATE change_requests SET new_password = ? WHERE id = ?",
+                (get_password_hash(password_value), row["id"]),
+            )
 
         await db.commit()
     finally:

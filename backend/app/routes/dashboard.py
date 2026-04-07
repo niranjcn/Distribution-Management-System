@@ -1,9 +1,12 @@
+import logging
 from fastapi import APIRouter, HTTPException, Query, status, Depends
 from pydantic import BaseModel
 from app.services import dashboard_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_md, require_any_role
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 class ClientActivityTrackRequest(BaseModel):
@@ -28,9 +31,10 @@ async def get_dashboard_stats(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve dashboard stats: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -51,9 +55,10 @@ async def get_recent_activities(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve recent activities: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -73,9 +78,10 @@ async def get_distribution_chart_data(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve distribution chart data: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -95,9 +101,10 @@ async def get_defect_chart_data(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve defect chart data: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -117,9 +124,10 @@ async def get_system_alerts(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve system alerts: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -139,9 +147,10 @@ async def get_advanced_dashboard_metrics(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve advanced dashboard metrics: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -177,9 +186,10 @@ async def get_admin_activities(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve activities: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 
@@ -201,7 +211,11 @@ async def track_client_activity(
             "message": "Client activity tracked",
         }
     except Exception as e:
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to track client activity: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
+
+
+
