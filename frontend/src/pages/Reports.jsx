@@ -215,7 +215,7 @@ const Reports = () => {
   ];
 
   const visibleReportTypes = reportTypes.filter(t => {
-    if (t.id === 'account_changes') return ['pdic_staff', 'manager'].includes(user?.role);
+    if (t.id === 'account_changes') return ['pdic_staff', 'manager', 'md_director'].includes(user?.role);
     return true;
   });
 
