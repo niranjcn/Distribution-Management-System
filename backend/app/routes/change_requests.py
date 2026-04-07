@@ -107,8 +107,8 @@ async def submit_change_request(
         if not data.reason:
             raise HTTPException(status_code=400, detail="reason required for device_status_change")
     else:
-        if current_user["role"] not in ["pdic_staff", "manager"]:
-            raise HTTPException(status_code=403, detail="Only staff and managers can submit change requests")
+        if current_user["role"] not in ["pdic_staff", "manager", "md_director"]:
+            raise HTTPException(status_code=403, detail="Only staff, managers, and MD/Director can submit change requests")
         if data.request_type in ["email_change", "both"] and not data.new_email:
             raise HTTPException(status_code=400, detail="new_email required for email_change")
         if data.request_type in ["password_reset", "both"] and not data.new_password:
@@ -121,6 +121,7 @@ async def submit_change_request(
         request_id = f"CR-{uuid.uuid4().hex[:8].upper()}"
         hashed_new_password = get_password_hash(data.new_password) if data.new_password else None
         manager_notification_payloads = []
+        super_admin_notification_payloads = []
 
         async with get_db() as db:
             defect = None
@@ -162,6 +163,31 @@ async def submit_change_request(
                 )
             )
 
+            if data.request_type in {"email_change", "password_reset", "both"}:
+                cursor = await db.execute("SELECT id FROM users WHERE role = 'super_admin' AND status = 'active'")
+                super_admin_rows = await cursor.fetchall()
+                for row in super_admin_rows:
+                    super_admin_notification_payloads.append(
+                        {
+                            "user_id": str(row[0]),
+                            "title": "Credential Change Request Pending",
+                            "message": (
+                                f"{current_user['name']} ({current_user['role']}) submitted a "
+                                f"{data.request_type.replace('_', ' ')} request (ID: {request_id})."
+                            ),
+                            "notification_type": "warning",
+                            "category": "approval",
+                            "link": "/change-requests",
+                            "metadata": {
+                                "action": "credential_change_request",
+                                "request_id": request_id,
+                                "request_type": data.request_type,
+                                "requested_by": str(current_user.get("id") or ""),
+                                "requested_by_role": str(current_user.get("role") or ""),
+                            },
+                        }
+                    )
+
             if data.request_type == "replacement_transfer_fix":
                 cursor = await db.execute("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
                 managers = await cursor.fetchall()
@@ -194,6 +220,8 @@ async def submit_change_request(
 
         for payload in manager_notification_payloads:
             await notification_service.create_notification(**payload)
+        for payload in super_admin_notification_payloads:
+            await notification_service.create_notification(**payload)
 
         return {"success": True, "message": "Change request submitted successfully", "data": {"request_id": request_id}}
     except HTTPException:
@@ -224,12 +252,20 @@ async def get_change_requests(
             params = []
 
             if role == "manager":
-                # Manager sees staff requests and operator transfer-fix requests.
+                # Managers can review:
+                # - all PDIC staff requests (including credential requests)
+                # - operator replacement transfer-fix requests
+                # They cannot review manager/MD-director credential requests.
                 conditions.append("(requested_by_role = 'pdic_staff' OR request_type = 'replacement_transfer_fix')")
 
             if status_filter:
-                conditions.append("status = ?")
-                params.append(status_filter)
+                if status_filter == "rejected":
+                    # Backward compatibility: older rows may have been saved as `rejectd`.
+                    conditions.append("(status = ? OR status = ?)")
+                    params.extend(["rejected", "rejectd"])
+                else:
+                    conditions.append("status = ?")
+                    params.append(status_filter)
 
             where = " AND ".join(conditions) if conditions else "1=1"
 
@@ -247,6 +283,8 @@ async def get_change_requests(
             # Never expose stored password material in API responses.
             for item in items:
                 item.pop("new_password", None)
+                if item.get("status") == "rejectd":
+                    item["status"] = "rejected"
 
         return {
             "success": True,
@@ -280,6 +318,7 @@ async def review_change_request(
 
     try:
         operator_notification_payload = None
+        requester_rejection_notification_payload = None
         transfer_plan = None
         async with get_db() as db:
             cursor = await db.execute(
@@ -290,6 +329,15 @@ async def review_change_request(
                 raise HTTPException(status_code=404, detail="Request not found")
 
             req = row_to_dict(row)
+
+            credential_request = req.get("request_type") in {"email_change", "password_reset", "both"}
+            if credential_request and role == "manager" and req.get("requested_by_role") != "pdic_staff":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Managers can only review credential change requests submitted by PDIC staff"
+                )
+            if credential_request and role not in {"manager", "super_admin"}:
+                raise HTTPException(status_code=403, detail="Only manager or super admin can review this request")
 
             # Managers can only review staff requests
             if role == "manager" and req["requested_by_role"] != "pdic_staff" and req["request_type"] != "replacement_transfer_fix":
@@ -469,12 +517,32 @@ async def review_change_request(
                         "defect_id": str(req.get("device_id") or ""),
                     },
                 }
+            elif review.action == "reject":
+                requester_rejection_notification_payload = {
+                    "user_id": str(req["requested_by"]),
+                    "title": "Update Request Rejected",
+                    "message": (
+                        f"Your {str(req.get('request_type') or 'update').replace('_', ' ')} request "
+                        f"({request_id}) was rejected by {current_user.get('name')}."
+                        + (f" Note: {review.review_note}" if review.review_note else "")
+                    ),
+                    "notification_type": "warning",
+                    "category": "approval",
+                    "link": "/change-requests",
+                    "metadata": {
+                        "action": "change_request_rejected",
+                        "request_id": request_id,
+                        "request_type": req.get("request_type"),
+                        "reviewed_by": str(current_user.get("id") or ""),
+                        "reviewed_by_role": str(current_user.get("role") or ""),
+                    },
+                }
 
             # Update the request status
             await db.execute(
                 """UPDATE change_requests SET status = ?, reviewed_by = ?, reviewed_by_name = ?,
                    review_note = ?, updated_at = ? WHERE request_id = ?""",
-                (review.action + "d", int(current_user["id"]), current_user["name"],
+                ("approved" if review.action == "approve" else "rejected", int(current_user["id"]), current_user["name"],
                  review.review_note, now, request_id)
             )
             await db.commit()
@@ -522,6 +590,20 @@ async def review_change_request(
 
         if operator_notification_payload:
             await notification_service.create_notification(**operator_notification_payload)
+        if requester_rejection_notification_payload:
+            await notification_service.create_notification(**requester_rejection_notification_payload)
+
+        if credential_request:
+            audit_logger.info(
+                "CREDENTIAL_CHANGE_REQUEST_REVIEW | reviewer_id=%s | reviewer_role=%s | requester_id=%s | requester_role=%s | request_id=%s | decision=%s | ip=%s",
+                current_user.get("id"),
+                current_user.get("role"),
+                req.get("requested_by"),
+                req.get("requested_by_role"),
+                request_id,
+                review.action,
+                request.client.host if request.client else "unknown",
+            )
 
         return {"success": True, "message": f"Request {review.action}d successfully"}
     except HTTPException:

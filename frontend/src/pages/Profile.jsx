@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { authAPI, usersAPI } from '../services/api';
+import { authAPI, usersAPI, changeRequestsAPI, adminUpdateCredentials } from '../services/api';
 import { updateStoredUser } from '../utils/authStorage';
 import { 
   User, Mail, Phone, Building, MapPin, Lock, 
@@ -34,6 +34,10 @@ const Profile = () => {
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
+  });
+
+  const [emailData, setEmailData] = useState({
+    newEmail: ''
   });
 
   const handleProfileUpdate = async (e) => {
@@ -78,11 +82,67 @@ const Profile = () => {
 
     setSaving(true);
     try {
-      await authAPI.changePassword(passwordData.currentPassword, passwordData.newPassword);
-      showToast('Password changed successfully', 'success');
+      const restrictedRoles = new Set(['manager', 'md_director', 'pdic_staff']);
+      const myRole = String(user?.role || '').toLowerCase();
+
+      if (restrictedRoles.has(myRole)) {
+        await changeRequestsAPI.submit({
+          request_type: 'password_reset',
+          new_password: passwordData.newPassword,
+          reason: 'Submitted from profile security tab',
+        });
+        showToast('Password change request submitted to super admin for approval', 'success');
+      } else {
+        await authAPI.changePassword(passwordData.currentPassword, passwordData.newPassword);
+        showToast('Password changed successfully', 'success');
+      }
+
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
     } catch (err) {
       showToast(err.message || 'Failed to change password', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEmailChange = async (e) => {
+    e.preventDefault();
+
+    const nextEmail = String(emailData.newEmail || '').trim().toLowerCase();
+    if (!nextEmail) {
+      showToast('Please enter a new email address', 'error');
+      return;
+    }
+    if (nextEmail === String(user?.email || '').toLowerCase()) {
+      showToast('New email must be different from current email', 'error');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const restrictedRoles = new Set(['manager', 'md_director', 'pdic_staff']);
+      const myRole = String(user?.role || '').toLowerCase();
+
+      if (restrictedRoles.has(myRole)) {
+        await changeRequestsAPI.submit({
+          request_type: 'email_change',
+          new_email: nextEmail,
+          reason: 'Submitted from profile security tab',
+        });
+        showToast('Email change request submitted to super admin for approval', 'success');
+      } else if (myRole === 'super_admin') {
+        const response = await adminUpdateCredentials(user.id, { email: nextEmail });
+        const updatedUser = { ...user, ...(response.data || {}), email: nextEmail };
+        setUser(updatedUser);
+        updateStoredUser(updatedUser);
+        showToast('Email updated successfully', 'success');
+      } else {
+        showToast('Email change is not available for your role', 'error');
+      }
+
+      setEmailData({ newEmail: '' });
+    } catch (err) {
+      showToast(err.message || 'Failed to process email change', 'error');
     } finally {
       setSaving(false);
     }
@@ -283,8 +343,46 @@ const Profile = () => {
 
       {/* Security Tab */}
       {activeTab === 'security' && (
-        <Card title="Change Password">
-          <form onSubmit={handlePasswordChange} className="space-y-4 max-w-md">
+        <div className="space-y-6">
+          <Card title="Change Email">
+            <form onSubmit={handleEmailChange} className="space-y-4 max-w-md">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Current Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    type="email"
+                    value={user?.email || ''}
+                    disabled
+                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    type="email"
+                    value={emailData.newEmail}
+                    onChange={(e) => setEmailData({ newEmail: e.target.value })}
+                    placeholder="Enter new email"
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">For manager, MD/Director, and staff, this submits a super admin approval request.</p>
+              </div>
+
+              <Button type="submit" icon={Mail} disabled={saving}>
+                {saving ? 'Submitting...' : 'Change Email'}
+              </Button>
+            </form>
+          </Card>
+
+          <Card title="Change Password">
+            <form onSubmit={handlePasswordChange} className="space-y-4 max-w-md">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
               <div className="relative">
@@ -338,8 +436,9 @@ const Profile = () => {
             <Button type="submit" icon={Lock} disabled={saving}>
               {saving ? 'Updating...' : 'Update Password'}
             </Button>
-          </form>
-        </Card>
+            </form>
+          </Card>
+        </div>
       )}
     </div>
   );
