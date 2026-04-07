@@ -1,15 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { reportsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
-import { Download, Database, FileSpreadsheet, FileText } from 'lucide-react';
+import { Download, Database, FileSpreadsheet, FileText, Upload, FileArchive, RefreshCw } from 'lucide-react';
 
 const Backup = () => {
   const { showToast } = useNotifications();
   const [format, setFormat] = useState('xlsx');
   const [downloadingDevices, setDownloadingDevices] = useState(false);
   const [downloadingTracking, setDownloadingTracking] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
 
   const extractFilename = (contentDisposition, fallback) => {
     const match = /filename="?([^\";]+)"?/i.exec(contentDisposition || '');
@@ -25,6 +29,24 @@ const Backup = () => {
     anchor.click();
     anchor.remove();
     window.URL.revokeObjectURL(url);
+  };
+
+  const formatFileSize = (bytes = 0) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const loadDocuments = async () => {
+    setLoadingDocuments(true);
+    try {
+      const response = await reportsAPI.listBackupDocuments();
+      setDocuments(Array.isArray(response?.data) ? response.data : []);
+    } catch (error) {
+      showToast(error.message || 'Failed to load backup documents', 'error');
+    } finally {
+      setLoadingDocuments(false);
+    }
   };
 
   const handleDeviceBackupDownload = async () => {
@@ -58,6 +80,40 @@ const Backup = () => {
       setDownloadingTracking(false);
     }
   };
+
+  const handleUploadDocument = async () => {
+    if (!selectedFile) {
+      showToast('Please choose a file first', 'error');
+      return;
+    }
+
+    setUploadingDocument(true);
+    try {
+      await reportsAPI.uploadBackupDocument(selectedFile);
+      showToast('File uploaded successfully', 'success');
+      setSelectedFile(null);
+      await loadDocuments();
+    } catch (error) {
+      showToast(error.message || 'Failed to upload file', 'error');
+    } finally {
+      setUploadingDocument(false);
+    }
+  };
+
+  const handleDownloadDocument = async (storedName, fallbackFileName) => {
+    try {
+      const { blob, contentDisposition } = await reportsAPI.downloadBackupDocument(storedName);
+      const fileName = extractFilename(contentDisposition, fallbackFileName);
+      downloadBlob(blob, fileName);
+      showToast('File downloaded successfully', 'success');
+    } catch (error) {
+      showToast(error.message || 'Failed to download file', 'error');
+    }
+  };
+
+  useEffect(() => {
+    loadDocuments();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -134,6 +190,79 @@ const Backup = () => {
             <Button icon={Download} loading={downloadingTracking} onClick={handleTrackingBackupDownload}>
               {downloadingTracking ? 'Generating Tracking Backup...' : 'Download Returns + Defects Backup'}
             </Button>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="space-y-5">
+          <div className="flex items-start gap-3 text-gray-700">
+            <FileArchive className="w-5 h-5 mt-0.5 text-emerald-600" />
+            <div>
+              <p className="font-medium">Backup document vault</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Upload important backup files and download them later. Access is restricted to Super Admin, Manager, and MD/Director.
+              </p>
+            </div>
+          </div>
+
+          <div className="border border-gray-200 rounded-lg p-4 space-y-3 bg-white/60">
+            <p className="text-sm font-medium text-gray-700">Upload file</p>
+            <input
+              type="file"
+              onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+              className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-md file:border file:border-gray-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:text-gray-700 hover:file:bg-gray-50"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                icon={Upload}
+                loading={uploadingDocument}
+                onClick={handleUploadDocument}
+                disabled={!selectedFile || uploadingDocument}
+              >
+                {uploadingDocument ? 'Uploading...' : 'Upload to Vault'}
+              </Button>
+              <Button
+                variant="outline"
+                icon={RefreshCw}
+                onClick={loadDocuments}
+                disabled={loadingDocuments}
+              >
+                Refresh List
+              </Button>
+            </div>
+          </div>
+
+          <div className="border border-gray-200 rounded-lg divide-y divide-gray-200 bg-white/60">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <p className="text-sm font-medium text-gray-700">Stored files</p>
+              <span className="text-xs text-gray-500">{documents.length} file(s)</span>
+            </div>
+
+            {loadingDocuments ? (
+              <p className="px-4 py-6 text-sm text-gray-500">Loading files...</p>
+            ) : documents.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-500">No files uploaded yet.</p>
+            ) : (
+              documents.map((doc) => (
+                <div key={doc.stored_name} className="px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800 break-all">{doc.file_name}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formatFileSize(doc.size)} • {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString() : 'Unknown date'}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon={Download}
+                    onClick={() => handleDownloadDocument(doc.stored_name, doc.file_name)}
+                  >
+                    Download
+                  </Button>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </Card>

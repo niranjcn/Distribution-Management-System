@@ -11,6 +11,8 @@ MEANINGFUL_ACTIVITY_RULES = [
     ("POST", re.compile(r"^/api/reports/export$"), "Report exported", "report export"),
     ("GET", re.compile(r"^/api/reports/device-backup$"), "Device backup downloaded", "device backup download"),
     ("GET", re.compile(r"^/api/reports/returns-defects-backup$"), "Returns and defects backup downloaded", "returns/defects backup download"),
+    ("POST", re.compile(r"^/api/reports/backup-documents$"), "Backup document uploaded", "backup document upload"),
+    ("GET", re.compile(r"^/api/reports/backup-documents/[^/]+$"), "Backup document downloaded", "backup document download"),
     ("POST", re.compile(r"^/api/defects$"), "Defect reported", "defect reporting"),
     ("PATCH", re.compile(r"^/api/defects/[^/]+/status$"), "Defect status updated", "defect status update"),
     ("PATCH", re.compile(r"^/api/defects/[^/]+/resolve$"), "Defect resolved", "defect resolution"),
