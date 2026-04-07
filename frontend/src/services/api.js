@@ -1085,6 +1085,75 @@ export const reportsAPI = {
       contentDisposition: response.headers.get('content-disposition') || '',
     };
   },
+
+  listBackupDocuments: async () => {
+    const response = await apiRequest('/reports/backup-documents');
+    return response;
+  },
+
+  uploadBackupDocument: async (file) => {
+    if (!file) {
+      throw new Error('Please select a file to upload');
+    }
+
+    const token = getAuthToken();
+    const csrfToken = getCookieValue('csrftoken');
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/reports/backup-documents`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+        ...(csrfToken && { 'X-CSRFToken': csrfToken }),
+      },
+      body: formData,
+    });
+
+    const raw = await response.text();
+    let data = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = { message: raw || 'Upload failed' };
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.message || data?.detail || 'Failed to upload file');
+    }
+
+    return data;
+  },
+
+  downloadBackupDocument: async (storedName) => {
+    const token = getAuthToken();
+    const url = `${API_BASE_URL}/reports/backup-documents/${encodeURIComponent(storedName)}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      let errorMessage = 'Failed to download file';
+      try {
+        const text = await response.text();
+        const parsed = text ? JSON.parse(text) : {};
+        errorMessage = parsed?.message || parsed?.detail || errorMessage;
+      } catch {
+        // Keep default message when response is not JSON.
+      }
+      throw new Error(errorMessage);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentDisposition: response.headers.get('content-disposition') || '',
+    };
+  },
 };
 
 // Dashboard API
