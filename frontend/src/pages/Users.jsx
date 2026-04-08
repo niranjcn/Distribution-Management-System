@@ -56,6 +56,8 @@ const emptyForm = {
   parentId: '',
 };
 
+const USERS_FETCH_PAGE_SIZE = 10000;
+
 const Users = () => {
   const { user: currentUser, hasRole } = useAuth();
   const { showToast } = useNotifications();
@@ -102,7 +104,7 @@ const Users = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await usersAPI.getUsers();
+      const response = await usersAPI.getUsers({ page_size: USERS_FETCH_PAGE_SIZE });
       setUsers(response.data || []);
     } catch (error) {
       console.error('Failed to fetch users:', error);
@@ -116,7 +118,7 @@ const Users = () => {
     if (currentUser?.role !== 'sub_distributor') return;
     try {
       setLoadingOps(true);
-      const response = await usersAPI.getUsers({ role: 'operator' });
+      const response = await usersAPI.getUsers({ role: 'operator', page_size: USERS_FETCH_PAGE_SIZE });
       setSubDistOperators(response.data || []);
     } catch (error) {
       console.error('Failed to fetch operators:', error);
@@ -154,15 +156,15 @@ const Users = () => {
     setSubDistributorOptions([]);
     try {
       if (role === 'sub_distribution_manager') {
-        const res = await usersAPI.getUsers({ role: 'sub_distributor' });
+        const res = await usersAPI.getUsers({ role: 'sub_distributor', page_size: USERS_FETCH_PAGE_SIZE });
         setParentOptions(res.data || []);
       } else if (role === 'cluster') {
-        const res = await usersAPI.getUsers({ role: 'sub_distribution_manager' });
+        const res = await usersAPI.getUsers({ role: 'sub_distribution_manager', page_size: USERS_FETCH_PAGE_SIZE });
         setParentOptions(res.data || []);
       } else if (role === 'operator') {
         const [subRes, clusterRes] = await Promise.all([
-          usersAPI.getUsers({ role: 'sub_distribution_manager' }),
-          usersAPI.getUsers({ role: 'cluster' }),
+          usersAPI.getUsers({ role: 'sub_distribution_manager', page_size: USERS_FETCH_PAGE_SIZE }),
+          usersAPI.getUsers({ role: 'cluster', page_size: USERS_FETCH_PAGE_SIZE }),
         ]);
         setSubDistributorOptions(subRes.data || []);
         setParentOptions(clusterRes.data || []);
@@ -205,7 +207,7 @@ const Users = () => {
     if (['sub_distributor', 'cluster'].includes(detailUser.role)) {
       const childRole = detailUser.role === 'sub_distributor' ? 'cluster' : 'operator';
       setLoadingChildren(true);
-      usersAPI.getUsers({ role: childRole, parent_id: detailUser.id })
+      usersAPI.getUsers({ role: childRole, parent_id: detailUser.id, page_size: USERS_FETCH_PAGE_SIZE })
         .then(res => setDetailChildren(res.data || []))
         .catch(err => console.error('Failed to fetch children:', err))
         .finally(() => setLoadingChildren(false));

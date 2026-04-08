@@ -98,15 +98,9 @@ async def get_pending_replacement_defects(
 async def get_pending_due_users(
     current_user: dict = Depends(require_any_role)
 ):
-    """Get user-level pending dues summary for returned defective devices."""
-    role = str(current_user.get("role") or "").lower()
-    if role not in {"super_admin", "md_director", "manager", "pdic_staff"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This endpoint is available for management roles only",
-        )
+    """Get hierarchy-scoped pending dues summary for returned defective devices."""
     try:
-        rows = await defect_service.get_pending_dues_users()
+        rows = await defect_service.get_pending_dues_users(current_user=current_user)
         return {
             "success": True,
             "message": "Pending dues users retrieved successfully",
@@ -127,20 +121,19 @@ async def get_pending_dues_for_user(
     user_id: str,
     current_user: dict = Depends(require_any_role)
 ):
-    """Get pending due items for a specific user."""
-    role = str(current_user.get("role") or "").lower()
-    if role not in {"super_admin", "md_director", "manager", "pdic_staff"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This endpoint is available for management roles only",
-        )
+    """Get hierarchy-scoped pending due items for a specific user."""
     try:
-        payload = await defect_service.get_pending_dues_for_user(user_id)
+        payload = await defect_service.get_pending_dues_for_user(user_id, current_user=current_user)
         return {
             "success": True,
             "message": "Pending dues details retrieved successfully",
             "data": payload,
         }
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -166,12 +159,17 @@ async def get_my_pending_dues(
 
     try:
         user_id = str(current_user.get("id") or current_user.get("_id") or "")
-        payload = await defect_service.get_pending_dues_for_user(user_id)
+        payload = await defect_service.get_pending_dues_for_user(user_id, current_user=current_user)
         return {
             "success": True,
             "message": "Pending payments retrieved successfully",
             "data": payload,
         }
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -206,12 +204,8 @@ async def get_defects(
             # "defects reported by me" OR "defects where my device is the holder"
             # Setting both reported_by AND holder_user_id would AND them, over-filtering.
             holder_user_id = user_id_str
-        elif role == "cluster":
-            # Show defects for devices in their possession or under their hierarchy
-            holder_user_id = user_id_str
-        elif role == "sub_distributor":
-            # Sub distributor visibility is handled by service-side hierarchy filters.
-            # Do not set reported_by here, otherwise results are over-filtered to self-only.
+        elif role in ["cluster", "sub_distribution_manager", "sub_distributor"]:
+            # Hierarchy roles are scoped in service-side visibility logic.
             pass
         elif role not in ["super_admin", "md_director", "manager", "pdic_staff"]:
             # Any other non-management role: show only their own reported defects

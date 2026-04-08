@@ -6,7 +6,7 @@ import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import Timeline from '../components/ui/Timeline';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
-import { returnsAPI, approvalsAPI } from '../services/api';
+import { returnsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { Eye, RotateCcw, Loader2, PackageCheck, AlertTriangle } from 'lucide-react';
@@ -20,9 +20,6 @@ const Returns = () => {
   const [showModal, setShowModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [actionComment, setActionComment] = useState('');
-  const [routingConfig, setRoutingConfig] = useState({
-    return: { super_admin: true, manager: true, pdic_staff: true }
-  });
 
   const fetchReturns = async () => {
     try {
@@ -41,34 +38,7 @@ const Returns = () => {
     fetchReturns();
   }, []);
 
-  useEffect(() => {
-    const loadRoleRoutingConfig = async () => {
-      try {
-        const response = await approvalsAPI.getRoleRoutingConfig();
-        const incoming = response?.data || {};
-        setRoutingConfig({
-          return: {
-            super_admin: incoming?.return?.super_admin ?? incoming?.return?.admin ?? true,
-            manager: incoming?.return?.manager ?? true,
-            pdic_staff: incoming?.return?.pdic_staff ?? incoming?.return?.staff ?? true,
-          }
-        });
-      } catch {
-        setRoutingConfig({ return: { super_admin: true, manager: true, pdic_staff: true } });
-      }
-    };
-
-    if (['super_admin', 'manager', 'pdic_staff'].includes(user?.role)) {
-      loadRoleRoutingConfig();
-    }
-  }, [user?.role]);
-
-  const reviewRole = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role) ? user.role : null;
-  const reviewRoleConfigKey = reviewRole || null;
-  const isReturnApprovalEnabledForRole =
-    !reviewRoleConfigKey || Boolean(routingConfig?.return?.[reviewRoleConfigKey]);
-  const canApprove = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role) && isReturnApprovalEnabledForRole;
-  const canConfirmReceipt = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role) && isReturnApprovalEnabledForRole;
+  const canConfirmReceipt = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
 
   const pendingReceiptReturns = returnRequests.filter((r) => ['pending', 'approved'].includes(r.status));
 
@@ -189,7 +159,7 @@ const Returns = () => {
 
   return (
     <div className="space-y-6">
-      {(canApprove || canConfirmReceipt) && pendingReceiptReturns.length > 0 && (
+      {canConfirmReceipt && pendingReceiptReturns.length > 0 && (
         <div className="space-y-3">
           {pendingReceiptReturns.length > 0 && (
             <div className="p-4 rounded-xl border border-amber-300 bg-amber-50">

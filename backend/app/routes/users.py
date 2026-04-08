@@ -80,6 +80,10 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
         return False
 
     if actor_role == MANAGER:
+        if not write and target_role == MANAGER:
+            if current_user.get("parent_id"):
+                return await _branch_contains_user(current_user["parent_id"], target_user.get("id"))
+            return True
         if not can_manage_user(actor_role, target_role):
             return False
         if current_user.get("parent_id"):
