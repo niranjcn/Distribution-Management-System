@@ -369,6 +369,7 @@ def _build_returns_defects_backup_file(
         "device_identifier",
         "device_model",
         "device_serial",
+        "device_nuid",
         "device_type",
         "requested_by_name",
         "return_to_name",
@@ -388,6 +389,7 @@ def _build_returns_defects_backup_file(
         "device_identifier",
         "device_model",
         "device_serial",
+        "device_nuid",
         "device_type",
         "reported_by_name",
         "operator_name",
@@ -436,6 +438,7 @@ def _build_returns_defects_backup_file(
             "device_identifier",
             "device_model",
             "device_serial",
+            "device_nuid",
             "device_type",
             "person_name",
             "category",
@@ -457,6 +460,7 @@ def _build_returns_defects_backup_file(
                     "device_identifier": str(row.get("device_identifier") or ""),
                     "device_model": str(row.get("device_model") or ""),
                     "device_serial": str(row.get("device_serial") or ""),
+                    "device_nuid": str(row.get("device_nuid") or ""),
                     "device_type": str(row.get("device_type") or ""),
                     "person_name": str(row.get("requested_by_name") or ""),
                     "category": str(row.get("reason") or ""),
@@ -475,6 +479,7 @@ def _build_returns_defects_backup_file(
                     "device_identifier": str(row.get("device_identifier") or ""),
                     "device_model": str(row.get("device_model") or ""),
                     "device_serial": str(row.get("device_serial") or ""),
+                    "device_nuid": str(row.get("device_nuid") or ""),
                     "device_type": str(row.get("device_type") or ""),
                     "person_name": str(row.get("reported_by_name") or ""),
                     "category": str(row.get("defect_type") or ""),
@@ -503,7 +508,7 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         defects_cursor = await db.execute("SELECT * FROM defects ORDER BY created_at DESC")
         defects_rows = rows_to_list(await defects_cursor.fetchall())
 
-        devices_cursor = await db.execute("SELECT id, device_id, model FROM devices")
+        devices_cursor = await db.execute("SELECT id, device_id, model, serial_number, mac_address, nuid, device_type FROM devices")
         devices_rows = rows_to_list(await devices_cursor.fetchall())
 
         users_cursor = await db.execute("SELECT id, name FROM users")
@@ -532,6 +537,14 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
             or raw_device_id
         )
         row["device_model"] = str((resolved_device or {}).get("model") or "")
+        row["device_nuid"] = str((resolved_device or {}).get("nuid") or "")
+
+        resolved_type = str((resolved_device or {}).get("device_type") or row.get("device_type") or "")
+        is_sb = resolved_type.strip().lower() in {"set-top box", "set top box", "sb", "stb"}
+        if is_sb:
+            row["device_serial"] = ""
+        elif not str(row.get("device_serial") or "").strip():
+            row["device_serial"] = str((resolved_device or {}).get("serial_number") or "")
 
         if not str(row.get("requested_by_name") or "").strip():
             row["requested_by_name"] = user_name_lookup.get(str(row.get("requested_by") or "").strip(), "")
@@ -548,6 +561,14 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
             or raw_device_id
         )
         row["device_model"] = str((resolved_device or {}).get("model") or "")
+        row["device_nuid"] = str((resolved_device or {}).get("nuid") or "")
+
+        resolved_type = str((resolved_device or {}).get("device_type") or row.get("device_type") or "")
+        is_sb = resolved_type.strip().lower() in {"set-top box", "set top box", "sb", "stb"}
+        if is_sb:
+            row["device_serial"] = ""
+        elif not str(row.get("device_serial") or "").strip():
+            row["device_serial"] = str((resolved_device or {}).get("serial_number") or "")
 
         if not str(row.get("reported_by_name") or "").strip():
             row["reported_by_name"] = user_name_lookup.get(str(row.get("reported_by") or "").strip(), "")
