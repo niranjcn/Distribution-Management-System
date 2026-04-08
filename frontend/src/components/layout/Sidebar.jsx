@@ -61,7 +61,6 @@ const Sidebar = ({ isOpen, onClose }) => {
           children: [
             { path: '/users', label: 'All Users' },
             { path: '/users/hierarchy', label: 'User Hierarchy' },
-            { path: '/change-requests', label: 'Change Requests' },
           ]
         },
         {
@@ -90,10 +89,10 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/returns', icon: RotateCcw, label: 'Returns' },
         { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
         { path: '/reports', icon: BarChart3, label: 'Reports' },
+        { path: '/change-requests', icon: UserCog, label: 'Change Requests' },
         { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
-        { path: '/change-requests', icon: UserCog, label: 'Change Requests' },
         { path: '/settings', icon: Settings, label: 'Settings' },
       ],
       [ROLES.MD_DIRECTOR]: [
@@ -116,7 +115,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         ...commonItems,
         { path: '/users', icon: Users, label: 'Users' },
         { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
-        { path: '/change-requests', icon: UserCog, label: 'Change Requests' },
         {
           key: 'devices',
           icon: Box,
@@ -143,9 +141,9 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/returns', icon: RotateCcw, label: 'Returns' },
         { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
         { path: '/reports', icon: BarChart3, label: 'Reports' },
+        { path: '/change-requests', icon: UserCog, label: 'Change Requests' },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
-        { path: '/change-requests', icon: UserCog, label: 'Change Requests' },
       ],
       [ROLES.PDIC_STAFF]: [
         ...commonItems,
@@ -187,7 +185,7 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
         { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
         { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
+        { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
       ],
       [ROLES.SUB_DISTRIBUTOR]: [
         ...commonItems,
@@ -202,7 +200,7 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
         { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
         { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
+        { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
       ],
       [ROLES.CLUSTER]: [
@@ -218,7 +216,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
         { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
         { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
       ],

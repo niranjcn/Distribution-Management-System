@@ -18,13 +18,14 @@ const PendingDues = () => {
   const [loadingDetails, setLoadingDetails] = useState(false);
 
   const role = String(user?.role || '').toLowerCase();
-  const isManagementView = ['super_admin', 'md_director', 'manager', 'pdic_staff'].includes(role);
+  const isOperatorView = role === 'operator';
+  const isHierarchyView = !isOperatorView;
   const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(role);
 
   const fetchUsers = async () => {
     try {
       setLoadingUsers(true);
-      if (isManagementView) {
+      if (isHierarchyView) {
         const response = await defectsAPI.getPendingDueUsers();
         const rows = response.data || [];
         setUsers(rows);
@@ -64,7 +65,7 @@ const PendingDues = () => {
 
   useEffect(() => {
     fetchUsers();
-  }, [isManagementView]);
+  }, [isHierarchyView]);
 
   const totalOutstanding = useMemo(
     () => users.reduce((acc, row) => acc + Number(row.total_due || 0), 0),
@@ -73,6 +74,16 @@ const PendingDues = () => {
 
   const userColumns = [
     { key: 'user_name', label: 'User' },
+    {
+      key: 'user_role',
+      label: 'Role',
+      render: (value) => String(value || '-').replace(/_/g, ' '),
+    },
+    {
+      key: 'parent_name',
+      label: 'Parent',
+      render: (value) => value || '-',
+    },
     { key: 'due_count', label: 'Pending Defects' },
     {
       key: 'total_due',
@@ -84,24 +95,24 @@ const PendingDues = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">{isManagementView ? 'Pending Dues' : 'Pending Payments'}</h1>
+        <h1 className="text-2xl font-bold text-gray-800">{isHierarchyView ? 'Pending Dues' : 'Pending Payments'}</h1>
         <p className="text-gray-500 mt-1">
-          {isManagementView
-            ? 'Track unpaid dues for defective device returns and confirm payment.'
+          {isHierarchyView
+            ? 'Track unpaid dues in your hierarchy branch by role.'
             : 'View all pending payments awaiting confirmation for your defective device returns.'}
         </p>
       </div>
 
-      <div className={`grid grid-cols-1 ${isManagementView ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-4`}>
+      <div className={`grid grid-cols-1 ${isHierarchyView ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-4`}>
         <Card className="!p-4">
-          <p className="text-sm text-gray-500">{isManagementView ? 'Users with Dues' : 'Pending Items'}</p>
-          <p className="text-2xl font-bold text-gray-800">{isManagementView ? users.length : Number(details?.count || 0)}</p>
+          <p className="text-sm text-gray-500">{isHierarchyView ? 'Users with Dues' : 'Pending Items'}</p>
+          <p className="text-2xl font-bold text-gray-800">{isHierarchyView ? users.length : Number(details?.count || 0)}</p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Outstanding Amount</p>
-          <p className="text-2xl font-bold text-amber-700">{(isManagementView ? totalOutstanding : Number(details?.total_due || 0)).toFixed(2)}</p>
+          <p className="text-2xl font-bold text-amber-700">{(isHierarchyView ? totalOutstanding : Number(details?.total_due || 0)).toFixed(2)}</p>
         </Card>
-        {isManagementView && (
+        {isHierarchyView && (
           <Card className="!p-4">
             <p className="text-sm text-gray-500">Pending Items</p>
             <p className="text-2xl font-bold text-blue-700">{users.reduce((acc, row) => acc + Number(row.due_count || 0), 0)}</p>
@@ -109,8 +120,8 @@ const PendingDues = () => {
         )}
       </div>
 
-      <div className={`grid grid-cols-1 ${isManagementView ? 'lg:grid-cols-5' : ''} gap-6`}>
-        {isManagementView && (
+      <div className={`grid grid-cols-1 ${isHierarchyView ? 'lg:grid-cols-5' : ''} gap-6`}>
+        {isHierarchyView && (
           <div className="lg:col-span-2">
             <Card title="Users" icon={DollarSign}>
               {loadingUsers ? (
@@ -128,18 +139,18 @@ const PendingDues = () => {
           </div>
         )}
 
-        <div className={isManagementView ? 'lg:col-span-3' : ''}>
+        <div className={isHierarchyView ? 'lg:col-span-3' : ''}>
           <Card title={selectedUser ? `Due Details - ${selectedUser.user_name}` : 'Due Details'} icon={Receipt}>
             {loadingDetails ? (
               <div className="flex items-center justify-center py-10 text-gray-500">
                 <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading details...
               </div>
             ) : !details || !details.items || details.items.length === 0 ? (
-              <p className="text-gray-500">{isManagementView ? 'No pending due items for the selected user.' : 'No pending payments right now.'}</p>
+              <p className="text-gray-500">{isHierarchyView ? 'No pending due items for the selected user.' : 'No pending payments right now.'}</p>
             ) : (
               <div className="space-y-3">
                 <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900">
-                  {isManagementView ? 'Outstanding for this user:' : 'Your total pending amount:'}{' '}
+                  {isHierarchyView ? 'Outstanding for this user:' : 'Your total pending amount:'}{' '}
                   <span className="font-semibold">{Number(details.total_due || 0).toFixed(2)}</span>
                 </div>
 

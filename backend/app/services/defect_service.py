@@ -124,6 +124,36 @@ async def _get_sub_distributor_operator_ids(db, sub_distributor_id: str) -> Set[
     return operator_ids
 
 
+async def _get_descendant_user_ids(db, root_user_id: str) -> Set[str]:
+    """Return all descendant user ids under a root user (recursive by parent_id)."""
+    descendants: Set[str] = set()
+    if not root_user_id or not str(root_user_id).isdigit():
+        return descendants
+
+    pending: List[int] = [int(root_user_id)]
+    visited: Set[int] = set()
+
+    while pending:
+        current_parent_id = pending.pop()
+        if current_parent_id in visited:
+            continue
+        visited.add(current_parent_id)
+
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE parent_id = ?",
+            (current_parent_id,)
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            child_id = int(row["id"])
+            child_id_str = str(child_id)
+            if child_id_str not in descendants:
+                descendants.add(child_id_str)
+                pending.append(child_id)
+
+    return descendants
+
+
 async def _resolve_sub_distributor_targets_for_operator(db, operator_id: str) -> List[str]:
     """Resolve sub distributor recipients for an operator using parent hierarchy."""
     recipients: Set[str] = set()
@@ -164,40 +194,13 @@ async def _get_report_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[s
     user_id = str(user.get("id") or user.get("_id"))
 
     # Management roles can see all replacement mappings.
-    if role in ["super_admin", "manager", "pdic_staff"]:
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
         return None
 
+    # For hierarchy roles, show own + full branch descendants.
     scoped_ids: Set[str] = {user_id}
-    if role == "cluster":
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE parent_id = ? AND role = 'operator'",
-            (int(user_id),)
-        )
-        for row in await cursor.fetchall():
-            scoped_ids.add(str(row["id"]))
-        return scoped_ids
-
-    if role == "sub_distributor":
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE parent_id = ? AND role = 'cluster'",
-            (int(user_id),)
-        )
-        cluster_rows = await cursor.fetchall()
-        cluster_ids = [row["id"] for row in cluster_rows]
-        for cluster_id in cluster_ids:
-            scoped_ids.add(str(cluster_id))
-
-        if cluster_ids:
-            placeholders = ",".join(["?"] * len(cluster_ids))
-            cursor = await db.execute(
-                f"SELECT id FROM users WHERE parent_id IN ({placeholders}) AND role = 'operator'",
-                tuple(cluster_ids)
-            )
-            for row in await cursor.fetchall():
-                scoped_ids.add(str(row["id"]))
-        return scoped_ids
-
-    # Operators and any other role fallback to own records.
+    descendants = await _get_descendant_user_ids(db, user_id)
+    scoped_ids.update(descendants)
     return scoped_ids
 
 
@@ -301,24 +304,14 @@ async def get_defects(
         if visibility_user:
             role = visibility_user.get("role")
             user_id = str(visibility_user.get("id") or visibility_user.get("_id"))
-            if role in ["super_admin", "manager", "pdic_staff"]:
-                conditions.append(
-                    "(COALESCE(report_target, 'manager_admin') != 'sub_distributor' OR COALESCE(forwarded_to_management, 0) = 1)"
-                )
-            elif role == "sub_distributor":
-                operator_ids = await _get_sub_distributor_operator_ids(db, user_id)
-                if operator_ids:
-                    placeholders = ",".join(["?"] * len(operator_ids))
-                    conditions.append(
-                        "(" 
-                        "COALESCE(report_target, 'manager_admin') != 'sub_distributor' "
-                        "OR COALESCE(forwarded_to_management, 0) = 1 "
-                        f"OR (COALESCE(report_target, 'manager_admin') = 'sub_distributor' AND reported_by IN ({placeholders}))"
-                        ")"
-                    )
-                    params.extend(sorted(operator_ids))
+            if role not in ["super_admin", "md_director", "manager", "pdic_staff"]:
+                scoped_user_ids = await _get_report_scope_user_ids(db, visibility_user)
+                if scoped_user_ids:
+                    placeholders = ",".join(["?"] * len(scoped_user_ids))
+                    conditions.append(f"CAST(reported_by AS TEXT) IN ({placeholders})")
+                    params.extend(sorted(scoped_user_ids))
                 else:
-                    conditions.append("COALESCE(report_target, 'manager_admin') != 'sub_distributor' OR COALESCE(forwarded_to_management, 0) = 1")
+                    conditions.append("1=0")
 
         where = " AND ".join(conditions)
 
@@ -809,31 +802,63 @@ async def confirm_defect_payment(
     return await get_defect_by_id(defect_id)
 
 
-async def get_pending_dues_users() -> List[Dict[str, Any]]:
+async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     async with get_db() as db:
+        scope_user_ids = await _get_report_scope_user_ids(db, current_user) if current_user else None
+        if scope_user_ids is not None and len(scope_user_ids) == 0:
+            return []
+
+        conditions = [
+            "COALESCE(d.return_amount, 0) > 0",
+            "COALESCE(d.payment_confirmed, 0) = 0",
+            "COALESCE(r.status, '') = 'received'",
+        ]
+        params: List[Any] = []
+
+        if scope_user_ids is not None:
+            placeholders = ",".join(["?"] * len(scope_user_ids))
+            conditions.append(
+                f"COALESCE(NULLIF(d.payment_due_user_id, ''), d.reported_by) IN ({placeholders})"
+            )
+            params.extend(sorted(scope_user_ids))
+
+        where_clause = " AND ".join(conditions)
+
         cursor = await db.execute(
-            """
+            f"""
             SELECT
-                COALESCE(NULLIF(d.payment_due_user_id, ''), d.reported_by) AS user_id,
-                COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name) AS user_name,
+                due.id AS user_id,
+                COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name, due.name) AS user_name,
+                due.role AS user_role,
+                due.parent_id AS parent_id,
+                parent.name AS parent_name,
                 COUNT(*) AS due_count,
                 SUM(COALESCE(d.return_amount, 0)) AS total_due
             FROM defects d
-                        LEFT JOIN returns r ON ((CAST(r.defect_id AS UNSIGNED) = d.id) OR r.return_id = d.auto_return_id)
-            WHERE COALESCE(d.return_amount, 0) > 0
-              AND COALESCE(d.payment_confirmed, 0) = 0
-              AND COALESCE(r.status, '') = 'received'
-            GROUP BY COALESCE(NULLIF(d.payment_due_user_id, ''), d.reported_by),
-                     COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name)
+            LEFT JOIN returns r ON ((CAST(r.defect_id AS UNSIGNED) = d.id) OR r.return_id = d.auto_return_id)
+            LEFT JOIN users due ON due.id = CAST(COALESCE(NULLIF(d.payment_due_user_id, ''), d.reported_by) AS UNSIGNED)
+            LEFT JOIN users parent ON parent.id = due.parent_id
+            WHERE {where_clause}
+            GROUP BY due.id,
+                     COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name, due.name),
+                     due.role,
+                     due.parent_id,
+                     parent.name
             ORDER BY total_due DESC, due_count DESC
-            """
+            """,
+            params,
         )
         rows = await cursor.fetchall()
         return rows_to_list(rows)
 
 
-async def get_pending_dues_for_user(user_id: str) -> Dict[str, Any]:
+async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     async with get_db() as db:
+        scope_user_ids = await _get_report_scope_user_ids(db, current_user) if current_user else None
+        requested_user_id = str(user_id)
+        if scope_user_ids is not None and requested_user_id not in scope_user_ids:
+            raise PermissionError("Requested user is outside your hierarchy scope")
+
         cursor = await db.execute(
             """
             SELECT
@@ -865,7 +890,7 @@ async def get_pending_dues_for_user(user_id: str) -> Dict[str, Any]:
               AND COALESCE(r.status, '') = 'received'
             ORDER BY r.received_date DESC, d.updated_at DESC
             """,
-            (str(user_id),)
+            (requested_user_id,)
         )
         rows = await cursor.fetchall()
         dues = rows_to_list(rows)
@@ -874,7 +899,7 @@ async def get_pending_dues_for_user(user_id: str) -> Dict[str, Any]:
         user_name = dues[0].get("reported_by_name") if dues else None
 
         return {
-            "user_id": str(user_id),
+            "user_id": requested_user_id,
             "user_name": user_name,
             "total_due": total_due,
             "count": len(dues),

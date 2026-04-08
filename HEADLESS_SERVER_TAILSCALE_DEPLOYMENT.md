@@ -2,7 +2,6 @@
 ## Headless Server Hosting and Tailscale Access Runbook
 
 Document version: 1.0  
-Prepared for: DevOps Team  
 Date: 2026-04-07
 
 ---

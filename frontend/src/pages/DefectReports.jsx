@@ -6,7 +6,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
-import { defectsAPI, devicesAPI, notificationsAPI } from '../services/api';
+import { defectsAPI, devicesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import {
@@ -75,10 +75,6 @@ const DefectReports = () => {
     box_type: 'HD',
     nuid: ''
   });
-  const [activeEnquiryDefectId, setActiveEnquiryDefectId] = useState(null);
-  const [enquiryDrafts, setEnquiryDrafts] = useState({});
-  const [enquirySubmittingId, setEnquirySubmittingId] = useState(null);
-  const [managementEnquiryDefectIds, setManagementEnquiryDefectIds] = useState(new Set());
   const [confirmPaymentNotes, setConfirmPaymentNotes] = useState('');
 
   const fetchDefects = async () => {
@@ -104,79 +100,7 @@ const DefectReports = () => {
   const canReplace = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canConfirmReplacement = ['operator', 'cluster', 'sub_distributor'].includes(user?.role);
 
-  useEffect(() => {
-    if (canReplace) {
-      fetchManagementEnquiryContext();
-    }
-  }, [canReplace]);
-
   const getDefectId = (defect) => String(defect?._id || defect?.id || '');
-
-  const fetchManagementEnquiryContext = async () => {
-    try {
-      const response = await notificationsAPI.getNotifications({ page_size: 100 });
-      const notifications = response.data || [];
-      const enquiryIds = new Set(
-        notifications
-          .filter((notification) =>
-            notification?.category === 'defect' &&
-            notification?.metadata?.action === 'replacement_enquiry' &&
-            notification?.metadata?.defect_id
-          )
-          .map((notification) => String(notification.metadata.defect_id))
-      );
-      setManagementEnquiryDefectIds(enquiryIds);
-    } catch (error) {
-      console.error('Failed to load enquiry notifications:', error);
-      setManagementEnquiryDefectIds(new Set());
-    }
-  };
-
-  const handleEnquire = async (defect) => {
-    const id = getDefectId(defect);
-    const message = (enquiryDrafts[id] || '').trim();
-    if (!message) {
-      showToast('Please write an enquiry message first', 'error');
-      return;
-    }
-
-    try {
-      setEnquirySubmittingId(id);
-      await defectsAPI.enquireReplacement(id, message);
-      showToast('Enquiry sent to management successfully', 'success');
-      setEnquiryDrafts((prev) => ({ ...prev, [id]: '' }));
-      setActiveEnquiryDefectId(null);
-      if (canReplace) {
-        fetchManagementEnquiryContext();
-      }
-    } catch (error) {
-      showToast(error.message || 'Failed to send enquiry', 'error');
-    } finally {
-      setEnquirySubmittingId(null);
-    }
-  };
-
-  const handleResendConfirmation = async (defect) => {
-    const id = getDefectId(defect);
-    try {
-      await defectsAPI.resendReplacementConfirmation(id);
-      showToast('Replacement confirmation resent to operator', 'success');
-      fetchDefects();
-    } catch (error) {
-      showToast(error.message || 'Failed to resend confirmation', 'error');
-    }
-  };
-
-  const handleMarkWaiting = async (defect) => {
-    const id = getDefectId(defect);
-    try {
-      await defectsAPI.markReplacementWaiting(id, 'Device is being shipped, please wait');
-      showToast('Defect marked as waiting for shipment', 'success');
-      fetchDefects();
-    } catch (error) {
-      showToast(error.message || 'Failed to mark as waiting', 'error');
-    }
-  };
 
   const handleForwardToManagement = async (defect) => {
     const id = getDefectId(defect);
@@ -263,7 +187,10 @@ const DefectReports = () => {
   });
 
   const selectableReplacementDevices = availableDevices.filter((device) => {
-    if (replacementDeviceType !== 'all' && device.device_type !== replacementDeviceType) {
+    if (
+      replacementDeviceType !== 'all' &&
+      normalizeDeviceType(device.device_type) !== normalizeDeviceType(replacementDeviceType)
+    ) {
       return false;
     }
     if (!replacementSearch) {
@@ -396,79 +323,6 @@ const DefectReports = () => {
                 )}
           </div>
 
-          {canConfirmReplacement &&
-            row.status === 'replacement_pending_confirmation' &&
-            (String(row.reported_by) === String(user?.id) ||
-              String(row?.defective_device?.current_holder_id) === String(user?.id)) && (
-              <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveEnquiryDefectId((prev) => (prev === getDefectId(row) ? null : getDefectId(row)));
-                  }}
-                  className="text-xs px-2 py-1 rounded border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
-                >
-                  Enquire
-                </button>
-
-                {activeEnquiryDefectId === getDefectId(row) && (
-                  <div className="p-2 bg-amber-50 border border-amber-200 rounded space-y-2" onClick={(e) => e.stopPropagation()}>
-                    <textarea
-                      value={enquiryDrafts[getDefectId(row)] || ''}
-                      onChange={(e) =>
-                        setEnquiryDrafts((prev) => ({
-                          ...prev,
-                          [getDefectId(row)]: e.target.value,
-                        }))
-                      }
-                      rows={2}
-                      placeholder="Ask PDIC about replacement shipment or confirmation status..."
-                      className="w-full text-xs px-2 py-1 border border-amber-300 rounded focus:ring-1 focus:ring-amber-500"
-                    />
-                    <div className="flex items-center gap-2 justify-end">
-                      <button
-                        onClick={() => setActiveEnquiryDefectId(null)}
-                        className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-700"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => handleEnquire(row)}
-                        disabled={enquirySubmittingId === getDefectId(row)}
-                        className="text-xs px-2 py-1 rounded bg-amber-600 text-white disabled:opacity-50"
-                      >
-                        {enquirySubmittingId === getDefectId(row) ? 'Sending...' : 'Send Enquiry'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-          {canReplace &&
-            row.status === 'replacement_pending_confirmation' &&
-            managementEnquiryDefectIds.has(getDefectId(row)) && (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleResendConfirmation(row);
-                  }}
-                  className="text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100"
-                >
-                  Resend Confirmation
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMarkWaiting(row);
-                  }}
-                  className="text-xs px-2 py-1 rounded border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100"
-                >
-                  Mark as Waiting
-                </button>
-              </div>
-            )}
         </div>
       )
     }
