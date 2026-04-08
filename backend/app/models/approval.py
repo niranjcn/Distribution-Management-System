@@ -90,9 +90,12 @@ class ApprovalAction(BaseModel):
 
 
 class RoleRoutingItemUpdate(BaseModel):
-    admin: bool
+    super_admin: bool = Field(..., alias="admin")
     manager: bool
-    staff: bool
+    pdic_staff: bool = Field(..., alias="staff")
+
+    class Config:
+        populate_by_name = True
 
 
 class RoleRoutingUpdateRequest(BaseModel):
@@ -105,9 +108,12 @@ class RoleRoutingUpdateRequest(BaseModel):
 
 
 class RoleRoutingItemResponse(BaseModel):
-    admin: bool
+    super_admin: bool = Field(..., alias="admin")
     manager: bool
-    staff: bool
+    pdic_staff: bool = Field(..., alias="staff")
+
+    class Config:
+        populate_by_name = True
 
 
 class RoleRoutingResponse(BaseModel):
