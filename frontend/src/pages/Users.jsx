@@ -10,7 +10,7 @@ import { usersAPI, adminUpdateCredentials } from '../services/api';
 import { 
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
   Building, MapPin, Calendar, Users as UsersIcon, Loader2, Lock,
-  Network, ChevronDown, ChevronRight, Filter, X
+  Network, ChevronDown, ChevronRight, Filter, X, EyeOff
 } from 'lucide-react';
 
 // Roles each creator can assign
@@ -77,6 +77,9 @@ const Users = () => {
   const [savingDetail, setSavingDetail] = useState(false);
 
   const [formData, setFormData] = useState(emptyForm);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showCreateConfirmPassword, setShowCreateConfirmPassword] = useState(false);
 
   // For admin/manager: parent options when creating cluster or operator
   const [parentOptions, setParentOptions] = useState([]);
@@ -139,6 +142,9 @@ const Users = () => {
     setParentOptions([]);
     setSubDistributorOptions([]);
     setSelectedOperatorSubDistId('');
+    setConfirmPassword('');
+    setShowCreatePassword(false);
+    setShowCreateConfirmPassword(false);
     // For sub_distributor creating cluster, no parent selector needed.
     // For admin/manager, kick off load if default role requires it.
     if (['super_admin', 'manager'].includes(currentUser?.role)) {
@@ -300,6 +306,10 @@ const Users = () => {
 
   const handleAddUser = async (e) => {
     e.preventDefault();
+    if (formData.password !== confirmPassword) {
+      showToast('Password and confirm password do not match', 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = {
@@ -317,6 +327,9 @@ const Users = () => {
       showToast('User created successfully', 'success');
       setShowAddModal(false);
       setFormData(emptyForm);
+      setConfirmPassword('');
+      setShowCreatePassword(false);
+      setShowCreateConfirmPassword(false);
       setParentOptions([]);
       fetchUsers();
       fetchSubDistOperators();
@@ -931,15 +944,53 @@ const Users = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 <span className="flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Password <span className="text-red-500">*</span></span>
               </label>
-              <input
-                type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Min. 6 characters"
-                minLength={6}
-                required
-              />
+              <div className="relative">
+                <input
+                  type={showCreatePassword ? 'text' : 'password'}
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Min. 6 characters"
+                  minLength={6}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCreatePassword((prev) => !prev)}
+                  className="absolute inset-y-0 right-2 flex items-center text-gray-500 hover:text-gray-700"
+                  aria-label={showCreatePassword ? 'Hide password' : 'Show password'}
+                >
+                  {showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Confirm Password <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showCreateConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Retype password"
+                  minLength={6}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCreateConfirmPassword((prev) => !prev)}
+                  className="absolute inset-y-0 right-2 flex items-center text-gray-500 hover:text-gray-700"
+                  aria-label={showCreateConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                >
+                  {showCreateConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {confirmPassword && formData.password !== confirmPassword && (
+                <p className="text-xs text-red-600 mt-1">Passwords do not match</p>
+              )}
             </div>
 
             <div>
@@ -1088,6 +1139,9 @@ const Users = () => {
               onClick={() => {
                 setShowAddModal(false);
                 setFormData(emptyForm);
+                setConfirmPassword('');
+                setShowCreatePassword(false);
+                setShowCreateConfirmPassword(false);
                 setParentOptions([]);
                 setSubDistributorOptions([]);
                 setSelectedOperatorSubDistId('');

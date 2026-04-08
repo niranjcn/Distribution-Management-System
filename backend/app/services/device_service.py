@@ -116,26 +116,27 @@ async def create_device(device_data: DeviceCreate, created_by: str, created_by_n
         mac_address = (device_data.mac_address or "").strip()
         box_type = (device_data.box_type or "").strip().upper() if is_sb else None
 
-        # SB devices do not have physical serial/MAC. Generate unique internal placeholders.
+        # SB devices do not require serial/MAC. Keep them empty.
         if is_sb:
-            normalized_nuid = device_data.nuid.strip()
-            serial_number = serial_number or f"SB-SN-{normalized_nuid}"
-            mac_address = mac_address or f"SB-MAC-{normalized_nuid}"
+            serial_number = None
+            mac_address = None
         else:
             if not serial_number:
                 raise ValueError("Serial number is required for non-SB devices")
             if not mac_address:
                 raise ValueError("MAC address is required for non-SB devices")
+            # NUID is only valid for SB devices.
+            device_data.nuid = None
 
-        # Check if serial number exists
-        cursor = await db.execute("SELECT id FROM devices WHERE serial_number = ?", (serial_number,))
-        if await cursor.fetchone():
-            raise ValueError("Serial number already exists")
-        
-        # Check if MAC address exists
-        cursor = await db.execute("SELECT id FROM devices WHERE mac_address = ?", (mac_address,))
-        if await cursor.fetchone():
-            raise ValueError("MAC address already exists")
+        if serial_number:
+            cursor = await db.execute("SELECT id FROM devices WHERE serial_number = ?", (serial_number,))
+            if await cursor.fetchone():
+                raise ValueError("Serial number already exists")
+
+        if mac_address:
+            cursor = await db.execute("SELECT id FROM devices WHERE mac_address = ?", (mac_address,))
+            if await cursor.fetchone():
+                raise ValueError("MAC address already exists")
         
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         dev_id = generate_device_id(device_data.device_type.value)
@@ -244,13 +245,13 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
             if normalized_box not in {"HD", "OTT"}:
                 raise ValueError("box_type is required for SB devices and must be HD or OTT")
 
-        if "serial_number" in data and data["serial_number"] is not None:
+        if next_device_type == "Set-top box":
+            update_fields.append("serial_number = ?")
+            params.append(None)
+        elif "serial_number" in data and data["serial_number"] is not None:
             serial_number = str(data["serial_number"]).strip()
             if not serial_number:
-                if next_device_type == "Set-top box":
-                    serial_number = current_device.get("serial_number") or f"SB-SN-{str(next_nuid).strip()}"
-                else:
-                    raise ValueError("Serial number cannot be empty")
+                raise ValueError("Serial number cannot be empty")
             cursor = await db.execute(
                 "SELECT id FROM devices WHERE serial_number = ? AND id != ?",
                 (serial_number, int(device_id))
@@ -260,13 +261,13 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
             update_fields.append("serial_number = ?")
             params.append(serial_number)
 
-        if "mac_address" in data and data["mac_address"] is not None:
+        if next_device_type == "Set-top box":
+            update_fields.append("mac_address = ?")
+            params.append(None)
+        elif "mac_address" in data and data["mac_address"] is not None:
             mac_address = str(data["mac_address"]).strip()
             if not mac_address:
-                if next_device_type == "Set-top box":
-                    mac_address = current_device.get("mac_address") or f"SB-MAC-{str(next_nuid).strip()}"
-                else:
-                    raise ValueError("MAC address cannot be empty")
+                raise ValueError("MAC address cannot be empty")
             cursor = await db.execute(
                 "SELECT id FROM devices WHERE mac_address = ? AND id != ?",
                 (mac_address, int(device_id))
@@ -276,7 +277,7 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
             update_fields.append("mac_address = ?")
             params.append(mac_address)
         
-        for field in ["model", "manufacturer", "current_location", "nuid"]:
+        for field in ["model", "manufacturer", "current_location"]:
             if field in data and data[field] is not None:
                 update_fields.append(f"{field} = ?")
                 params.append(data[field])
@@ -314,8 +315,14 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
             normalized_box = str(data.get("box_type", next_box_type) or "").strip().upper()
             if normalized_box:
                 base_metadata["box_type"] = normalized_box
+            # Ensure NUID field remains populated only for SB.
+            if "nuid" in data and data["nuid"] is not None:
+                update_fields.append("nuid = ?")
+                params.append(str(data["nuid"]).strip() or None)
         else:
             base_metadata.pop("box_type", None)
+            update_fields.append("nuid = ?")
+            params.append(None)
 
         update_fields.append("metadata = ?")
         params.append(json.dumps(base_metadata) if base_metadata else None)
