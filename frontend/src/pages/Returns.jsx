@@ -21,7 +21,7 @@ const Returns = () => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [actionComment, setActionComment] = useState('');
   const [routingConfig, setRoutingConfig] = useState({
-    return: { admin: true, manager: true, staff: true }
+    return: { super_admin: true, manager: true, pdic_staff: true }
   });
 
   const fetchReturns = async () => {
@@ -48,13 +48,13 @@ const Returns = () => {
         const incoming = response?.data || {};
         setRoutingConfig({
           return: {
-            admin: incoming?.return?.admin ?? true,
+            super_admin: incoming?.return?.super_admin ?? incoming?.return?.admin ?? true,
             manager: incoming?.return?.manager ?? true,
-            staff: incoming?.return?.staff ?? true,
+            pdic_staff: incoming?.return?.pdic_staff ?? incoming?.return?.staff ?? true,
           }
         });
       } catch {
-        setRoutingConfig({ return: { admin: true, manager: true, staff: true } });
+        setRoutingConfig({ return: { super_admin: true, manager: true, pdic_staff: true } });
       }
     };
 
@@ -63,13 +63,8 @@ const Returns = () => {
     }
   }, [user?.role]);
 
-  const roleRoutingKey = {
-    super_admin: 'admin',
-    manager: 'manager',
-    pdic_staff: 'staff',
-  };
   const reviewRole = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role) ? user.role : null;
-  const reviewRoleConfigKey = reviewRole ? roleRoutingKey[reviewRole] : null;
+  const reviewRoleConfigKey = reviewRole || null;
   const isReturnApprovalEnabledForRole =
     !reviewRoleConfigKey || Boolean(routingConfig?.return?.[reviewRoleConfigKey]);
   const canApprove = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role) && isReturnApprovalEnabledForRole;

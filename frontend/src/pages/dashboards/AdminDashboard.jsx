@@ -156,12 +156,12 @@ const AdminDashboard = () => {
     datasets: [{
       label: 'Users',
       data: [
-        charts.user_roles?.staff || 0,
+        charts.user_roles?.pdic_staff ?? charts.user_roles?.staff ?? 0,
         charts.user_roles?.sub_distributor || 0,
         charts.user_roles?.cluster || 0,
         charts.user_roles?.operator || 0,
         charts.user_roles?.manager || 0,
-        charts.user_roles?.admin || 0,
+        charts.user_roles?.super_admin ?? charts.user_roles?.admin ?? 0,
       ],
       backgroundColor: ['#f97316', '#14b8a6', '#8b5cf6', '#3b82f6', '#facc15', '#ef4444'],
       borderColor: '#111827',

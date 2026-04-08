@@ -15,9 +15,9 @@ import {
 } from 'lucide-react';
 
 const defaultRoutingConfig = {
-  distribution: { admin: true, manager: true, staff: true },
-  return: { admin: true, manager: true, staff: true },
-  defect: { admin: true, manager: true, staff: true },
+  distribution: { super_admin: true, manager: true, pdic_staff: true },
+  return: { super_admin: true, manager: true, pdic_staff: true },
+  defect: { super_admin: true, manager: true, pdic_staff: true },
 };
 
 const Approvals = () => {
@@ -72,19 +72,19 @@ const Approvals = () => {
       const incoming = response?.data || {};
       setRoutingConfig({
         distribution: {
-          admin: incoming?.distribution?.admin ?? true,
+          super_admin: incoming?.distribution?.super_admin ?? incoming?.distribution?.admin ?? true,
           manager: incoming?.distribution?.manager ?? true,
-          staff: incoming?.distribution?.staff ?? true,
+          pdic_staff: incoming?.distribution?.pdic_staff ?? incoming?.distribution?.staff ?? true,
         },
         return: {
-          admin: incoming?.return?.admin ?? true,
+          super_admin: incoming?.return?.super_admin ?? incoming?.return?.admin ?? true,
           manager: incoming?.return?.manager ?? true,
-          staff: incoming?.return?.staff ?? true,
+          pdic_staff: incoming?.return?.pdic_staff ?? incoming?.return?.staff ?? true,
         },
         defect: {
-          admin: incoming?.defect?.admin ?? true,
+          super_admin: incoming?.defect?.super_admin ?? incoming?.defect?.admin ?? true,
           manager: incoming?.defect?.manager ?? true,
-          staff: incoming?.defect?.staff ?? true,
+          pdic_staff: incoming?.defect?.pdic_staff ?? incoming?.defect?.staff ?? true,
         },
       });
     } catch (error) {
@@ -110,19 +110,19 @@ const Approvals = () => {
       setSavingRoutingConfig(true);
       await approvalsAPI.updateRoleRoutingConfig({
         distribution: {
-          admin: Boolean(routingConfig?.distribution?.admin),
+          super_admin: Boolean(routingConfig?.distribution?.super_admin),
           manager: Boolean(routingConfig?.distribution?.manager),
-          staff: Boolean(routingConfig?.distribution?.staff),
+          pdic_staff: Boolean(routingConfig?.distribution?.pdic_staff),
         },
         return: {
-          admin: Boolean(routingConfig?.return?.admin),
+          super_admin: Boolean(routingConfig?.return?.super_admin),
           manager: Boolean(routingConfig?.return?.manager),
-          staff: Boolean(routingConfig?.return?.staff),
+          pdic_staff: Boolean(routingConfig?.return?.pdic_staff),
         },
         defect: {
-          admin: Boolean(routingConfig?.defect?.admin),
+          super_admin: Boolean(routingConfig?.defect?.super_admin),
           manager: Boolean(routingConfig?.defect?.manager),
-          staff: Boolean(routingConfig?.defect?.staff),
+          pdic_staff: Boolean(routingConfig?.defect?.pdic_staff),
         },
       });
       showToast('Approval routing updated successfully', 'success');

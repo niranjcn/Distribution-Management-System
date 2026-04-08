@@ -73,7 +73,7 @@ async def update_approval_role_routing_config(
 ):
     """Update admin/manager approval-role routing configuration (admin only)."""
     try:
-        incoming = payload.model_dump(by_alias=True)
+        incoming = payload.model_dump()
         updated = await approval_service.update_role_routing_config(
             config=incoming,
             actor=current_user,
