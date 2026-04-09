@@ -133,15 +133,17 @@ async def create_user(user_data: UserCreate, creator_role: str = "super_admin") 
         parent_id = int(user_data.parent_id) if user_data.parent_id else None
         
         cursor = await db.execute(
-            """INSERT INTO users (email, password_hash, name, role, phone, department, location,
+            """INSERT INTO users (email, password_hash, name, role, digital_id, broadband_id, phone, department, location,
                 status, parent_id, permissions, theme, compact_mode, email_notifications,
                 push_notifications, is_verified, created_at, updated_at, last_login)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_data.email.lower(),
                 get_password_hash(user_data.password),
                 user_data.name,
                 user_data.role.value,
+                user_data.digital_id,
+                user_data.broadband_id,
                 user_data.phone,
                 user_data.department,
                 user_data.location,
@@ -173,6 +175,8 @@ async def update_user(user_id: str, user_data: UserUpdate) -> Optional[Dict[str,
         
         field_mapping = {
             "name": "name",
+            "digital_id": "digital_id",
+            "broadband_id": "broadband_id",
             "phone": "phone",
             "department": "department",
             "location": "location",

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, Download, ChevronDown, MoreVertical } from 'lucide-react';
 import { dashboardAPI } from '../../services/api';
 
@@ -16,14 +16,46 @@ const DataTable = ({
   getRowClassName,
   exportTableName,
 }) => {
+  const INITIAL_PROGRESSIVE_PAGES = 50;
+  const PROGRESSIVE_STEP_PAGES = 25;
+
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [selectedRows, setSelectedRows] = useState([]);
   const [expandedRow, setExpandedRow] = useState(null);
+  const [renderCount, setRenderCount] = useState(() => pageSize * INITIAL_PROGRESSIVE_PAGES);
+
+  useEffect(() => {
+    const initial = Math.max(pageSize, pageSize * INITIAL_PROGRESSIVE_PAGES);
+    setRenderCount(Math.min(data.length, initial));
+  }, [data, pageSize]);
+
+  useEffect(() => {
+    const requiredRows = currentPage * pageSize;
+    if (requiredRows > renderCount) {
+      setRenderCount(Math.min(data.length, requiredRows));
+    }
+  }, [currentPage, pageSize, renderCount, data.length]);
+
+  useEffect(() => {
+    if (renderCount >= data.length) return undefined;
+
+    const step = Math.max(pageSize, pageSize * PROGRESSIVE_STEP_PAGES);
+    const timer = setTimeout(() => {
+      setRenderCount((prev) => Math.min(data.length, prev + step));
+    }, 120);
+
+    return () => clearTimeout(timer);
+  }, [renderCount, data.length, pageSize]);
+
+  const renderWindow = useMemo(
+    () => data.slice(0, Math.max(renderCount, currentPage * pageSize)),
+    [data, renderCount, currentPage, pageSize]
+  );
 
   // Filter data based on search
-  const filteredData = data.filter((row) => {
+  const filteredData = renderWindow.filter((row) => {
     if (!searchQuery) return true;
     return columns.some((col) => {
       const value = row[col.key];
@@ -143,6 +175,12 @@ const DataTable = ({
           )}
         </div>
       </div>
+
+      {renderCount < data.length && (
+        <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-100 bg-gray-50">
+          Rendering {renderCount.toLocaleString()} of {data.length.toLocaleString()} rows. Remaining rows are loading progressively.
+        </div>
+      )}
 
       {/* Table - Desktop View */}
       <div className="hidden md:block overflow-x-auto">

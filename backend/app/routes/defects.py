@@ -37,7 +37,7 @@ def _ensure_not_md_director(current_user: dict) -> None:
 @router.get("/replacements")
 async def get_replacement_defects(
     page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=300),
+    page_size: int = Query(100, ge=1),
     current_user: dict = Depends(require_any_role)
 ):
     """Get all replacement mappings (defects with replacement_device_id), scoped by hierarchy."""
@@ -67,7 +67,7 @@ async def get_replacement_defects(
 @router.get("/replacements/pending")
 async def get_pending_replacement_defects(
     page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=300),
+    page_size: int = Query(100, ge=1),
     current_user: dict = Depends(require_any_role)
 ):
     """Get defective devices waiting for replacement assignment."""
@@ -183,7 +183,7 @@ async def get_my_pending_dues(
 @router.get("")
 async def get_defects(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     defect_status: Optional[str] = Query(None, alias="status"),
     severity: Optional[str] = None,
     defect_type: Optional[str] = None,

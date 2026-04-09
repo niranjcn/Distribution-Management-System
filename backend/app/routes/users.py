@@ -116,7 +116,7 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
 @router.get("")
 async def get_users(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=10000),
+    page_size: int = Query(20, ge=1),
     role: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
@@ -154,23 +154,23 @@ async def get_users(
     elif actor_role == SUB_DISTRIBUTION_MANAGER:
         parent_id_filter = str(current_user["id"])
         if normalized_role_filter == OPERATOR:
-            clusters_result = await user_service.get_users(role=CLUSTER, parent_id=str(current_user["id"]), page_size=20000)
+            clusters_result = await user_service.get_users(role=CLUSTER, parent_id=str(current_user["id"]), page_size=1_000_000)
             parent_ids_in_filter = [int(c["id"]) for c in clusters_result["data"]]
             parent_id_filter = None
     elif actor_role == SUB_DISTRIBUTOR:
         parent_id_filter = str(current_user["id"])
         if normalized_role_filter == CLUSTER:
-            sub_dist_manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=str(current_user["id"]), page_size=20000)
+            sub_dist_manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=str(current_user["id"]), page_size=1_000_000)
             parent_ids_in_filter = [int(m["id"]) for m in sub_dist_manager_result["data"]]
             parent_id_filter = None
         elif normalized_role_filter == OPERATOR:
-            sub_dist_manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=str(current_user["id"]), page_size=20000)
+            sub_dist_manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=str(current_user["id"]), page_size=1_000_000)
             sub_dist_manager_ids = [int(m["id"]) for m in sub_dist_manager_result["data"]]
             if not sub_dist_manager_ids:
                 parent_ids_in_filter = []
                 parent_id_filter = None
             else:
-                clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=sub_dist_manager_ids, page_size=20000)
+                clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=sub_dist_manager_ids, page_size=1_000_000)
                 parent_ids_in_filter = [int(c["id"]) for c in clusters_result["data"]]
                 parent_id_filter = None
     elif actor_role == CLUSTER:
@@ -237,6 +237,9 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
 async def create_user(user_data: UserCreate, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
     target_role = normalize_role(user_data.role.value)
+
+    if target_role != SUB_DISTRIBUTOR:
+        user_data = user_data.model_copy(update={"digital_id": None, "broadband_id": None})
 
     if actor_role not in ALLOWED_CREATE_BY_ROLE:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to create users")

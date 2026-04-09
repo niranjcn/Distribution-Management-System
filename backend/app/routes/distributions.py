@@ -14,8 +14,6 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-
 
 def _ensure_not_md_director(current_user: dict) -> None:
     if current_user.get("role") == "md_director":
@@ -94,11 +92,6 @@ async def bulk_upload_distribution(
 
     try:
         contents = await file.read()
-        if len(contents) > MAX_UPLOAD_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="File too large. Maximum 10MB allowed"
-            )
 
         _validate_upload_signature(filename_lower, contents)
 
@@ -229,7 +222,7 @@ async def sync_distribution_devices(
 @router.get("")
 async def get_distributions(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     status: Optional[str] = None,
     search: Optional[str] = None,
     current_user: dict = Depends(get_current_user)

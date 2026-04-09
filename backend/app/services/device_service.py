@@ -437,12 +437,12 @@ async def get_available_devices(holder_id: Optional[str] = None) -> List[Dict[st
     async with get_db() as db:
         if holder_id:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status = ? AND current_holder_id = ? ORDER BY created_at DESC LIMIT 5000",
+                "SELECT * FROM devices WHERE status = ? AND current_holder_id = ? ORDER BY created_at DESC",
                 (DeviceStatus.AVAILABLE.value, holder_id)
             )
         else:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status = ? ORDER BY created_at DESC LIMIT 5000",
+                "SELECT * FROM devices WHERE status = ? ORDER BY created_at DESC",
                 (DeviceStatus.AVAILABLE.value,)
             )
         rows = await cursor.fetchall()
@@ -461,12 +461,12 @@ async def get_devices_for_replacement(exclude_device_id: Optional[str] = None) -
         statuses = (DeviceStatus.AVAILABLE.value, DeviceStatus.RETURNED.value)
         if exclude_device_id:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status IN (?, ?) AND id != ? ORDER BY updated_at DESC LIMIT 300",
+                "SELECT * FROM devices WHERE status IN (?, ?) AND id != ? ORDER BY updated_at DESC",
                 (statuses[0], statuses[1], int(exclude_device_id))
             )
         else:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status IN (?, ?) ORDER BY updated_at DESC LIMIT 300",
+                "SELECT * FROM devices WHERE status IN (?, ?) ORDER BY updated_at DESC",
                 statuses
             )
         rows = await cursor.fetchall()
@@ -477,7 +477,7 @@ async def get_held_devices(holder_id: str) -> List[Dict[str, Any]]:
     """Get all devices currently held by a user (any status) — for sub-level redistribution"""
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT * FROM devices WHERE current_holder_id = ? ORDER BY updated_at DESC LIMIT 5000",
+            "SELECT * FROM devices WHERE current_holder_id = ? ORDER BY updated_at DESC",
             (holder_id,)
         )
         rows = await cursor.fetchall()
@@ -771,7 +771,7 @@ async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]
         device = row_to_dict(row)
         
         cursor = await db.execute(
-            "SELECT * FROM device_history WHERE device_id = ? ORDER BY timestamp DESC LIMIT 50",
+            "SELECT * FROM device_history WHERE device_id = ? ORDER BY timestamp DESC",
             (device["id"],)
         )
         history_rows = await cursor.fetchall()

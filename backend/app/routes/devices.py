@@ -10,8 +10,6 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-
 
 def _is_likely_text(content: bytes) -> bool:
     if not content:
@@ -48,7 +46,7 @@ def _validate_upload_signature(filename_lower: str, content: bytes) -> None:
 @router.get("")
 async def get_devices(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     status: Optional[str] = None,
     device_type: Optional[str] = None,
     holder_id: Optional[str] = None,
@@ -149,6 +147,9 @@ async def get_available_devices(
 
 @router.get("/my-overview")
 async def get_my_device_overview(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1),
+    show_all: bool = Query(False),
     current_user: dict = Depends(get_current_user)
 ):
     """Get comprehensive device overview: devices in hand + under hierarchy + distribution stats.
@@ -159,15 +160,26 @@ async def get_my_device_overview(
     try:
         role = current_user["role"]
         if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
-            result = await device_service.get_devices(page=1, page_size=2000)
+            effective_page_size = 1_000_000 if show_all else min(page_size, 100)
+            result = await device_service.get_devices(page=page, page_size=effective_page_size)
             all_devices = result["data"]
             stats = await device_service.get_device_stats()
+            pagination = result.get("pagination", {})
+            total_count = int(pagination.get("total", stats.get("total", 0) or 0))
             return {
                 "success": True,
                 "data": {
                     "held_by_me": all_devices,
                     "under_subordinates": [],
                     "all_under_me": all_devices,
+                    "meta": {
+                        "page": page,
+                        "page_size": effective_page_size,
+                        "show_all": show_all,
+                        "loaded_count": len(all_devices),
+                        "total_count": total_count,
+                        "has_next": bool(pagination.get("has_next", False)),
+                    },
                     "stats": {
                         "in_my_hand": stats.get("total", 0),
                         "under_subordinates": 0,
@@ -185,6 +197,17 @@ async def get_my_device_overview(
                 user_id=current_user["id"],
                 user_role=role
             )
+            chain_devices = overview.get("all_under_me") or []
+            stats = overview.get("stats") or {}
+            total_count = int(stats.get("total_in_chain", len(chain_devices)) or len(chain_devices))
+            overview["meta"] = {
+                "page": 1,
+                "page_size": len(chain_devices),
+                "show_all": True,
+                "loaded_count": len(chain_devices),
+                "total_count": total_count,
+                "has_next": False,
+            }
             return {"success": True, "data": overview}
     except HTTPException:
         raise
@@ -404,11 +427,6 @@ async def bulk_upload_devices(
         import io
 
         contents = await file.read()
-        if len(contents) > MAX_UPLOAD_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="File too large. Maximum 10MB allowed"
-            )
 
         _validate_upload_signature(filename_lower, contents)
 

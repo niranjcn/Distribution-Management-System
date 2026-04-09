@@ -16,7 +16,7 @@ const Replacements = () => {
   const fetchReplacements = async () => {
     try {
       setLoading(true);
-      const response = await defectsAPI.getReplacements({ page_size: 300 });
+      const response = await defectsAPI.getReplacements({ page_size: 1000000 });
       setRows(response.data || []);
     } catch (error) {
       showToast(error.message || 'Failed to load replacements', 'error');

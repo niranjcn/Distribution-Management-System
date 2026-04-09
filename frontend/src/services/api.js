@@ -20,6 +20,18 @@ const buildCsrfHeader = (method) => {
   return csrfToken && isUnsafeMethod(method) ? { 'X-CSRFToken': csrfToken } : {};
 };
 
+const DEFAULT_UNCAPPED_PAGE_SIZE = 1000000;
+
+const withLargePageSize = (params = {}) => {
+  if (params && (Object.prototype.hasOwnProperty.call(params, 'page_size') || Object.prototype.hasOwnProperty.call(params, 'limit'))) {
+    return params;
+  }
+  return {
+    ...params,
+    page_size: DEFAULT_UNCAPPED_PAGE_SIZE,
+  };
+};
+
 // API request helper
 const apiRequest = async (endpoint, options = {}) => {
   const url = `${API_BASE_URL}${endpoint}`;
@@ -186,7 +198,7 @@ export const authAPI = {
 // Users API
 export const usersAPI = {
   getUsers: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/users?${queryString}`);
     return response;
   },
@@ -233,7 +245,7 @@ export const devicesAPI = {
   getDevices: async (params = {}) => {
     log('[devicesAPI] Getting devices with params:', params);
     try {
-      const queryString = new URLSearchParams(params).toString();
+      const queryString = new URLSearchParams(withLargePageSize(params)).toString();
       const response = await apiRequest(`/devices?${queryString}`);
       log('[devicesAPI] Successfully fetched', response.data?.length || 0, 'devices');
       return response;
@@ -253,8 +265,10 @@ export const devicesAPI = {
     return response;
   },
 
-  getMyOverview: async () => {
-    const response = await apiRequest('/devices/my-overview');
+  getMyOverview: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const endpoint = queryString ? `/devices/my-overview?${queryString}` : '/devices/my-overview';
+    const response = await apiRequest(endpoint);
     return response;
   },
 
@@ -355,7 +369,7 @@ export const devicesAPI = {
 // Distributions API
 export const distributionsAPI = {
   getDistributions: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/distributions?${queryString}`);
     return response;
   },
@@ -498,7 +512,7 @@ export const distributionsAPI = {
 // Defects API
 export const defectsAPI = {
   getDefects: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const endpoint = queryString ? `/defects?${queryString}` : '/defects';
     const response = await apiRequest(endpoint);
     return response;
@@ -648,13 +662,13 @@ export const defectsAPI = {
   },
 
   getReplacements: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/defects/replacements?${queryString}`);
     return response;
   },
 
   getPendingReplacements: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/defects/replacements/pending?${queryString}`);
     return response;
   },
@@ -678,7 +692,7 @@ export const defectsAPI = {
 // Returns API
 export const returnsAPI = {
   getReturns: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/returns?${queryString}`);
     return response;
   },
@@ -715,7 +729,7 @@ export const returnsAPI = {
 // Approvals API
 export const approvalsAPI = {
   getApprovals: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/approvals?${queryString}`);
     return response;
   },
@@ -758,7 +772,7 @@ export const approvalsAPI = {
 // Operators API
 export const operatorsAPI = {
   getOperators: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/operators?${queryString}`);
     return response;
   },
@@ -802,7 +816,7 @@ export const notificationsAPI = {
   getNotifications: async (params = {}) => {
     log('[notificationsAPI] Getting notifications with params:', params);
     try {
-      const queryString = new URLSearchParams(params).toString();
+      const queryString = new URLSearchParams(withLargePageSize(params)).toString();
       const response = await apiRequest(`/notifications?${queryString}`);
       log('[notificationsAPI] Successfully fetched notifications');
       return response;
@@ -887,7 +901,7 @@ export const externalInventoryAPI = {
   },
 
   getItems: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/external-inventory/items?${queryString}`);
     return response;
   },
@@ -953,7 +967,7 @@ export const externalInventoryAPI = {
   },
 
   getPurchaseOrders: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/external-inventory/purchase-orders?${queryString}`);
     return response;
   },
@@ -975,13 +989,13 @@ export const externalInventoryAPI = {
   },
 
   getReceipts: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/external-inventory/receipts?${queryString}`);
     return response;
   },
 
   getMovements: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/external-inventory/movements?${queryString}`);
     return response;
   },
@@ -1150,7 +1164,7 @@ export const dashboardAPI = {
   },
 
   getActivities: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = new URLSearchParams(withLargePageSize(params)).toString();
     const response = await apiRequest(`/dashboard/activities?${queryString}`);
     return response;
   },
@@ -1192,7 +1206,7 @@ export const changeRequestsAPI = {
       }),
     }),
   getRequests: (params = {}) => {
-    const qs = new URLSearchParams(params).toString();
+    const qs = new URLSearchParams(withLargePageSize(params)).toString();
     return apiRequest(`/change-requests?${qs}`);
   },
   review: (requestId, data) => apiRequest(`/change-requests/${requestId}/review`, { method: 'PATCH', body: JSON.stringify(data) }),

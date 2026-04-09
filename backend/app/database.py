@@ -160,6 +160,8 @@ CREATE_TABLE_STATEMENTS = [
         name VARCHAR(255) NOT NULL,
         password_hash TEXT NOT NULL,
         role VARCHAR(64) NOT NULL,
+        digital_id VARCHAR(128),
+        broadband_id VARCHAR(128),
         force_email_change TINYINT(1) DEFAULT 0,
         force_password_change TINYINT(1) DEFAULT 0,
         phone VARCHAR(64),
@@ -591,6 +593,8 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN locked_until VARCHAR(64)",
             "ALTER TABLE users ADD COLUMN force_email_change TINYINT(1) DEFAULT 0",
             "ALTER TABLE users ADD COLUMN force_password_change TINYINT(1) DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN digital_id VARCHAR(128)",
+            "ALTER TABLE users ADD COLUMN broadband_id VARCHAR(128)",
         ]:
             try:
                 await db.execute(stmt)

@@ -48,6 +48,8 @@ const Devices = () => {
   const [defectsData, setDefectsData] = useState([]);
   const [replacementMap, setReplacementMap] = useState({ replacementIds: new Set(), defectiveIds: new Set(), defectByDeviceId: {} });
   const [loading, setLoading] = useState(true);
+  const [showAllDevices, setShowAllDevices] = useState(false);
+  const [deviceMeta, setDeviceMeta] = useState({ loaded_count: 0, total_count: 0, has_next: false, show_all: false });
   const [activeTab, setActiveTab] = useState('all');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [tableFilters, setTableFilters] = useState({
@@ -86,23 +88,24 @@ const Devices = () => {
 
   useEffect(() => {
     fetchDevices();
-  }, []);
+  }, [showAllDevices]);
 
   const fetchDevices = async () => {
     try {
       setLoading(true);
       const [overviewResponse, defectsResponse] = await Promise.all([
-        devicesAPI.getMyOverview(),
-        defectsAPI.getDefects({ page_size: 100 })
+        devicesAPI.getMyOverview({ page: 1, page_size: 100, show_all: showAllDevices }),
+        defectsAPI.getDefects({ page_size: 1000000 })
       ]);
 
       setOverview(overviewResponse.data);
+      setDeviceMeta(overviewResponse?.data?.meta || { loaded_count: 0, total_count: 0, has_next: false, show_all: showAllDevices });
 
       try {
         const [subsResponse, clustersResponse, operatorsResponse] = await Promise.all([
-          usersAPI.getUsers({ role: 'sub_distributor', page_size: 5000 }),
-          usersAPI.getUsers({ role: 'cluster', page_size: 5000 }),
-          usersAPI.getUsers({ role: 'operator', page_size: 5000 }),
+          usersAPI.getUsers({ role: 'sub_distributor', page_size: 1000000 }),
+          usersAPI.getUsers({ role: 'cluster', page_size: 1000000 }),
+          usersAPI.getUsers({ role: 'operator', page_size: 1000000 }),
         ]);
 
         const collect = (response) => {
@@ -617,27 +620,27 @@ const Devices = () => {
             <>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">Total</p>
-                <p className="text-2xl font-bold text-gray-800">{overviewStats.total || (overview?.all_under_me?.length || 0)}</p>
+                <p className="text-2xl font-bold text-gray-800">{overviewStats.total ?? (overview?.all_under_me?.length || 0)}</p>
               </Card>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">Available</p>
-                <p className="text-2xl font-bold text-green-600">{overviewStats.available || (overview?.all_under_me || []).filter(d => d.status === 'available').length}</p>
+                <p className="text-2xl font-bold text-green-600">{overviewStats.available ?? (overview?.all_under_me || []).filter(d => d.status === 'available').length}</p>
               </Card>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">Distributed</p>
-                <p className="text-2xl font-bold text-blue-600">{overviewStats.distributed || (overview?.all_under_me || []).filter(d => d.status === 'distributed').length}</p>
+                <p className="text-2xl font-bold text-blue-600">{overviewStats.distributed ?? (overview?.all_under_me || []).filter(d => d.status === 'distributed').length}</p>
               </Card>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">In Use</p>
-                <p className="text-2xl font-bold text-purple-600">{overviewStats.in_use || (overview?.all_under_me || []).filter(d => d.status === 'in_use').length}</p>
+                <p className="text-2xl font-bold text-purple-600">{overviewStats.in_use ?? (overview?.all_under_me || []).filter(d => d.status === 'in_use').length}</p>
               </Card>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">Defective</p>
-                <p className="text-2xl font-bold text-red-600">{overviewStats.defective || (overview?.all_under_me || []).filter(d => d.status === 'defective').length}</p>
+                <p className="text-2xl font-bold text-red-600">{overviewStats.defective ?? (overview?.all_under_me || []).filter(d => d.status === 'defective').length}</p>
               </Card>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">Returned</p>
-                <p className="text-2xl font-bold text-orange-600">{overviewStats.returned || (overview?.all_under_me || []).filter(d => d.status === 'returned').length}</p>
+                <p className="text-2xl font-bold text-orange-600">{overviewStats.returned ?? (overview?.all_under_me || []).filter(d => d.status === 'returned').length}</p>
               </Card>
             </>
           ) : (
@@ -922,8 +925,19 @@ const Devices = () => {
             )}
 
             <p className="text-xs text-gray-500 mt-3">
-              Table result count: {tableData.length}
+              Table result count: {tableData.length} | Loaded: {deviceMeta.loaded_count || tableData.length} / Total: {deviceMeta.total_count || overviewStats.total || tableData.length}
             </p>
+
+            {isManagement && !showAllDevices && (
+              <div className="mt-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowAllDevices(true)}
+                >
+                  Show All Devices
+                </Button>
+              </div>
+            )}
           </Card>
         </>
       )}

@@ -50,13 +50,15 @@ const emptyForm = {
   email: '',
   password: '',
   role: 'operator',
+  digitalId: '',
+  broadbandId: '',
   phone: '',
   department: '',
   location: '',
   parentId: '',
 };
 
-const USERS_FETCH_PAGE_SIZE = 10000;
+const USERS_FETCH_PAGE_SIZE = 1000000;
 
 const Users = () => {
   const { user: currentUser, hasRole } = useAuth();
@@ -318,6 +320,10 @@ const Users = () => {
         password: formData.password,
         role: formData.role,
       };
+      if (formData.role === 'sub_distributor') {
+        payload.digital_id = formData.digitalId || null;
+        payload.broadband_id = formData.broadbandId || null;
+      }
       if (formData.phone)      payload.phone = formData.phone;
       if (formData.department) payload.department = formData.department;
       if (formData.location)   payload.location = formData.location;
@@ -852,6 +858,25 @@ const Users = () => {
                 </div>
               </div>
 
+              {selectedUser.role === 'sub_distributor' && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <Building className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <p className="text-sm text-gray-500">Digital ID</p>
+                      <p className="font-medium text-gray-800">{selectedUser.digital_id || 'Not provided'}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Building className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <p className="text-sm text-gray-500">Broadband ID</p>
+                      <p className="font-medium text-gray-800">{selectedUser.broadband_id || 'Not provided'}</p>
+                    </div>
+                  </div>
+                </>
+              )}
+
               {/* ── Hierarchy breadcrumb ── */}
               {selectedUser.parent_id && (() => {
                 const allAvailable = [...users, ...subDistOperators];
@@ -1095,6 +1120,31 @@ const Users = () => {
                 )}
               </div>
             ) : null}
+
+            {formData.role === 'sub_distributor' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID (Optional)</label>
+                  <input
+                    type="text"
+                    value={formData.digitalId}
+                    onChange={(e) => setFormData({ ...formData, digitalId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter digital ID"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID (Optional)</label>
+                  <input
+                    type="text"
+                    value={formData.broadbandId}
+                    onChange={(e) => setFormData({ ...formData, broadbandId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter broadband ID"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Optional fields */}

@@ -50,7 +50,7 @@ async def get_external_inventory_dashboard(
 @router.get("/items")
 async def get_external_inventory_items(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     search: Optional[str] = None,
     device_type: Optional[str] = Query(None, alias="type"),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -318,7 +318,7 @@ async def create_external_inventory_adjustment(
 @router.get("/purchase-orders")
 async def get_external_inventory_purchase_orders(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
     current_user: dict = Depends(require_any_role),
@@ -409,7 +409,7 @@ async def receive_external_inventory_purchase_order(
 @router.get("/receipts")
 async def get_external_inventory_receipts(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     po_id: Optional[str] = None,
     current_user: dict = Depends(require_management),
 ):
@@ -438,7 +438,7 @@ async def get_external_inventory_receipts(
 @router.get("/movements")
 async def get_external_inventory_movements(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     item_inventory_id: Optional[str] = None,
     movement_type: Optional[str] = None,
     search: Optional[str] = None,

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @router.get("")
 async def get_batches(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     search: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
@@ -75,7 +75,7 @@ async def get_batch(
 async def get_batch_devices(
     batch_id: str,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all devices in a batch"""

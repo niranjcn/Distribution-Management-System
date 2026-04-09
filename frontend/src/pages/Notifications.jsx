@@ -273,37 +273,42 @@ const Notifications = () => {
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [showAllNotifications, setShowAllNotifications] = useState(false);
 
-  const loadNotifications = useCallback(async (targetPage = 1) => {
+  const loadNotifications = useCallback(async (targetPage = 1, forceShowAll = showAllNotifications) => {
     setLoading(true);
     try {
       const response = await notificationsAPI.getNotifications({
-        page: targetPage,
-        page_size: PAGE_SIZE,
+        page: forceShowAll ? 1 : targetPage,
+        page_size: forceShowAll ? 1000000 : PAGE_SIZE,
       });
 
       const incoming = response?.data || [];
       const pagination = response?.pagination || {};
 
-      if (targetPage === 1) {
+      if (forceShowAll) {
+        setItems(incoming);
+      } else if (targetPage === 1) {
         setItems(incoming);
       } else {
         setItems((prev) => [...prev, ...incoming]);
       }
 
       setPage(targetPage);
-      setHasMore(Boolean(pagination.has_next));
+      setTotalCount(Number(pagination.total || incoming.length || 0));
+      setHasMore(forceShowAll ? false : Boolean(pagination.has_next));
       await refreshUnreadCount();
     } catch (error) {
       showToast(error.message || 'Failed to load notifications', 'error');
     } finally {
       setLoading(false);
     }
-  }, [refreshUnreadCount, showToast]);
+  }, [refreshUnreadCount, showToast, showAllNotifications]);
 
   useEffect(() => {
-    loadNotifications(1);
-  }, [loadNotifications]);
+    loadNotifications(1, showAllNotifications);
+  }, [loadNotifications, showAllNotifications]);
 
   const orderedItems = useMemo(
     () => [...items].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
@@ -366,6 +371,17 @@ const Notifications = () => {
         </Button>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+        <p>
+          Loaded {orderedItems.length} of {totalCount || orderedItems.length} notifications
+        </p>
+        {!showAllNotifications && (
+          <Button variant="secondary" onClick={() => setShowAllNotifications(true)}>
+            Show All Notifications
+          </Button>
+        )}
+      </div>
+
       {loading ? (
         <Card>
           <div className="py-10 flex items-center justify-center gap-2 text-gray-500">
@@ -416,7 +432,7 @@ const Notifications = () => {
         </div>
       )}
 
-      {!loading && hasMore && (
+      {!loading && hasMore && !showAllNotifications && (
         <div className="flex justify-center">
           <Button variant="outline" onClick={() => loadNotifications(page + 1)}>
             Load Older Notifications
