@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 import json
 import io
 from pathlib import Path
@@ -136,6 +136,49 @@ async def _device_has_open_distribution_lock(db, device_id: str) -> bool:
     return False
 
 
+async def _get_descendant_user_ids(db, root_user_id: str) -> Set[str]:
+    descendants: Set[str] = set()
+    if not root_user_id or not str(root_user_id).isdigit():
+        return descendants
+
+    pending: List[int] = [int(root_user_id)]
+    visited: Set[int] = set()
+
+    while pending:
+        current_parent_id = pending.pop()
+        if current_parent_id in visited:
+            continue
+        visited.add(current_parent_id)
+
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE parent_id = ?",
+            (current_parent_id,)
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            child_id = int(row["id"])
+            child_id_str = str(child_id)
+            if child_id_str not in descendants:
+                descendants.add(child_id_str)
+                pending.append(child_id)
+
+    return descendants
+
+
+async def _get_distribution_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:
+    role = str(user.get("role") or "")
+    user_id = str(user.get("id") or user.get("_id") or "")
+    parent_id = str(user.get("parent_id") or "")
+
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        return None
+
+    scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
+    scoped_ids: Set[str] = {scope_root}
+    scoped_ids.update(await _get_descendant_user_ids(db, scope_root))
+    return scoped_ids
+
+
 async def get_distributions(
     page: int = 1,
     page_size: int = 20,
@@ -143,7 +186,8 @@ async def get_distributions(
     from_user_id: Optional[str] = None,
     to_user_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    current_user: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Get all distributions with pagination and filters"""
     async with get_db() as db:
@@ -159,7 +203,17 @@ async def get_distributions(
         if to_user_id:
             conditions.append("to_user_id = ?")
             params.append(to_user_id)
-        if user_id:
+
+        scope_ids = await _get_distribution_scope_user_ids(db, current_user) if current_user else None
+        if scope_ids is not None:
+            if not scope_ids:
+                return {"data": [], "pagination": get_pagination(page, page_size, 0)}
+            scope_list = sorted(scope_ids)
+            placeholders = ",".join(["?"] * len(scope_list))
+            conditions.append(f"(from_user_id IN ({placeholders}) OR to_user_id IN ({placeholders}))")
+            params.extend(scope_list)
+            params.extend(scope_list)
+        elif user_id:
             conditions.append("(from_user_id = ? OR to_user_id = ?)")
             params.extend([user_id, user_id])
         if search:
@@ -348,7 +402,25 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 )
 
         # ── Hierarchy validation for sub-level roles ──────────────────────────
-        if from_role == "sub_distributor":
+        if from_role == "sub_distribution_manager":
+            if to_role == "cluster":
+                if str(to_user.get("parent_id", "")) != from_user_id:
+                    raise ValueError("You can only distribute to clusters directly under your account")
+            elif to_role == "operator":
+                cursor = await db.execute(
+                    "SELECT * FROM users WHERE id = ?",
+                    (int(to_user.get("parent_id") or 0),)
+                )
+                parent_cluster = await cursor.fetchone()
+                if not parent_cluster:
+                    raise ValueError("Operator's cluster not found")
+                parent_cluster = row_to_dict(parent_cluster)
+                if str(parent_cluster.get("parent_id", "")) != from_user_id:
+                    raise ValueError("You can only distribute to operators within your sub-distribution manager chain")
+            else:
+                raise ValueError("Sub distribution managers can only distribute to clusters or operators")
+
+        elif from_role == "sub_distributor":
             if to_role == "cluster":
                 if str(to_user.get("parent_id", "")) != from_user_id:
                     raise ValueError("You can only distribute to clusters directly under your account")

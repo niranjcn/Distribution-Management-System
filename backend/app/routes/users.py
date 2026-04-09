@@ -91,9 +91,11 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
         return True
 
     if actor_role == SUB_DISTRIBUTION_MANAGER:
-        if target_role not in {SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR}:
+        if write and target_role in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER}:
             return False
-        root_id = str(current_user.get("id"))
+        if target_role not in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR}:
+            return False
+        root_id = str(current_user.get("parent_id") or current_user.get("id"))
         if str(target_user.get("id")) == root_id:
             return True
         return await _branch_contains_user(root_id, target_user.get("id"))
@@ -152,11 +154,25 @@ async def get_users(
                 },
             }
     elif actor_role == SUB_DISTRIBUTION_MANAGER:
-        parent_id_filter = str(current_user["id"])
-        if normalized_role_filter == OPERATOR:
-            clusters_result = await user_service.get_users(role=CLUSTER, parent_id=str(current_user["id"]), page_size=1_000_000)
-            parent_ids_in_filter = [int(c["id"]) for c in clusters_result["data"]]
-            parent_id_filter = None
+        scope_root = str(current_user.get("parent_id") or current_user["id"])
+        parent_id_filter = scope_root
+        if normalized_role_filter in {CLUSTER, OPERATOR}:
+            manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=scope_root, page_size=1_000_000)
+            manager_ids = [int(m["id"]) for m in manager_result["data"]]
+            candidate_parent_ids = [int(scope_root)] + manager_ids if str(scope_root).isdigit() else manager_ids
+
+            if normalized_role_filter == CLUSTER:
+                parent_ids_in_filter = candidate_parent_ids
+                parent_id_filter = None
+            else:
+                if not candidate_parent_ids:
+                    parent_ids_in_filter = []
+                    parent_id_filter = None
+                else:
+                    clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=candidate_parent_ids, page_size=1_000_000)
+                    cluster_ids = [int(c["id"]) for c in clusters_result["data"]]
+                    parent_ids_in_filter = cluster_ids + candidate_parent_ids
+                    parent_id_filter = None
     elif actor_role == SUB_DISTRIBUTOR:
         parent_id_filter = str(current_user["id"])
         if normalized_role_filter == CLUSTER:

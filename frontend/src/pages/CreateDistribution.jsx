@@ -64,26 +64,26 @@ const CreateDistribution = () => {
 
         if (isManagement) {
           const [sdRes, clRes, opRes] = await Promise.all([
-            usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 1000000 }).catch(() => ({ data: [] })),
-            usersAPI.getUsers({ role: 'cluster',        status: 'active', page_size: 1000000 }).catch(() => ({ data: [] })),
-            usersAPI.getUsers({ role: 'operator',       status: 'active', page_size: 1000000 }).catch(() => ({ data: [] })),
+            usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 100 }).catch(() => ({ data: [] })),
+            usersAPI.getUsers({ role: 'cluster',        status: 'active', page_size: 100 }).catch(() => ({ data: [] })),
+            usersAPI.getUsers({ role: 'operator',       status: 'active', page_size: 100 }).catch(() => ({ data: [] })),
           ]);
           setSubDists(sdRes.data || []);
           setAllClusters(clRes.data || []);
           setAllOperators(opRes.data || []);
         } else if (role === 'sub_distributor') {
           const [clRes, opRes] = await Promise.all([
-            usersAPI.getUsers({ role: 'cluster',  status: 'active', page_size: 1000000 }).catch(() => ({ data: [] })),
-            usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(() => ({ data: [] })),
+            usersAPI.getUsers({ role: 'cluster',  status: 'active', page_size: 100 }).catch(() => ({ data: [] })),
+            usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 100 }).catch(() => ({ data: [] })),
           ]);
           setAllClusters(clRes.data || []);
           setAllOperators(opRes.data || []);
         } else if (role === 'cluster') {
-          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(() => ({ data: [] }));
+          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 100 }).catch(() => ({ data: [] }));
           setAllOperators(opRes.data || []);
         } else if (role === 'operator') {
           // Backend returns only sibling operators (same parent_id); exclude self
-          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(() => ({ data: [] }));
+          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 100 }).catch(() => ({ data: [] }));
           setAllOperators((opRes.data || []).filter(o => String(o.id) !== String(user?.id)));
         }
       } catch (error) {

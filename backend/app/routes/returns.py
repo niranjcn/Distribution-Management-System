@@ -29,18 +29,14 @@ async def get_returns(
 ):
     """Get all return requests with pagination and filters"""
     try:
-        # Filter by requester for non-admin/manager
-        requested_by = None
-        if current_user["role"] not in ["super_admin", "md_director", "manager", "pdic_staff"]:
-            requested_by = current_user["id"]
-
         result = await return_service.get_returns(
             page=page,
             page_size=page_size,
             status=return_status,
             reason=reason,
-            requested_by=requested_by,
-            search=search
+            requested_by=None,
+            search=search,
+            current_user=current_user,
         )
 
         return {

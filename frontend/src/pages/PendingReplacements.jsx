@@ -15,7 +15,7 @@ const PendingReplacements = () => {
   const fetchPending = async () => {
     try {
       setLoading(true);
-      const response = await defectsAPI.getPendingReplacements({ page_size: 1000000 });
+      const response = await defectsAPI.getPendingReplacements({ page_size: 100 });
       setRows(response.data || []);
     } catch (error) {
       showToast(error.message || 'Failed to load pending replacements', 'error');

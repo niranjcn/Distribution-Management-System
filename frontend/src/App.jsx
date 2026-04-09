@@ -203,7 +203,7 @@ function AppRoutes() {
         <Route
           path="returns"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
               <Returns />
             </ProtectedRoute>
           }

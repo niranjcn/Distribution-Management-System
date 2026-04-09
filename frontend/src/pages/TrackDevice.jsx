@@ -62,7 +62,7 @@ const TrackDevice = () => {
       setDevicesLoading(true);
       const [overviewResponse, replacementsResponse] = await Promise.all([
         devicesAPI.getMyOverview(),
-        defectsAPI.getReplacements({ page_size: 1000000 })
+        defectsAPI.getReplacements({ page_size: 100 })
       ]);
       setAllDevices(overviewResponse.data?.all_under_me || []);
       setReplacementMappings(Array.isArray(replacementsResponse.data) ? replacementsResponse.data : []);
