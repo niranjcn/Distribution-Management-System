@@ -157,7 +157,7 @@ async def get_advanced_dashboard_metrics(
 @router.get("/activities")
 async def get_admin_activities(
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=500),
+    page_size: int = Query(50, ge=1),
     actor: str | None = None,
     category: str | None = None,
     search: str | None = None,

@@ -237,7 +237,7 @@ async def submit_change_request(
 @router.get("")
 async def get_change_requests(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     status_filter: Optional[str] = Query(None, alias="status"),
     current_user: dict = Depends(get_current_user)
 ):

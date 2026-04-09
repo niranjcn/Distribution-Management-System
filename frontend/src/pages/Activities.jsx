@@ -23,7 +23,7 @@ const Activities = () => {
       setLoading(true);
       const params = {
         page: 1,
-        page_size: 500,
+        page_size: 1000000,
         category: appliedFilters.category,
       };
 

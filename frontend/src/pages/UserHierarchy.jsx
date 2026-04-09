@@ -164,14 +164,14 @@ const UserHierarchy = () => {
       if (currentUser?.role === 'sub_distributor') {
         // clusters directly under me
         const [clusterRes, opRes] = await Promise.all([
-          usersAPI.getUsers({ page_size: 500 }),
-          usersAPI.getUsers({ role: 'operator', page_size: 2000 }),
+          usersAPI.getUsers({ page_size: 1000000 }),
+          usersAPI.getUsers({ role: 'operator', page_size: 1000000 }),
         ]);
         const clusters  = (clusterRes.data  || []);
         const operators = (opRes.data || []);
         setAllUsers([...clusters, ...operators]);
       } else {
-        const res = await usersAPI.getUsers({ page_size: 1000 });
+        const res = await usersAPI.getUsers({ page_size: 1000000 });
         setAllUsers(res.data || []);
       }
     } catch (err) {
@@ -257,13 +257,13 @@ const UserHierarchy = () => {
     setParentOptions([]);
     try {
       if (role === 'sub_distribution_manager') {
-        const r = await usersAPI.getUsers({ role: 'sub_distributor', page_size: 500 });
+        const r = await usersAPI.getUsers({ role: 'sub_distributor', page_size: 1000000 });
         setParentOptions((r.data || []).map(u => ({ ...u, groupLabel: 'Sub Distributor' })));
       } else if (role === 'cluster') {
         if (currentUser?.role === 'sub_distribution_manager') {
           setParentOptions([{ id: String(currentUser.id), name: currentUser.name, groupLabel: 'You (Sub Distribution Manager)' }]);
         } else {
-          const r = await usersAPI.getUsers({ role: 'sub_distribution_manager', page_size: 500 });
+          const r = await usersAPI.getUsers({ role: 'sub_distribution_manager', page_size: 1000000 });
           setParentOptions((r.data || []).map(u => ({ ...u, groupLabel: 'Sub Distribution Manager' })));
         }
       } else if (role === 'operator') {
@@ -274,7 +274,7 @@ const UserHierarchy = () => {
           setParentOptions(visibleUsers.filter(u => u.role === 'cluster').map(u => ({ ...u, groupLabel: 'Cluster' })));
         } else {
           // admin / manager: show all clusters
-          const r = await usersAPI.getUsers({ role: 'cluster', page_size: 500 });
+          const r = await usersAPI.getUsers({ role: 'cluster', page_size: 1000000 });
           setParentOptions((r.data || []).map(u => ({ ...u, groupLabel: 'Cluster' })));
         }
       }

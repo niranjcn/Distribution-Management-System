@@ -21,7 +21,7 @@ def _ensure_not_md_director(current_user: dict) -> None:
 @router.get("")
 async def get_returns(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     return_status: Optional[str] = Query(None, alias="status"),
     reason: Optional[str] = None,
     search: Optional[str] = None,

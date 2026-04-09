@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 @router.get("")
 async def get_notifications(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     is_read: Optional[bool] = None,
     current_user: dict = Depends(get_current_user)
 ):

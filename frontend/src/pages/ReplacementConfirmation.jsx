@@ -24,7 +24,7 @@ const ReplacementConfirmation = () => {
       setLoading(true);
       const response = await defectsAPI.getDefects({
         status: 'replacement_pending_confirmation',
-        page_size: 100,
+        page_size: 1000000,
       });
       setItems(response.data || []);
     } catch (error) {

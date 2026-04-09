@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @router.get("")
 async def get_approvals(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1),
     status: Optional[str] = None,
     approval_type: Optional[str] = None,
     search: Optional[str] = None,
