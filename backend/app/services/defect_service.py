@@ -190,16 +190,18 @@ async def _resolve_sub_distributor_targets_for_operator(db, operator_id: str) ->
 
 
 async def _get_report_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:
-    role = user.get("role")
+    role = str(user.get("role") or "").lower()
     user_id = str(user.get("id") or user.get("_id"))
+    parent_id = str(user.get("parent_id") or "")
 
     # Management roles can see all replacement mappings.
     if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
         return None
 
     # For hierarchy roles, show own + full branch descendants.
-    scoped_ids: Set[str] = {user_id}
-    descendants = await _get_descendant_user_ids(db, user_id)
+    scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
+    scoped_ids: Set[str] = {scope_root}
+    descendants = await _get_descendant_user_ids(db, scope_root)
     scoped_ids.update(descendants)
     return scoped_ids
 

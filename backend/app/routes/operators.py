@@ -20,9 +20,9 @@ async def get_operators(
 ):
     """Get all operators with pagination and filters"""
     try:
-        # Filter by assigned_to for sub-distributors/clusters
+        # Filter by assigned_to for sub-level roles
         assigned_to = None
-        if current_user["role"] in ["sub_distributor", "cluster"]:
+        if current_user["role"] in ["sub_distribution_manager", "sub_distributor", "cluster"]:
             assigned_to = current_user["id"]
 
         result = await operator_service.get_operators(

@@ -229,16 +229,11 @@ async def get_distributions(
 ):
     """Get all distributions with pagination and filters"""
     try:
-        # Filter by user for non-admin/manager/staff
-        user_id = None
-        if current_user["role"] not in ["super_admin", "md_director", "manager", "pdic_staff"]:
-            user_id = current_user["id"]
-
         result = await distribution_service.get_distributions(
             page=page,
             page_size=page_size,
             status=status,
-            user_id=user_id,
+            current_user=current_user,
             search=search
         )
 

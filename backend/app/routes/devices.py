@@ -203,7 +203,7 @@ async def get_my_device_overview(
             overview["meta"] = {
                 "page": 1,
                 "page_size": len(chain_devices),
-                "show_all": True,
+                "show_all": show_all,
                 "loaded_count": len(chain_devices),
                 "total_count": total_count,
                 "has_next": False,

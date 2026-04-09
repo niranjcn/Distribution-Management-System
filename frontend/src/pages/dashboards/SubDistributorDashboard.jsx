@@ -39,6 +39,9 @@ const doughnutOptions = {
 
 const SubDistributorDashboard = () => {
   const { user } = useAuth();
+  const role = String(user?.role || '').toLowerCase();
+  const isSubDistributionManager = role === 'sub_distribution_manager';
+  const canAssign = role !== 'sub_distribution_manager';
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
   const [myDevices, setMyDevices] = useState([]);
@@ -55,7 +58,9 @@ const SubDistributorDashboard = () => {
         const [statsRes, advancedRes, devRes, distRes, usersRes, defRes, retRes] = await Promise.all([
           dashboardAPI.getStats().catch(() => ({ data: {} })),
           dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
-          devicesAPI.getDevices().catch(() => ({ data: [] })),
+          ['sub_distribution_manager', 'sub_distributor', 'cluster'].includes(role)
+            ? devicesAPI.getMyOverview({ show_all: true }).catch(() => ({ data: { all_under_me: [] } }))
+            : devicesAPI.getDevices().catch(() => ({ data: [] })),
           distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(() => ({ data: [] })),
           usersAPI.getUsers({ role: 'operator' }).catch(() => ({ data: [] })),
           defectsAPI.getDefects().catch(() => ({ data: [] })),
@@ -63,7 +68,7 @@ const SubDistributorDashboard = () => {
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
-        setMyDevices(devRes.data || []);
+        setMyDevices(Array.isArray(devRes.data) ? devRes.data : (devRes.data?.all_under_me || []));
         setDistributions(distRes.data || []);
         setMyOperators(usersRes.data || []);
         setDefectReports(defRes.data || []);
@@ -110,12 +115,16 @@ const SubDistributorDashboard = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Sub-Distributor Dashboard</h1>
-          <p className="text-gray-500 mt-1">Manage received devices and operator assignments.</p>
+          <h1 className="text-2xl font-bold text-gray-800">{isSubDistributionManager ? 'Sub Distribution Manager Dashboard' : 'Sub-Distributor Dashboard'}</h1>
+          <p className="text-gray-500 mt-1">
+            {isSubDistributionManager ? 'Monitor branch devices and operator activity.' : 'Manage received devices and operator assignments.'}
+          </p>
         </div>
-        <Link to="/distributions/create">
-          <Button icon={Send}>Assign to Operator</Button>
-        </Link>
+        {canAssign && (
+          <Link to="/distributions/create">
+            <Button icon={Send}>Assign to Operator</Button>
+          </Link>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -234,22 +243,26 @@ const SubDistributorDashboard = () => {
           }
         >
           <div className="space-y-3">
-            {myOperators.map((op) => (
-              <div key={op.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                    <span className="text-xs font-medium text-blue-600">
-                      {op.name.split(' ').map(n => n[0]).join('')}
-                    </span>
+            {myOperators.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No operators found</p>
+            ) : (
+              myOperators.slice(0, 4).map((op) => (
+                <div key={op.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                      <span className="text-xs font-medium text-blue-600">
+                        {String(op.name || '').split(' ').filter(Boolean).map(n => n[0]).join('') || '?'}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{op.name || 'Unknown'}</p>
+                      <p className="text-xs text-gray-500">{op.email || '-'}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{op.name}</p>
-                    <p className="text-xs text-gray-500">{op.email}</p>
-                  </div>
+                  <StatusBadge status={op.status} size="sm" />
                 </div>
-                <StatusBadge status={op.status} size="sm" />
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </Card>
       </div>
@@ -266,19 +279,26 @@ const SubDistributorDashboard = () => {
           }
         >
           <div className="space-y-3">
-            {defectReports.filter(d => d.subDistributor === 'Sub Distributor Alpha').slice(0, 3).map((defect) => (
-              <div key={defect.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-gray-800">{defect.device_name || defect.device_type || 'Unknown'}</p>
-                    <StatusBadge status={defect.severity} size="sm" />
+            {defectReports.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No defect reports</p>
+            ) : (
+              defectReports
+                .filter((d) => !['resolved', 'rejected'].includes(String(d.status || '').toLowerCase()))
+                .slice(0, 3)
+                .map((defect) => (
+                  <div key={defect.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-800">{defect.device_name || defect.device_type || 'Unknown'}</p>
+                        <StatusBadge status={defect.severity} size="sm" />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">{defect.defect_type || '-'}</p>
+                      <p className="text-xs text-gray-400">Reported by: {defect.reported_by_name || 'Unknown'}</p>
+                    </div>
+                    <StatusBadge status={defect.status} />
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">{defect.defect_type}</p>
-                  <p className="text-xs text-gray-400">Reported by: {defect.reported_by_name || 'Unknown'}</p>
-                </div>
-                <StatusBadge status={defect.status} />
-              </div>
-            ))}
+                ))
+            )}
           </div>
         </Card>
 
@@ -293,26 +313,22 @@ const SubDistributorDashboard = () => {
           }
         >
           <div className="space-y-3">
-            {returnRequests.filter(r => r.currentApprover === 'sub_distributor').slice(0, 3).map((ret) => (
-              <div key={ret.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{ret.device_name || ret.device_type || 'Unknown'}</p>
-                  <p className="text-xs text-gray-500">{ret.reason}</p>
-                  <p className="text-xs text-gray-400 mt-1">By: {ret.initiated_by_name || 'Unknown'}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={ret.status} />
-                  <div className="flex gap-1">
-                    <button className="p-1 text-green-600 hover:bg-green-50 rounded">
-                      <CheckCircle className="w-4 h-4" />
-                    </button>
-                    <button className="p-1 text-red-600 hover:bg-red-50 rounded">
-                      <XCircle className="w-4 h-4" />
-                    </button>
+            {returnRequests.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No return requests</p>
+            ) : (
+              returnRequests.slice(0, 3).map((ret) => (
+                <div key={ret.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{ret.device_name || ret.device_type || ret.device_model || 'Unknown'}</p>
+                    <p className="text-xs text-gray-500">{ret.reason || '-'}</p>
+                    <p className="text-xs text-gray-400 mt-1">By: {ret.requested_by_name || ret.initiated_by_name || 'Unknown'}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={ret.status} />
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </Card>
       </div>

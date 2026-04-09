@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 
 from app.database import get_db, row_to_dict, rows_to_list
 from app.models.return_device import ReturnCreate, ReturnUpdate, ReturnStatus, ReturnReason
@@ -14,9 +14,52 @@ async def get_returns(
     status: Optional[str] = None,
     reason: Optional[str] = None,
     requested_by: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    current_user: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Get all return requests with pagination and filters"""
+
+    async def _get_descendant_user_ids(db, root_user_id: str) -> Set[str]:
+        descendants: Set[str] = set()
+        if not root_user_id or not str(root_user_id).isdigit():
+            return descendants
+
+        pending: List[int] = [int(root_user_id)]
+        visited: Set[int] = set()
+
+        while pending:
+            current_parent_id = pending.pop()
+            if current_parent_id in visited:
+                continue
+            visited.add(current_parent_id)
+
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE parent_id = ?",
+                (current_parent_id,)
+            )
+            rows = await cursor.fetchall()
+            for row in rows:
+                child_id = int(row["id"])
+                child_id_str = str(child_id)
+                if child_id_str not in descendants:
+                    descendants.add(child_id_str)
+                    pending.append(child_id)
+
+        return descendants
+
+    async def _get_return_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:
+        role = str(user.get("role") or "")
+        user_id = str(user.get("id") or user.get("_id") or "")
+        parent_id = str(user.get("parent_id") or "")
+
+        if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+            return None
+
+        scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
+        scoped_ids: Set[str] = {scope_root}
+        scoped_ids.update(await _get_descendant_user_ids(db, scope_root))
+        return scoped_ids
+
     async with get_db() as db:
         conditions = ["1=1"]
         params = []
@@ -27,7 +70,16 @@ async def get_returns(
         if reason:
             conditions.append("r.reason = ?")
             params.append(reason)
-        if requested_by:
+
+        scope_ids = await _get_return_scope_user_ids(db, current_user) if current_user else None
+        if scope_ids is not None:
+            if not scope_ids:
+                return {"data": [], "pagination": get_pagination(page, page_size, 0)}
+            scope_list = sorted(scope_ids)
+            placeholders = ",".join(["?"] * len(scope_list))
+            conditions.append(f"r.requested_by IN ({placeholders})")
+            params.extend(scope_list)
+        elif requested_by:
             conditions.append("r.requested_by = ?")
             params.append(requested_by)
         if search:

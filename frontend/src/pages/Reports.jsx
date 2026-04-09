@@ -93,7 +93,7 @@ const Reports = () => {
       try {
         setLoading(true);
         const [devRes, invRes, distRes, defRes, retRes] = await Promise.all([
-          devicesAPI.getDevices({ page: 1, page_size: 1000000 }).catch(() => ({ data: [] })),
+          devicesAPI.getDevices({ page: 1, page_size: 100 }).catch(() => ({ data: [] })),
           reportsAPI.getInventoryReport().catch(() => ({ data: null })),
           reportsAPI.getDistributionSummary().catch(() => ({ data: null })),
           reportsAPI.getDefectSummary().catch(() => ({ data: null })),

@@ -95,7 +95,7 @@ const Devices = () => {
       setLoading(true);
       const [overviewResponse, defectsResponse] = await Promise.all([
         devicesAPI.getMyOverview({ page: 1, page_size: 100, show_all: showAllDevices }),
-        defectsAPI.getDefects({ page_size: 1000000 })
+        defectsAPI.getDefects({ page_size: 100 })
       ]);
 
       setOverview(overviewResponse.data);
@@ -103,9 +103,9 @@ const Devices = () => {
 
       try {
         const [subsResponse, clustersResponse, operatorsResponse] = await Promise.all([
-          usersAPI.getUsers({ role: 'sub_distributor', page_size: 1000000 }),
-          usersAPI.getUsers({ role: 'cluster', page_size: 1000000 }),
-          usersAPI.getUsers({ role: 'operator', page_size: 1000000 }),
+          usersAPI.getUsers({ role: 'sub_distributor', page_size: 100 }),
+          usersAPI.getUsers({ role: 'cluster', page_size: 100 }),
+          usersAPI.getUsers({ role: 'operator', page_size: 100 }),
         ]);
 
         const collect = (response) => {

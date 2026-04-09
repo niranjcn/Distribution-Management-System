@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 
 from app.database import get_db, rows_to_list
 from app.core.activity_logger import log_api_activity
@@ -7,6 +7,43 @@ from app.services import device_service, distribution_service, defect_service, r
 
 
 ACTIVE_DEVICE_STATUSES = {"active", "available", "distributed", "in_use"}
+
+
+async def _get_descendant_user_ids(db, root_user_id: str) -> Set[str]:
+    descendants: Set[str] = set()
+    if not root_user_id or not str(root_user_id).isdigit():
+        return descendants
+
+    pending: List[int] = [int(root_user_id)]
+    visited: Set[int] = set()
+
+    while pending:
+        current_parent_id = pending.pop()
+        if current_parent_id in visited:
+            continue
+        visited.add(current_parent_id)
+
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE parent_id = ?",
+            (current_parent_id,)
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            child_id = int(row["id"])
+            child_id_str = str(child_id)
+            if child_id_str not in descendants:
+                descendants.add(child_id_str)
+                pending.append(child_id)
+
+    return descendants
+
+
+def _resolve_scope_root_for_sub_distribution_manager(user: Dict[str, Any], user_id: str) -> str:
+    role = str(user.get("role") or "").lower()
+    parent_id = str(user.get("parent_id") or "")
+    if role == "sub_distribution_manager" and parent_id.isdigit():
+        return parent_id
+    return user_id
 
 
 def _month_start(dt: datetime) -> datetime:
@@ -62,6 +99,7 @@ async def get_dashboard_stats(user: Dict[str, Any]) -> Dict[str, Any]:
     """Get dashboard statistics based on user role"""
     role = user.get("role")
     user_id = str(user.get("_id", user.get("id", "")))
+    scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
 
     stats = {}
 
@@ -140,11 +178,79 @@ async def get_dashboard_stats(user: Dict[str, Any]) -> Dict[str, Any]:
         operator_stats_data = await operator_service.get_operator_stats(user_id)
         stats = {
             "my_devices": my_devices,
+            "received_devices": my_devices,
             "available_devices": available_devices,
             "distributions_sent": sent,
             "distributions_received": received,
             "pending_distributions": pending,
+            "operator_count": operator_stats_data.get("total", 0),
             "operators": operator_stats_data
+        }
+
+    elif role == "sub_distribution_manager":
+        async with get_db() as db:
+            scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
+            placeholders = ",".join(["?"] * len(scope_ids)) if scope_ids else "?"
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({placeholders})",
+                tuple(scope_ids)
+            )
+            branch_devices = (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({placeholders}) AND status = 'available'",
+                tuple(scope_ids)
+            )
+            available_devices = (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM distributions WHERE from_user_id IN ({placeholders})",
+                tuple(scope_ids)
+            )
+            sent = (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM distributions WHERE to_user_id IN ({placeholders})",
+                tuple(scope_ids)
+            )
+            received = (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM distributions WHERE to_user_id = ? AND status = 'pending_receipt'",
+                (user_id,)
+            )
+            pending = (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND id IN ({placeholders})",
+                tuple(scope_ids)
+            )
+            operator_count = (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM defects WHERE CAST(reported_by AS TEXT) IN ({placeholders})",
+                tuple(scope_ids)
+            )
+            defect_reports = (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
+                f"SELECT COUNT(*) FROM returns WHERE CAST(requested_by AS TEXT) IN ({placeholders})",
+                tuple(scope_ids)
+            )
+            return_requests = (await cursor.fetchone())[0]
+
+        stats = {
+            "my_devices": branch_devices,
+            "received_devices": branch_devices,
+            "available_devices": available_devices,
+            "distributions_sent": sent,
+            "distributions_received": received,
+            "pending_distributions": pending,
+            "operator_count": operator_count,
+            "defect_reports": defect_reports,
+            "return_requests": return_requests,
+            "assigned_to_operators": sent,
         }
 
     elif role == "cluster":
@@ -518,14 +624,25 @@ async def get_advanced_dashboard_metrics(user: Dict[str, Any]) -> Dict[str, Any]
     """Get advanced analytics payload for management dashboards."""
     role = user.get("role")
     user_id = str(user.get("_id", user.get("id", "")))
+    scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
 
-    if role not in ["super_admin", "md_director", "manager", "pdic_staff", "sub_distributor", "cluster", "operator"]:
+    if role not in ["super_admin", "md_director", "manager", "pdic_staff", "sub_distribution_manager", "sub_distributor", "cluster", "operator"]:
         return {"kpis": {}, "charts": {}, "alerts": [], "reliability": {"summary": {}, "trend": []}}
 
     # Role-scoped advanced payload for non-management dashboards.
-    if role in ["sub_distributor", "cluster", "operator"]:
+    if role in ["sub_distribution_manager", "sub_distributor", "cluster", "operator"]:
         async with get_db() as db:
-            my_device_status = await _get_device_status_counts_for_holder(db, user_id)
+            if role == "sub_distribution_manager":
+                scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
+                placeholders = ",".join(["?"] * len(scope_ids)) if scope_ids else "?"
+                cursor = await db.execute(
+                    f"SELECT status, COUNT(*) AS total FROM devices WHERE current_holder_id IN ({placeholders}) GROUP BY status",
+                    tuple(scope_ids)
+                )
+                rows = await cursor.fetchall()
+                my_device_status = {str(row[0]): int(row[1]) for row in rows}
+            else:
+                my_device_status = await _get_device_status_counts_for_holder(db, user_id)
             my_device_active_split = _active_inactive_from_status_counts(my_device_status)
 
             charts = {
@@ -538,14 +655,51 @@ async def get_advanced_dashboard_metrics(user: Dict[str, Any]) -> Dict[str, Any]
                 "my_inactive_devices": int(my_device_active_split.get("inactive", 0)),
             }
 
-            if role == "sub_distributor":
-                cluster_status_split = await _get_user_status_split_by_role(db, "cluster", user_id)
-                cursor = await db.execute(
-                    "SELECT id FROM users WHERE role = 'cluster' AND parent_id = ?",
-                    (int(user_id),)
-                )
-                cluster_rows = await cursor.fetchall()
-                cluster_ids = [int(row[0]) for row in cluster_rows]
+            if role in ["sub_distribution_manager", "sub_distributor"]:
+                if role == "sub_distribution_manager":
+                    cursor = await db.execute(
+                                                """
+                                                SELECT id
+                                                FROM users
+                                                WHERE role = 'cluster'
+                                                    AND (
+                                                        parent_id = ?
+                                                        OR parent_id IN (
+                                                            SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = ?
+                                                        )
+                                                    )
+                                                """,
+                        (int(scope_root_id), int(scope_root_id))
+                    )
+                    cluster_rows = await cursor.fetchall()
+                    cluster_ids = [int(row[0]) for row in cluster_rows]
+                    if cluster_ids:
+                        placeholders = ",".join("?" * len(cluster_ids))
+                        cursor = await db.execute(
+                            f"""
+                            SELECT
+                                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_total,
+                                SUM(CASE WHEN status != 'active' THEN 1 ELSE 0 END) AS inactive_total
+                            FROM users
+                            WHERE role = 'cluster' AND id IN ({placeholders})
+                            """,
+                            tuple(cluster_ids)
+                        )
+                        cs_row = await cursor.fetchone()
+                        cluster_status_split = {
+                            "active": int((cs_row[0] if cs_row and cs_row[0] is not None else 0)),
+                            "inactive": int((cs_row[1] if cs_row and cs_row[1] is not None else 0)),
+                        }
+                    else:
+                        cluster_status_split = {"active": 0, "inactive": 0}
+                else:
+                    cluster_status_split = await _get_user_status_split_by_role(db, "cluster", user_id)
+                    cursor = await db.execute(
+                        "SELECT id FROM users WHERE role = 'cluster' AND parent_id = ?",
+                        (int(user_id),)
+                    )
+                    cluster_rows = await cursor.fetchall()
+                    cluster_ids = [int(row[0]) for row in cluster_rows]
 
                 if cluster_ids:
                     placeholders = ",".join("?" * len(cluster_ids))

@@ -129,9 +129,9 @@ const ExternalInventory = () => {
       if (canManage) {
         const [dashboardRes, itemsRes, poRes, movementRes] = await Promise.all([
           externalInventoryAPI.getDashboard(),
-          externalInventoryAPI.getItems({ page_size: 1000000, status: 'active' }),
-          externalInventoryAPI.getPurchaseOrders({ page_size: 1000000 }),
-          externalInventoryAPI.getMovements({ page_size: 1000000 }),
+          externalInventoryAPI.getItems({ page_size: 100, status: 'active' }),
+          externalInventoryAPI.getPurchaseOrders({ page_size: 100 }),
+          externalInventoryAPI.getMovements({ page_size: 100 }),
         ]);
 
         setDashboard(dashboardRes.data || null);
@@ -140,8 +140,8 @@ const ExternalInventory = () => {
         setMovements(movementRes.data || []);
       } else {
         const [itemsRes, poRes] = await Promise.all([
-          externalInventoryAPI.getItems({ page_size: 1000000, status: 'active' }),
-          externalInventoryAPI.getPurchaseOrders({ page_size: 1000000 }),
+          externalInventoryAPI.getItems({ page_size: 100, status: 'active' }),
+          externalInventoryAPI.getPurchaseOrders({ page_size: 100 }),
         ]);
         setDashboard(null);
         setItems(itemsRes.data || []);
