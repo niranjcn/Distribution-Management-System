@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
+import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { defectsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
@@ -97,8 +98,14 @@ const PendingReplacements = () => {
                   <tr key={row._id || row.id} className="border-b border-gray-100">
                     <td className="py-3 px-3 font-semibold text-gray-800">{row.report_id}</td>
                     <td className="py-3 px-3">
-                      <p className="font-medium text-gray-800">{row.device_name || row.device_type || 'Unknown'}</p>
-                      <p className="text-xs text-gray-600">{row.defective_device?.serial_number || row.device_serial || 'N/A'}</p>
+                      <DeviceIdentity
+                        device={{
+                          ...row,
+                          ...(row.defective_device || {}),
+                          serial_number: row.defective_device?.serial_number || row.device_serial,
+                          model: row.defective_device?.model || row.device_name,
+                        }}
+                      />
                     </td>
                     <td className="py-3 px-3"><StatusBadge status={row.severity} size="sm" /></td>
                     <td className="py-3 px-3">{row.reported_by_name || 'N/A'}</td>

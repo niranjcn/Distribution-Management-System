@@ -1,948 +1,1375 @@
-# Distribution Management System (DMS)
-## Complete Technical & User Documentation — Part 1
+<div align="center">
+
+# Distribution Management System
+## Complete Technical & User Documentation
+
+**Version 1.0.0** &nbsp;|&nbsp; **April 2026** &nbsp;|&nbsp; **Confidential**
 
 ---
+
+*FastAPI · React 18 · MySQL 8.4 · Docker · Tailscale*
+
+</div>
+
+---
+
+## Table of Contents
+
+1. [Overview](#1-overview)
+2. [System Architecture](#2-system-architecture)
+3. [User Roles & Access Control](#3-user-roles--access-control)
+4. [Complete Workflows](#4-complete-workflows)
+5. [Features & Modules](#5-features--modules)
+6. [Database Design](#6-database-design)
+7. [Security & Authentication](#7-security--authentication)
+8. [API Reference](#8-api-reference)
+9. [UI/UX Structure](#9-uiux-structure)
+10. [Error Handling & Edge Cases](#10-error-handling--edge-cases)
+11. [Setup & Deployment](#11-setup--deployment)
+12. [Logging & Monitoring](#12-logging--monitoring)
+13. [Future Improvements](#13-future-improvements)
+
+---
+
+<div style="page-break-before: always;"></div>
 
 ## 1. Overview
 
 ### 1.1 Introduction
 
-The **Distribution Management System (DMS)** is a full-stack enterprise web application designed to manage the complete lifecycle of hardware device distribution across a multi-tier organizational hierarchy. The system enables PDIC (the central distribution body) to track devices from initial registration through every downstream hand-off — to sub-distributors, cluster managers, and end-point operators — while enforcing structured approvals, defect reporting, replacements, and financial reconciliations.
+The **Distribution Management System (DMS)** is a full-stack enterprise web application that manages the complete lifecycle of hardware device distribution across a multi-tier organizational hierarchy. The system enables PDIC (the central distribution body) to track every physical device — ONUs, ONTs, Routers, Modems, Set-top Boxes — from initial registration through every downstream hand-off to sub-distributors, cluster managers, and end-point operators. Every movement is confirmed, every defect is tracked, and every action is audited.
 
 ### 1.2 Objectives & Goals
 
-- Provide **end-to-end traceability** of physical devices (ONUs, ONTs, Routers, Modems, Set-top Boxes, etc.)
-- Enforce a **role-gated approval workflow** for all device movements
-- Enable **real-time defect reporting** with a structured replacement and payment-due lifecycle
-- Maintain a **complete audit trail** of every API action across all users
-- Support **bulk data operations** (Excel/CSV import for devices and distributions)
-- Allow **hierarchical user management** with strict parent-child access scoping
-- Provide **role-specific dashboards** with KPIs and analytics
+| Goal | Description |
+|------|-------------|
+| **End-to-End Traceability** | Every device is tracked from PDIC stock to the end operator and back |
+| **Structured Approvals** | All device movements require confirmation; disputes are formally resolved |
+| **Defect Lifecycle Management** | Formal defect → replacement → payment-due → closure workflow |
+| **Bulk Operations** | Excel/CSV import for devices and distributions eliminates manual data entry |
+| **Hierarchical Access Control** | Strict parent-child role scoping prevents unauthorized data access |
+| **Complete Audit Trail** | Every API action is logged with actor identity, IP address, and timestamp |
 
 ### 1.3 Problems It Solves
 
-| Problem | Solution |
-|---|---|
-| No visibility of where devices are at any point | Device tracking with full history per serial/MAC |
-| Uncontrolled device handoffs | Structured distribution with receipt confirmation |
-| No process for defective devices | Formal defect → replacement → confirmation workflow |
-| Manual Excel tracking prone to errors | Database-backed system with bulk import validation |
-| No audit of who did what | API activity log on every endpoint action |
-| Users accessing things they shouldn't | Role-based access control at route and service level |
+| Problem | DMS Solution |
+|---------|--------------|
+| No visibility of where devices are at any point | Full device tracking with serial number history timeline |
+| Uncontrolled device hand-offs between staff | Structured distribution with mandatory receipt confirmation |
+| No formal process for defective devices | Formal defect → replacement → confirmation workflow |
+| Spreadsheet-based tracking prone to errors | Database-backed system with validation, bulk import, and real-time sync |
+| No record of who did what or when | API activity log stored per action with role and IP |
+| Users seeing data outside their scope | Role-based, hierarchy-scoped access enforced at route and service layer |
 
-### 1.4 High-Level Summary
+### 1.4 High-Level System Summary
 
-The DMS is accessed via a browser. Users log in and receive a scoped view based on their role. Admins and managers operate from PDIC headquarters and control the full inventory. Sub-distributors, cluster managers, and operators exist in the field and receive/redistribute devices within their hierarchy. The backend is a FastAPI application backed by MySQL. The frontend is a React SPA bundled by Vite and styled with Tailwind CSS.
+Users access the system through a browser. After login, they receive a role-specific view of the system. Management staff at PDIC headquarters control the full device inventory, approve distributions, and manage defects. Sub-distributors, cluster managers, and operators exist in the field, receiving and redistributing devices within their hierarchy branch. The backend is a **FastAPI** application backed by **MySQL 8.4**. The frontend is a **React 18** SPA bundled with **Vite 6** and styled with **Tailwind CSS 3**. The full stack runs as Docker containers and is accessed privately via **Tailscale VPN**.
 
 ---
+
+<div style="page-break-before: always;"></div>
 
 ## 2. System Architecture
 
 ### 2.1 Overall Architecture
 
-The system uses a **monolithic client-server architecture** with clear separation between frontend and backend, deployed together via Docker Compose.
+The system uses a **monolithic client-server architecture** with a clear separation between frontend and backend, both deployed via Docker Compose.
 
 ```
-Browser (React SPA)
-      │
-      │ HTTPS (Tailscale Serve / reverse proxy)
-      ▼
-  Frontend Container (Vite/React – port 5173)
-      │
-      │ REST API calls to /api/*
-      ▼
-  Backend Container (FastAPI – port 8080)
-      │
-      │ aiomysql async connection pool
-      ▼
-  MySQL Container (MySQL 8.4 – port 3306, internal only)
-      │
-      └── Persistent Docker Volume (mysql_data)
+┌────────────────────────────────────────────────────────────┐
+│                    User's Browser                          │
+│              React 18 SPA (Vite 6 + Tailwind)             │
+└───────────────────────┬────────────────────────────────────┘
+                        │ HTTPS (Tailscale Serve)
+                        ▼
+┌────────────────────────────────────────────────────────────┐
+│             Frontend Container  (Port 5173)                │
+│             Vite Static File Server                        │
+└───────────────────────┬────────────────────────────────────┘
+                        │ REST API  /api/*
+                        ▼
+┌────────────────────────────────────────────────────────────┐
+│             Backend Container  (Port 8080)                 │
+│             FastAPI + Uvicorn (async)                      │
+│  Middleware: CORS · CSRF · Rate Limiter · Security Headers │
+│  Routers:   auth · users · devices · distributions ·      │
+│             defects · returns · approvals · reports · ...  │
+└───────────────────────┬────────────────────────────────────┘
+                        │ aiomysql (async connection pool)
+                        ▼
+┌────────────────────────────────────────────────────────────┐
+│             MySQL Container  (Port 3306, internal)         │
+│             MySQL 8.4  ·  utf8mb4  ·  InnoDB               │
+│             Persistent Docker Volume: mysql_data           │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.2 Component Breakdown
 
-**Frontend (React 18 + Vite 6 + Tailwind CSS 3)**
-- `src/App.jsx` — Root router, protected/public route guards
-- `src/context/AuthContext.jsx` — Global auth state, token refresh
-- `src/context/NotificationContext.jsx` — Real-time notification polling
-- `src/pages/` — ~37 page-level components
-- `src/components/layout/` — Sidebar, navbar, layout shell
-- `src/services/` — Axios-based API service layer
+#### Frontend (`frontend/`)
 
-**Backend (FastAPI + Python)**
-- `app/main.py` — App factory, middleware registration, router mounting
-- `app/config.py` — Pydantic settings loaded from `.env`
-- `app/database.py` — MySQL pool management, table creation, migrations
-- `app/routes/` — 15 routers (auth, users, devices, distributions, defects, returns, approvals, operators, notifications, reports, dashboard, change_requests, external_inventory, batches, reports)
-- `app/services/` — Business logic layer
-- `app/models/` — Pydantic request/response models
-- `app/middleware/` — Auth middleware, error handler
-- `app/core/` — Rate limiter, audit logger, activity logger
+| File / Directory | Purpose |
+|-----------------|---------|
+| `src/App.jsx` | Root router, `ProtectedRoute` and `PublicRoute` guards |
+| `src/context/AuthContext.jsx` | Global authentication state, token refresh loop |
+| `src/context/NotificationContext.jsx` | Polling-based notification badge |
+| `src/pages/` | 37 page-level components |
+| `src/components/layout/` | Sidebar, top navbar, responsive layout shell |
+| `src/services/api.js` | Axios instance with base URL and interceptors |
 
-**Database (MySQL 8.4)**
-- 17 tables auto-created on first startup
-- Lightweight column migrations applied idempotently on every boot
+#### Backend (`backend/app/`)
 
-### 2.3 Data Flow
+| Directory / File | Purpose |
+|-----------------|---------|
+| `main.py` | FastAPI app factory, middleware registration, router mounting |
+| `config.py` | Pydantic settings loaded from `.env` — validated on startup |
+| `database.py` | MySQL pool, table creation (19 tables), idempotent migrations |
+| `routes/` | 15 routers covering all API surface area |
+| `services/` | Business logic — validation, state transitions, notifications |
+| `models/` | Pydantic request/response schemas |
+| `middleware/` | Auth middleware (`get_current_user`), error handler |
+| `core/` | Rate limiter, audit logger, API activity logger |
 
-1. User opens browser → React app loads from frontend container
-2. Login POST to `/api/auth/login` → backend validates credentials → issues JWT stored in HttpOnly cookies
-3. All subsequent requests include the cookie; backend validates JWT on every protected route
-4. Service layer executes SQL via `aiomysql` connection pool
-5. Response returned as JSON; React state updated; UI re-renders
+### 2.3 Request Data Flow
 
-### 2.4 Third-Party Integrations
+```
+1. Browser → React component calls api.js (Axios)
+2. Axios attaches HttpOnly cookie (JWT) automatically
+3. Backend middleware validates JWT on every protected route
+4. Route handler calls service layer
+5. Service layer executes parameterized SQL via aiomysql pool
+6. Response serialized as JSON → React state updated → UI re-renders
+7. ApiActivityLoggingMiddleware logs actor + action to api_activity_logs
+```
+
+### 2.4 Third-Party Dependencies
 
 | Dependency | Purpose |
-|---|---|
-| Tailscale | Private network tunneling + HTTPS termination for production |
-| Docker / Docker Compose | Container orchestration |
-| `slowapi` | Rate limiting on sensitive endpoints |
-| `starlette-csrf` | CSRF token protection |
-| `openpyxl` / `xlrd` | Excel file parsing for bulk imports |
-| `passlib[bcrypt]` | Password hashing |
-| `python-jose` | JWT creation and validation |
-| `lucide-react` | Icon library |
-| `chart.js` / `react-chartjs-2` | Charts and analytics |
-| `html5-qrcode` | QR code scanning (device lookup) |
-| `jspdf` | PDF export of reports |
+|-----------|---------|
+| **Tailscale** | Private VPN tunnel + HTTPS termination for production |
+| **Docker / Docker Compose** | Container orchestration |
+| **slowapi** | Rate limiting on sensitive endpoints |
+| **starlette-csrf** | CSRF token middleware |
+| **python-jose** | JWT creation and validation (HS256) |
+| **passlib[bcrypt]** | Password hashing — bcrypt with cost factor |
+| **aiomysql** | Async MySQL driver |
+| **openpyxl / xlrd** | Excel file parsing for bulk imports and manifest generation |
+| **lucide-react** | Icon library |
+| **chart.js / react-chartjs-2** | Dashboard charts and analytics |
+| **html5-qrcode** | QR code scanner for device lookup |
+| **jspdf** | PDF export of reports |
 
 ---
+
+<div style="page-break-before: always;"></div>
 
 ## 3. User Roles & Access Control
 
-The system defines **8 roles** in a strict hierarchy. Each role has a `parent_id` pointing to its managing user within the tree.
+The system defines **8 roles** in a strict hierarchy. Every user except `super_admin` has a `parent_id` pointing to their managing user within the tree.
 
-### Role Hierarchy (top → bottom)
+### 3.1 Role Hierarchy
 
 ```
 super_admin
-├── md_director          (read-only oversight)
+├── md_director              ← Read-only oversight (no mutations)
 └── manager
-    └── pdic_staff
-        └── sub_distributor
-            └── sub_distribution_manager
-                └── cluster
-                    └── operator
+    ├── pdic_staff
+    └── sub_distributor
+        └── sub_distribution_manager
+            └── cluster
+                └── operator
+```
+
+### 3.2 Role Definitions
+
+---
+
+#### 🔴 super\_admin
+The highest privilege role with unrestricted access to the entire system.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Create Users** | Any role, including other super admins |
+| **Devices** | Register, edit, delete, change status |
+| **Distributions** | Create, approve, cancel, confirm returns |
+| **Defects** | Full management — resolve, replace, confirm payment |
+| **Reports / Logs** | All reports and the full API activity log |
+| **Restrictions** | Cannot delete their own account |
+| **Typical Use** | System setup, onboarding managers, emergency overrides |
+
+---
+
+#### 🟠 md\_director
+Managing Director / Director level. A **read-only observer** across the entire platform.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Read Access** | Users (except other super admins), devices, distributions, defects, reports |
+| **Write Access** | None — all mutation routes explicitly block this role |
+| **Accessible Pages** | Dashboard, Devices, Distributions, Defects, Reports, Activities, Backup |
+| **Typical Use** | Executive reviewing distribution statistics and defect trends |
+
+---
+
+#### 🟡 manager
+Operational manager at PDIC level. Second highest effective privilege.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Create Users** | pdic_staff, sub_distribution_manager, sub_distributor, cluster, operator |
+| **Distributions** | Create, approve/reject, confirm disputed returns |
+| **Defects** | Acknowledge, update status, assign replacements, confirm payment |
+| **Returns** | Approve and mark received |
+| **Change Requests** | Review and approve credential/status change requests |
+| **Restrictions** | Cannot create super_admin or md_director |
+| **Typical Use** | Approving pending distributions, handling defect escalations |
+
+---
+
+#### 🟢 pdic\_staff
+PDIC operations staff responsible for day-to-day device management.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Devices** | Register (single and bulk), view all PDIC stock |
+| **Distributions** | Create distributions from PDIC to sub-level users |
+| **Users** | View only (limited to own profile for non-role-specific queries) |
+| **Restrictions** | Cannot approve distributions or manage users |
+| **Typical Use** | Receiving a shipment of ONUs and bulk-importing them |
+
+---
+
+#### 🔵 sub\_distributor
+External distributor who receives devices from PDIC and redistributes within their branch.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Devices** | View own held devices |
+| **Distributions** | Create to sub_distribution_managers, clusters, or operators within their branch |
+| **Defects** | View defects from their operators; forward to management |
+| **Delivery Confirmations** | Confirm/dispute incoming distributions |
+| **Restrictions** | Cannot access admin pages, approve, or register devices |
+| **Typical Use** | Distributing a batch of routers to cluster managers |
+
+---
+
+#### 🟣 sub\_distribution\_manager
+Internal manager within a sub-distributor's branch overseeing clusters and operators.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Users** | Create and manage clusters and operators within their branch |
+| **Distributions** | Can distribute held devices to clusters and operators under them |
+| **Restrictions** | Cannot create distributions directly via bulk upload |
+| **Typical Use** | Managing a group of cluster managers for a specific geographic area |
+
+---
+
+#### ⚪ cluster
+Mid-level field user who holds devices and distributes to operators directly below.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Distributions** | Create to operators directly under their cluster |
+| **Defects** | Report defects on their held devices |
+| **Delivery Confirmations** | Confirm/dispute incoming distributions |
+| **Replacement Confirmation** | Confirm receipt of a replacement device |
+| **Restrictions** | Cannot access user management, reports, or approvals pages |
+| **Typical Use** | A cluster manager distributing modems to 5 field operators in their area |
+
+---
+
+#### ⚫ operator
+End-level field user. The final recipient of devices in the chain.
+
+| Attribute | Detail |
+|-----------|--------|
+| **Devices** | View own held devices |
+| **Defects** | Create defect reports on their devices; send replacement enquiries |
+| **Delivery Confirmations** | Confirm/dispute incoming distributions |
+| **Replacement Confirmation** | Confirm receipt of replacement device |
+| **Pending Dues** | View and track their outstanding payment obligations |
+| **Restrictions** | Cannot access management pages, reports, or approvals |
+| **Typical Use** | Field operator receiving a modem and later reporting it as defective |
+
+---
+
+<div style="page-break-before: always;"></div>
+
+## 4. Complete Workflows
+
+### 4.1 User Journey — From Login to Full Usage
+
+```
+Step 1: Navigate to /login
+        ↓
+Step 2: Enter email + password
+        → Backend: normalize email, verify bcrypt hash, check account status
+        → Rate limited: 5 attempts/minute per IP
+        → Failed attempts tracked; account locks after threshold
+        ↓
+Step 3: Token issuance
+        → access_token  (15 min, HttpOnly cookie)
+        → refresh_token (7 days, HttpOnly cookie)
+        → CSRF token set
+        ↓
+Step 4: Check forced credential update flags
+        → force_email_change = 1  → redirect to /force-update-credentials
+        → force_password_change = 1 → redirect to /force-update-credentials
+        → Both flags = 0 → proceed normally
+        ↓
+Step 5: Force-Update Screen (first login only)
+        → User sets new email + new password
+        → Current password verified before any change
+        → New tokens issued, flags cleared
+        ↓
+Step 6: Dashboard loads
+        → Role-specific KPI cards and charts
+        ↓
+Step 7: Core operations (role-dependent)
+        → Admin/Manager: Approve items, manage users, register devices
+        → Staff: Register devices, create distributions
+        → Sub-distributor/Cluster/Operator: Confirm deliveries, report defects
+        ↓
+Step 8: Logout
+        → POST /api/auth/logout
+        → Token blacklisted in DB
+        → Cookies cleared
 ```
 
 ---
 
-### 3.1 super_admin
+### 4.2 Distribution Flow — Full Lifecycle
 
-- **Description:** Full system control. There is exactly one seeded super admin on first boot (`admin@dms.com`), but more can be created.
-- **Permissions:** Read + Write on ALL resources
-- **Can Create:** Any role including other super admins
-- **Restricted:** Cannot delete own account
-- **Example use case:** Initial system setup, onboarding managers, overriding device statuses, viewing API activity logs
-
----
-
-### 3.2 md_director
-
-- **Description:** Managing Director / Director level observer. Read-only across the platform.
-- **Permissions:** Read-only on users, devices, distributions, defects, reports
-- **Cannot:** Create distributions, modify devices, approve/reject anything, manage users
-- **Accessible Pages:** Dashboard, Devices, Distributions, Defects, Reports, Activities, Backup
-- **Example use case:** Executive reviewing distribution statistics and defect trends
-
----
-
-### 3.3 manager
-
-- **Description:** Operational manager at PDIC level. Second highest privilege after super_admin.
-- **Can Create:** pdic_staff, sub_distribution_manager, sub_distributor, cluster, operator
-- **Permissions:** Approve/reject distributions and returns; manage defects; manage users within branch
-- **Accessible Pages:** Dashboard, Devices, Distributions, Create Distribution, Defects, Returns, Approvals, Reports, Users, Backup, Change Requests, Notifications
-- **Restricted From:** Creating super_admin or md_director; accessing other managers' branches (if scoped)
-- **Example use case:** Approving a pending distribution from staff to sub-distributor
-
----
-
-### 3.4 pdic_staff
-
-- **Description:** PDIC operations staff. Can register devices and initiate distributions.
-- **Permissions:** Register devices (manual + bulk), create distributions, view all devices
-- **Cannot:** Approve distributions (only management can), manage users
-- **Accessible Pages:** Dashboard, Devices (register), Distributions (create), Defects (view), Notifications
-- **Example use case:** Receiving a shipment of ONUs and bulk-importing them into the system
-
----
-
-### 3.5 sub_distributor
-
-- **Description:** External distributor who holds devices and redistributes to sub_distribution_managers and clusters.
-- **Permissions:** View own held devices; create distributions to downstream users; report defects; view own distributions
-- **Cannot:** Access admin pages, approve anything, register devices
-- **Accessible Pages:** Dashboard, Devices (held), Distributions, Create Distribution, Defects, Returns, Delivery Confirmations, Notifications, External Inventory
-- **Example use case:** Receiving a batch of routers from PDIC and distributing them to cluster managers
-
----
-
-### 3.6 sub_distribution_manager
-
-- **Description:** Internal manager within a sub-distributor's branch.
-- **Permissions:** Manage clusters and operators under them; view and distribute held devices
-- **Cannot:** Create distributions directly (blocked at route level), access admin reports
-- **Example use case:** Managing a group of cluster managers under a specific sub-distributor
-
----
-
-### 3.7 cluster
-
-- **Description:** Mid-level field user who holds devices and distributes to operators directly below them.
-- **Permissions:** View held devices; distribute to operators; report defects; confirm delivery
-- **Cannot:** Access user management, reports, approvals
-- **Accessible Pages:** Dashboard, Devices, Distributions, Defects, Delivery Confirmations, Replacement Confirmation, Notifications
-- **Example use case:** Cluster manager distributing modems to 5 operators in their area
-
----
-
-### 3.8 operator
-
-- **Description:** End-level field user who holds devices and can report defects.
-- **Permissions:** View own held devices; report defects; confirm delivery/replacement; view own defects
-- **Cannot:** Create distributions to others outside their cluster (limited), access management pages
-- **Accessible Pages:** Dashboard, Devices, Distributions, Defects (create/view own), Delivery Confirmations, Replacement Confirmation, Notifications, Pending Dues
-- **Example use case:** Field operator receiving a modem and later reporting it as defective
-
----
-
-## 4. Complete Workflow
-
-### 4.1 User Journey (Login to Full Usage)
-
-**Step 1 — Login**
-- User navigates to `/login`
-- Enters email + password
-- Backend validates credentials, checks account status (`active`)
-- If `force_email_change` or `force_password_change` is set, user is redirected to `/force-update-credentials`
-- On success: JWT access token (15 min) + refresh token (7 days) issued as HttpOnly cookies
-
-**Step 2 — Force Credential Update (First Login)**
-- New accounts created by admins are flagged with `force_email_change=1` and `force_password_change=1`
-- User must set a new email and password before accessing any other page
-- On completion, new tokens are issued and flags are cleared
-
-**Step 3 — Dashboard**
-- Role-specific dashboard loads automatically after login
-- KPIs displayed: total devices, active distributions, open defects, pending approvals
-
-**Step 4 — Core Operations (role-dependent)**
-- Admin/Manager: Approve items, manage users, register devices
-- Staff: Register devices, create distributions
-- Sub-distributor/Cluster/Operator: Accept deliveries, report defects, confirm replacements
-
-**Step 5 — Logout**
-- POST `/api/auth/logout` → token blacklisted in DB, cookies cleared
-
----
-
-### 4.2 Distribution Flow
+The distribution flow is the core operational workflow. Devices move from sender to recipient only **after the recipient explicitly confirms receipt**.
 
 ```
-[Creator] → Creates Distribution Request → Status: pending
-    │
-    ▼
-[Recipient] → Confirms/Disputes Receipt
-    │
-    ├── confirmed → Status: approved → Devices transferred to recipient
-    └── disputed  → Status: disputed → Admin/Manager notified
-                         │
-                         ▼
-              [Admin/Manager confirms physical return]
-                         │
-                         └── Status: returned → Sender regains devices
+┌─────────────────────────────────────────────────────────────┐
+│                        CREATION                             │
+│  Sender selects recipient + devices  →  POST /distributions │
+│  • Hierarchy validated (role-based cross-check)             │
+│  • Each device checked: not defective, not locked           │
+│  • Management: device must be status=available (PDIC stock) │
+│  • Sub-level: device must be in their current_holder_id     │
+│  • Cannot redistribute a device already pending confirmation│
+│  Excel manifest auto-generated and saved                     │
+│  Status → pending_receipt                                    │
+│  Recipient notified: "Action Required: Confirm Receipt"      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  RECEIPT CONFIRMATION                        │
+│  Recipient visits /delivery-confirmations                   │
+│  Reviews distribution details and Excel manifest            │
+│                                                             │
+│  Choice A: CONFIRM (received=true)                          │
+│  → status → approved                                        │
+│  → Devices transferred NOW to recipient                     │
+│    (device.current_holder_id = recipient)                   │
+│    (device.status = in_use if operator, else distributed)   │
+│  → Device history logged per device                         │
+│  → Sender notified: "Receipt Confirmed"                     │
+│                                                             │
+│  Choice B: DISPUTE (received=false)                         │
+│  → status → disputed                                        │
+│  → Devices remain with sender (no holder change)            │
+│  → ALL admins/managers/staff notified with dispute alert    │
+│  → Sender notified: "Receipt Disputed"                      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  (dispute path)
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  DISPUTE RESOLUTION                          │
+│  Admin/Manager physically investigates                      │
+│  POST /distributions/{id}/confirm-return                    │
+│  → status → returned                                        │
+│  → Devices reverted to sender's possession                  │
+│  → Sender can now redistribute                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Detailed Steps:**
+#### Hierarchy Validation Rules (Enforced at Service Layer)
 
-1. **Create Distribution** — Initiator selects recipient user and device IDs (or uploads CSV/XLSX). Distribution record created with `status=pending`.
-2. **Manifest Generated** — Excel manifest auto-generated listing all included devices with serial numbers and MAC addresses.
-3. **Recipient Confirms** — Recipient logs in, goes to "Delivery Confirmations", reviews distribution, clicks Confirm or Dispute.
-4. **On Confirm** — `status=approved`, device `current_holder_id` updated to recipient, device history logged.
-5. **On Dispute** — `status=disputed`, sender notified, admin/manager notified. Sender cannot redistribute devices.
-6. **Admin Resolves Dispute** — Admin reviews physical evidence, calls `POST /distributions/{id}/confirm-return` to reset devices back to sender.
+| Sender Role | Allowed Recipients |
+|-------------|-------------------|
+| super_admin / manager / pdic_staff | sub_distributor, cluster, operator |
+| sub_distributor | sub_distribution_manager or clusters/operators **directly** in their branch |
+| sub_distribution_manager | clusters and operators **directly** under them |
+| cluster | operators **directly** under their cluster |
+| operator | other operators in the **same cluster** only |
 
-**Bulk Upload:**
-- Upload CSV/XLSX with columns `mac_address` and/or `nuid`
-- System auto-resolves device IDs from identifiers
-- Errors per row reported; valid rows create the distribution
+#### Bulk Distribution via File Upload
+
+1. Upload CSV/XLSX with columns `mac_address` and/or `nuid`
+2. System resolves each row to a device record via MAC or NUID lookup (case-insensitive)
+3. If MAC and NUID both present and resolve to **different** devices → row error
+4. If **any** row has an error → **entire upload is rejected** with per-row error list
+5. If all rows valid → distribution created as above
 
 ---
 
 ### 4.3 Approval Flow
 
-The `approvals` table and `approval_role_routing` table govern which roles can process approvals.
+The `approval_role_routing` table governs which roles are authorized to process each approval type. This is configurable by super admins.
 
-| Approval Type | Who Requests | Who Approves |
-|---|---|---|
-| distribution | Any role | super_admin, manager, pdic_staff (configurable) |
-| return | Any role | super_admin, manager, pdic_staff (configurable) |
-| defect | Any role | super_admin, manager, pdic_staff (configurable) |
-
-**Routing Configuration:**
-- Super admin can modify `approval_role_routing` to enable/disable approvals per role type
-- Staff-level approvals can be toggled on/off per type
-
-**Approval Steps:**
-1. Item created → approval record inserted with `status=pending`
-2. Assigned approver(s) notified via `notifications` table
-3. Approver reviews → `status=approved` or `status=rejected` with optional note
-4. Parent entity status updated based on approval decision
-
----
-
-### 4.4 Defect Reporting Flow
+| Approval Type | Default Approvers |
+|---------------|-------------------|
+| `distribution` | super_admin, manager, pdic_staff |
+| `return` | super_admin, manager, pdic_staff |
+| `defect` | super_admin, manager, pdic_staff |
 
 ```
-Status Lifecycle:
-  reported → acknowledged → in_progress → resolved → closed
-                                ↓
-                          replacement_requested
-                                ↓
-                          waiting_for_replacement
-                                ↓
-                          replaced (operator confirms)
+Request created → approval record inserted (status=pending)
+       ↓
+Routed approvers notified via notifications table
+       ↓
+Approver reviews → Approve or Reject (with optional note)
+       ↓
+Parent entity status updated
+  ├── Approved → entity proceeds to next stage
+  └── Rejected → entity marked rejected, no state changes to devices
 ```
 
-**Detailed Steps:**
-
-1. **Report Created** — Operator/Cluster/Sub-distributor creates defect report:
-   - Selects device, defect type (hardware/software/connectivity/physical_damage/other)
-   - Sets severity (critical/high/medium/low)
-   - Adds description, symptoms, optional images
-   - Sets `report_target`: `manager_admin` (goes to management) or `sub_distributor` (goes to their sub-distributor)
-
-2. **Routing** — If target is `sub_distributor`, sub-distributor reviews and can forward to management via `POST /defects/{id}/forward-to-management`
-
-3. **Acknowledgement** — Manager/Admin changes status to `acknowledged`
-
-4. **In Progress** — Manager changes status to `in_progress`; investigation ongoing
-
-5. **Replacement Requested** (optional path):
-   - Admin calls `POST /defects/{id}/replace` with replacement device info
-   - `replacement_device_id` stored; defective device status set to `defective`; replacement device dispatched
-   - Status → `replacement_requested`
-
-6. **Return Amount Set** — Admin may set `return_amount` (financial charge to user for damaged device)
-
-7. **Waiting** — Admin can mark `POST /defects/{id}/mark-waiting` to indicate replacement is being shipped
-
-8. **Operator Confirms Replacement** — Operator calls `POST /defects/{id}/replacement/confirm`; status → `replaced`
-
-9. **Resolution** — Admin resolves with `PATCH /defects/{id}/resolve`; status → `resolved` → `closed`
+> **Note:** If the `staff_enabled` flag for an approval type is turned off in `approval_role_routing`, pdic_staff will be blocked from processing that type of approval even if they attempt it. The system raises a `PermissionError` checked at service level.
 
 ---
 
-### 4.5 Replacement & Resolution Flow
+### 4.4 Defect Reporting Flow — Complete Lifecycle
 
-**Pre-conditions:**
-- A defect report exists in `reported` or `in_progress` state
-- A replacement device must exist in system (available/returned status) OR be registered fresh
+```
+                    ┌──────────────────┐
+                    │   DEFECT CREATED  │
+                    │  Status: reported │
+                    │  Device marked    │
+                    │  defective        │
+                    └────────┬─────────┘
+                             │
+              ┌──────────────▼──────────────┐
+              │      Report Target?          │
+              ├──────────────────────────────┤
+              │ manager_admin → Notifies     │
+              │   admin/manager/staff        │
+              │                              │
+              │ sub_distributor → Notifies   │
+              │   their sub-distributor      │
+              │   (sub-dist can then         │
+              │    FORWARD to management     │
+              │    if needed)                │
+              └──────────────┬──────────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  ACKNOWLEDGED    │
+                    │  Manager reviews │
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │   IN PROGRESS    │
+                    │  Investigation   │
+                    └────────┬─────────┘
+                             │
+               ┌─────────────┴──────────────┐
+               │                            │
+    ┌──────────▼──────────┐      ┌──────────▼─────────┐
+    │  SIMPLE RESOLUTION  │      │  REPLACEMENT PATH   │
+    │  No device swap      │      │  Admin assigns      │
+    │  Admin resolves text │      │  replacement device  │
+    │  Status → resolved   │      │  Status →           │
+    │  Status → closed     │      │  replacement_requested│
+    └─────────────────────┘      └──────────┬──────────┘
+                                            │
+                                 ┌──────────▼──────────┐
+                                 │  WAITING             │
+                                 │  Admin marks waiting │
+                                 │  (PDIC ships device)│
+                                 └──────────┬──────────┘
+                                            │
+                                 ┌──────────▼──────────┐
+                                 │  REPLACED            │
+                                 │  Operator confirms   │
+                                 │  receipt             │
+                                 └──────────┬──────────┘
+                                            │
+                                 ┌──────────▼──────────┐
+                                 │  RESOLVED / CLOSED   │
+                                 └─────────────────────┘
+```
 
-**Steps:**
+#### Defect Status Values
 
-1. **Admin selects replacement device** via `POST /defects/{id}/replace`:
-   - Option A: Provide `replacement_device_id` (existing device)
-   - Option B: Provide `mac_address` or `serial_number` to look up
-   - Option C: Provide `register_device` payload to create new device on the fly
+| Status | Description |
+|--------|-------------|
+| `reported` | Initial state when defect is created |
+| `acknowledged` | Management has acknowledged the report |
+| `in_progress` | Under active investigation |
+| `replacement_requested` | Admin has assigned a replacement device |
+| `waiting_for_replacement` | Replacement being shipped from PDIC |
+| `replaced` | Operator confirmed receipt of replacement |
+| `resolved` | Defect fully resolved (with or without replacement) |
+| `closed` | Final terminal state |
 
-2. **System actions on replacement**:
-   - Defective device: status → `defective`, removed from operator's holding
-   - Replacement device: assigned to operator (`current_holder_id`), history logged
-   - Auto-return record created to track the defective device return
+#### Defect Routing: sub\_distributor target
 
-3. **Payment Bill** (if `return_amount > 0`):
-   - Admin uploads bill via `POST /defects/{id}/payment-bill` (JPG/PNG/PDF ≤ 8MB)
-   - User notified of pending payment
-   - Admin confirms payment via `POST /defects/{id}/confirm-payment`
+Only operators can route to `sub_distributor`. The system resolves the operator's sub-distributor by walking their parent chain:
+- Operator → parent Cluster → parent Sub-distributor
+- Operator → parent Sub-distributor (if directly under one)
 
-4. **Operator Confirms Receipt**:
-   - Operator sees alert in Replacement Confirmation page
-   - Clicks confirm → `replacement_confirmed_at` set, status → `replaced`
-
-5. **Enquiry** (if replacement not received):
-   - Operator sends enquiry via `POST /defects/{id}/enquire` with a message
-   - Management users notified
-
-6. **Resend Confirmation** (if operator missed notification):
-   - Admin calls `POST /defects/{id}/resend-confirmation` to re-notify operator
+Sub-distributor can then call `POST /defects/{id}/forward-to-management` to escalate to the manager/admin queue.
 
 ---
 
-## 5. Features & Modules (Detailed)
+### 4.5 Replacement & Resolution Flow — Detailed Steps
+
+```
+Step 1: Admin calls POST /defects/{id}/replace
+        Provide ONE of:
+          a) replacement_device_id  (existing device by DB id)
+          b) mac_address            (system looks up device)
+          c) serial_number          (system looks up device)
+          d) register_device {}     (creates new device on the fly)
+        Optional: return_amount (financial charge), notes
+        ↓
+Step 2: System actions on replacement
+        • Defective device: status → defective (already set)
+        • replacement_device_id stored on defect record
+        • Replacement device: current_holder_id → operator
+        • Device history logged for replacement device
+        • Auto-return record created for defective device tracking
+        • Status → replacement_requested
+        • Operator notified: "Replacement Device Assigned"
+        ↓
+Step 3 (optional): Admin marks waiting
+        POST /defects/{id}/mark-waiting
+        Status → waiting_for_replacement
+        "PDIC is processing shipment of replacement"
+        ↓
+Step 4: Operator confirms receipt
+        POST /defects/{id}/replacement/confirm
+        Status → replaced
+        replacement_confirmed_at and replacement_confirmed_by set
+        ↓
+Step 5 (if return_amount > 0): Payment flow
+        Admin uploads bill: POST /defects/{id}/payment-bill
+        (JPG / PNG / WEBP / PDF ≤ 8MB)
+        bill_url stored; operator notified of pending payment
+        ↓
+        Admin confirms payment: POST /defects/{id}/confirm-payment
+        All conditions must pass:
+          • return_amount > 0
+          • payment not already confirmed
+          • auto-return status must be "received" first
+        payment_confirmed = 1; operator notified: "Payment Confirmed"
+        ↓
+Step 6: Admin resolves
+        PATCH /defects/{id}/resolve
+        Status → resolved (then closed)
+```
+
+#### If Operator Doesn't Receive Replacement
+
+- Operator sends **enquiry**: `POST /defects/{id}/enquire` with message
+- Management notified with operator's message
+- Admin can **resend confirmation notification**: `POST /defects/{id}/resend-confirmation`
+
+---
+
+### 4.6 Return Flow
+
+```
+User requests return:
+  POST /api/returns
+  Reasons: defective | excess_stock | wrong_device | end_of_contract | other
+  Status → pending
+         ↓
+  Admin/Manager approves:
+  PATCH /api/returns/{id}/approve
+  Status → approved
+         ↓
+  Physical device received at PDIC:
+  PATCH /api/returns/{id}/receive
+  Status → received
+  Device status → returned / available
+```
+
+> When a defect is **approved** (`update_defect_status` with `approved`), an auto-return record is created automatically linking to the defect report via `auto_return_id`. This ensures the return is tracked without requiring a separate manual request.
+
+---
+
+<div style="page-break-before: always;"></div>
+
+## 5. Features & Modules
 
 ### 5.1 Authentication Module
 
-**Feature:** Login with JWT + HttpOnly Cookies + CSRF Protection
+**Routes:** `POST /api/auth/login`, `/logout`, `/refresh`, `/me`, `/password`, `/complete-forced-update`
 
-- **Inputs:** `email`, `password`
-- **Outputs:** `access_token` (15 min), `refresh_token` (7 days) set as HttpOnly cookies
-- **Internal Logic:**
-  - Email normalized to lowercase
-  - Password verified against bcrypt hash
-  - Failed attempts tracked; account locked after repeated failures (`locked_until`)
-  - Rate limited: 5 login attempts per minute per IP
-  - CSRF token required for state-changing requests (via `starlette-csrf`)
-- **Edge Cases:**
-  - Inactive/suspended accounts blocked with 403
-  - Locked accounts return 401 with no information leak
-  - Forced credential update flag checked post-login
-- **UI:** Login page at `/login` with email/password fields, error display, loading state
+| Field | Detail |
+|-------|--------|
+| **Method** | JWT (HS256) stored in HttpOnly cookies |
+| **Tokens** | access_token (15 min), refresh_token (7 days) |
+| **Rate Limit** | 5 login attempts/min per IP |
+| **CSRF** | starlette-csrf middleware; login endpoint exempt |
+| **Brute Force** | Failed attempts tracked; `locked_until` set on threshold |
+| **Forced Update** | First-login flags cleared after user sets new credentials |
+
+**Login Error States:**
+- Wrong credentials → `401 Invalid email or password`
+- Inactive account → `403 Account is not active`
+- Locked account → `401` (same message, timing-safe)
 
 ---
 
 ### 5.2 Device Registration
 
-**Feature:** Register individual or bulk devices into the PDIC inventory
+**Routes:** `POST /api/devices`, `POST /api/devices/bulk-upload`
 
-- **Inputs (single):** `device_type`, `model`, `serial_number`, `mac_address`, `manufacturer`, `band_type` (optional), `nuid` (for Set-top boxes)
-- **Inputs (bulk):** Excel/CSV file with SB schema OR regular schema
-  - SB schema: `vendor, device_type, model, nuid, box_type`
-  - Regular schema: `vendor, device_type, model, mac_address, serial_number, [band_type]`
-- **Outputs:** Device record(s) created with `status=available`, `current_holder=PDIC`
-- **Validation:**
-  - MAC address and serial number must be globally unique
-  - File magic bytes validated (PK header for XLSX, D0CF for XLS, no null bytes for CSV)
-  - Max file size: 10MB
-  - `box_type` must be HD or OTT for Set-top boxes
-- **Internal Logic:**
-  - Device ID auto-generated (`DEV-{uuid}`)
-  - `registered_by_name` stored
-  - History entry created: action=`registered`
-- **Accessible by:** super_admin, manager, pdic_staff
-- **Edge Cases:** Duplicate MAC/serial returns specific error row in bulk; does not abort full upload
+| Field | Detail |
+|-------|--------|
+| **Access** | super_admin, manager, pdic_staff |
+| **Single Registration** | device_type, model, serial_number, mac_address, manufacturer, band_type, nuid |
+| **Bulk Upload** | Excel (.xlsx/.xls) or CSV — two supported schemas |
+| **File Validation** | Magic byte check (PK for XLSX, D0CF for XLS, no null bytes for CSV) |
+| **Size Limit** | 10 MB maximum |
+| **On Create** | device_id auto-generated (`DEV-{uuid}`), status=available, history logged |
+
+**Bulk Upload Schemas:**
+
+| Schema | Required Columns |
+|--------|-----------------|
+| Regular (ONU/Router/Modem) | `vendor, device_type, model, mac_address, serial_number` |
+| Set-top Box (SB) | `vendor, device_type, model, nuid, box_type` (`box_type` must be `HD` or `OTT`) |
+
+Partial failures are reported per row without aborting the entire upload.
 
 ---
 
 ### 5.3 Device Tracking
 
-**Feature:** Full lifecycle tracking of any device by serial number
+**Route:** `GET /api/devices/track/{serial_number}`
 
-- **Inputs:** `serial_number` path param
-- **Outputs:** Device details + complete `device_history` entries (date, action, from/to user, status before/after, notes)
-- **Page:** `/devices/track` with search field + QR scanner using `html5-qrcode`
-- **History Actions:** `registered`, `distributed`, `returned`, `defective`, `replaced`, `status_change`, `holder_updated`
+Provides full lifecycle visibility of any device. The frontend at `/devices/track` includes a **QR code scanner** (`html5-qrcode`) allowing field staff to scan a device label and instantly retrieve its history.
+
+**History Entry Actions:** `registered`, `distributed`, `returned`, `defective`, `replaced`, `status_change`, `holder_updated`
 
 ---
 
 ### 5.4 Distribution Management
 
-**Feature:** Create, track, and confirm device distributions across the hierarchy
+**Routes:** `GET/POST /api/distributions`, `GET /api/distributions/{id}`, receipt, status, cancel, manifest, bulk-upload
 
-- **Inputs:** `device_ids[]`, `to_user_id`, optional `notes`
-- **Statuses:** `pending → approved / disputed → returned`
-- **Manifest:** Auto-generated Excel file per distribution, downloadable
-- **Export:** MAC/NUID export as CSV or XLSX per distribution
-- **Access scoping:** Sub-level users only see distributions where they are sender or recipient
-- **Bulk upload:** CSV/XLSX with `mac_address`/`nuid` columns to create distribution
+| Feature | Detail |
+|---------|--------|
+| **Manifest** | Auto-generated Excel file per distribution with all device details |
+| **MAC/NUID Export** | Download device list as CSV or XLSX for reference |
+| **Bulk Upload** | Create distribution from CSV/XLSX using `mac_address`/`nuid` lookup |
+| **Cancellation** | Only the creator can cancel a pending distribution |
+| **Scoping** | Sub-level users see only distributions they sent or received |
 
 ---
 
 ### 5.5 Defect Reports
 
-**Feature:** Structured defect lifecycle from report to resolution
+**Routes:** `GET/POST /api/defects`, full lifecycle endpoints
 
-- **Inputs:** `device_id`, `defect_type`, `severity`, `description`, `symptoms`, `images[]`, `report_target`
-- **Image upload:** JPG/PNG/WEBP/PDF files, multiple allowed, stored in `/uploads/`
-- **Payment bill:** Separate upload endpoint for proof-of-payment documents
-- **Filters:** Status, severity, defect type, search by device/reporter
-- **Scoping:**
-  - Operators: see their own reported defects or defects on devices they hold
-  - Cluster: see defects on their held devices + hierarchy
-  - Sub-distributor: see defects in their full branch
-  - Management: see all defects
+| Feature | Detail |
+|---------|--------|
+| **Defect Types** | hardware, software, connectivity, physical_damage, other |
+| **Severity Levels** | critical, high, medium, low |
+| **Images** | Multiple JPG/PNG/WEBP files, stored in `/uploads/` |
+| **Payment Bill** | JPG/PNG/WEBP/PDF ≤ 8MB uploaded as proof of payment |
+| **Visibility Scoping** | Operators see own defects; clusters see branch; management sees all |
+| **Duplicate Prevention** | Cannot create a new defect for a device that has an active open defect |
 
 ---
 
 ### 5.6 Returns Management
 
-**Feature:** Device return requests with approval workflow
+**Routes:** `GET/POST /api/returns`, approve, receive
 
-- **Reasons:** defective, excess_stock, wrong_device, end_of_contract, other
-- **Statuses:** pending → approved → received
-- **Linked Defects:** Returns can be linked to a defect report via `defect_id`
-- **Accessible by:** sub_distributor, cluster, operator, manager, pdic_staff, super_admin
+| Feature | Detail |
+|---------|--------|
+| **Return Reasons** | defective, excess_stock, wrong_device, end_of_contract, other |
+| **Statuses** | pending → approved → received |
+| **Auto-Return** | Created automatically when a defect is approved |
+| **MAC Tracking** | `mac_address` field stored for identification without device DB lookup |
 
 ---
 
 ### 5.7 User Management
 
-**Feature:** Create and manage users with hierarchy enforcement
+**Routes:** `GET/POST/PUT/DELETE /api/users`, status, credentials, role filter
 
-- **Inputs:** `email`, `name`, `role`, `password`, `parent_id`, `phone`, `department`, `location`
-- **Force flags:** `force_email_change`, `force_password_change` — set by admin, cleared after first login
-- **Status management:** active / inactive / suspended
-- **Hierarchy enforcement:**
-  - sub_distributor → sub_distribution_manager requires valid parent
-  - sub_distribution_manager → cluster requires valid parent
-  - cluster → operator assignment validated
-- **Credentials admin endpoint:** Super admin can reset any user's email/password via `PATCH /users/{id}/credentials`
-- **Hierarchy view:** `/users/hierarchy` shows tree visualization
+| Feature | Detail |
+|---------|--------|
+| **Hierarchy Enforcement** | Parent-child assignment validated at creation and update |
+| **Force Flags** | `force_email_change`, `force_password_change` cleared after first login |
+| **Status** | active / inactive / suspended |
+| **Credential Reset** | Super admin can reset any user email/password via admin endpoint |
+| **Branch Traversal** | `_branch_contains_user()` recursively validates scoped access |
+| **Hierarchy View** | `/users/hierarchy` renders tree visualization |
 
----
+**Creation Permissions:**
 
-### 5.8 External Inventory
-
-**Feature:** Track non-system items (spare parts, accessories) outside the main device lifecycle
-
-- **Entities:** `external_inventory_items`, `inventory_purchase_orders`, `inventory_po_lines`, `inventory_receipts`, `inventory_receipt_lines`, `inventory_stock_movements`
-- **Operations:** Add items, create POs, receive against POs, track stock movements
-- **Accessible by:** All roles except super_admin-only features
+| Actor | Can Create |
+|-------|-----------|
+| super_admin | All roles including super_admin |
+| manager | pdic_staff, sub_distribution_manager, sub_distributor, cluster, operator |
+| sub_distribution_manager | cluster, operator |
 
 ---
 
-### 5.9 Reports & Analytics
+### 5.8 Notifications
 
-**Feature:** Generate reports across distributions, devices, defects
+**Routes:** `GET /api/notifications`, mark read, mark all read
 
-- **Report types:** Distribution reports, Device inventory reports, Defect reports
-- **Export:** PDF via jsPDF, printable views
-- **Filters:** Date range, status, device type, user
-- **Accessible by:** super_admin, md_director, manager, pdic_staff
+In-app notification system with per-user scoping. Notifications are written to the `notifications` table by service-layer events (not by a separate daemon).
 
----
+| Trigger | Recipient |
+|---------|-----------|
+| Distribution created | Recipient user |
+| Receipt confirmed | Sender |
+| Receipt disputed | All admins/managers/staff + Sender |
+| Defect created | Admin/manager/staff (or sub-distributor if targeted) |
+| Defect approved | Reporter, management staff for return approval |
+| Replacement assigned | Operator |
+| Payment confirmed | User with due amount |
 
-### 5.10 Notifications
-
-**Feature:** In-app notification system per user
-
-- **Triggers:** Distribution created/confirmed/disputed, defect created/resolved, replacement, approval actions
-- **Storage:** `notifications` table with `user_id`, `title`, `message`, `type`, `category`, `is_read`
-- **UI:** Bell icon with unread count badge, notification dropdown showing latest 5, full page at `/notifications`
-- **Operations:** Mark read, mark all read
+UI: Bell icon with unread count badge, dropdown showing latest 5, full list at `/notifications`.
 
 ---
 
-### 5.11 Change Requests
+### 5.9 Change Requests
 
-**Feature:** Users request credential changes; admins review
+**Routes:** `GET/POST /api/change-requests`, approve, reject
 
-- **Types:** email change, password change, device status change
-- **Flow:** User submits → admin reviews via `/change-requests` → approve/reject with note
-- **Security:** Passwords stored hashed immediately upon request (migration applied on boot for legacy plaintext)
-- **Accessible by:** super_admin, manager (review); any authenticated user (submit)
+Users can request credential or device status changes. Admins review and approve or reject.
+
+| Request Type | Submitter | Reviewer |
+|-------------|-----------|---------|
+| Email change | Any user | super_admin, manager |
+| Password change | Any user | super_admin, manager |
+| Device status change | pdic_staff | super_admin, manager |
+
+> **Security note:** Passwords in pending change requests are stored **hashed** immediately (bcrypt). A boot-time migration re-hashes any legacy plaintext values found in the database.
+
+---
+
+### 5.10 External Inventory
+
+**Routes:** `GET/POST /api/external-inventory` (items, purchase orders, receipts, movements)
+
+A supplementary inventory system for non-system items (spare parts, accessories, consumables).
+
+| Entity | Purpose |
+|--------|---------|
+| `external_inventory_items` | Physical stock records with SKU, price, quantity |
+| `inventory_purchase_orders` | POs raised to suppliers |
+| `inventory_po_lines` | Line items per PO |
+| `inventory_receipts` | Goods received against a PO |
+| `inventory_stock_movements` | Every stock in/out event |
+
+---
+
+### 5.11 Reports & Analytics
+
+**Routes:** `GET /api/reports`
+
+| Report Type | Filters Available |
+|------------|------------------|
+| Distribution Report | Date range, status, user |
+| Device Inventory Report | Device type, status, holder |
+| Defect Report | Severity, type, status, date range |
+
+Reports can be exported as **PDF** (via `jsPDF`) or printed directly from the browser.  
+**Access:** super_admin, md_director, manager, pdic_staff
 
 ---
 
 ### 5.12 Activity Log (Audit Trail)
 
-**Feature:** Every API action logged to `api_activity_logs`
+**Route:** `GET /api/activities` (via `api_activity_logs` table)
 
-- **Captured:** actor_id, actor_name, actor_role, method, path, status_code, ip_address, description, timestamp
-- **Excluded:** OPTIONS preflight, non-API paths, low-significance GETs
-- **Page:** `/activities` — paginated timeline of all system actions
-- **Accessible by:** super_admin, md_director only
+Every significant API request is logged automatically by `ApiActivityLoggingMiddleware` on every response.
+
+| Captured Field | Example |
+|---------------|---------|
+| `actor_id` | `"42"` |
+| `actor_name` | `"John Manager"` |
+| `actor_role` | `"manager"` |
+| `method` | `"POST"` |
+| `path` | `"/api/distributions"` |
+| `status_code` | `201` |
+| `ip_address` | `"100.64.1.5"` |
+| `description` | `"Distribution created"` |
+| `created_at` | `"2026-04-07T15:00:00"` |
+
+**Excluded from logging:** OPTIONS preflight, `/health` check, insignificant GETs.  
+**Access:** super_admin, md_director only.
 
 ---
 
 ### 5.13 Backup
 
-**Feature:** Manual and scheduled database backups
+**Route:** `GET /api/reports/backup` (download), scheduled background task
 
-- **Manual:** Download backup via `/backup` page (admin/manager/md_director)
-- **Scheduled:** Monthly backup scheduler runs as background task on startup (`backup_scheduler_loop`)
-- **Storage:** `backend/monthly_backups/` directory (mounted as Docker volume)
+| Feature | Detail |
+|---------|--------|
+| **Manual Backup** | Admin/Manager/MD can trigger and download backup |
+| **Scheduled Backup** | Monthly background scheduler (`backup_scheduler_loop`) runs on startup |
+| **Storage** | `backend/monthly_backups/` directory (mounted Docker volume) |
+| **Retention** | Files persist in Docker volume across restarts |
 
 ---
 
 ### 5.14 Delivery Confirmations
 
-**Feature:** Dedicated page for recipients to confirm/dispute incoming distributions
+**Route:** `GET /delivery-confirmations` (frontend page calling distributions API)
 
-- **Page:** `/delivery-confirmations`
-- **Shows:** All pending distributions where the current user is the recipient
-- **Actions:** Confirm Receipt, Dispute Receipt (with notes)
-- **Accessible by:** sub_distributor, cluster, operator
+Dedicated page for receiving users to confirm or dispute incoming distributions. Shows only distributions where `to_user_id = current_user.id` and `status = pending_receipt`.
+
+**Actions available:**
+- **Confirm Receipt** → triggers device transfer to recipient's account
+- **Dispute Receipt** → triggers admin/manager notification and dispute workflow
 
 ---
 
 ### 5.15 Pending Dues
 
-**Feature:** Track financial obligations when devices are returned as defective with a charge
+**Routes:** `GET /api/defects/pending-dues/me` (field users), `GET /api/defects/pending-dues/users` (management)
 
-- **`/pending-dues`:** Operator/cluster/sub-distributor see their own pending dues
-- **`/defects/pending-dues/users`:** Management sees all users with pending dues
-- **Resolved when:** Admin uploads payment bill and confirms payment
+Tracks unresolved financial obligations when a defective device return carries a `return_amount`. A due is cleared when `payment_confirmed = 1`.
 
 ---
+
+<div style="page-break-before: always;"></div>
 
 ## 6. Database Design
 
-### Tables Overview
+### 6.1 Tables Overview
 
-| Table | Purpose |
-|---|---|
-| `users` | All system users with role, hierarchy, auth state |
-| `devices` | Hardware devices with lifecycle status |
-| `device_history` | Immutable audit log of every device action |
-| `distributions` | Distribution requests and their lifecycle |
-| `defects` | Defect reports with full replacement/payment lifecycle |
-| `returns` | Return requests for devices |
-| `approvals` | Generic approval records for distributions/returns/defects |
-| `operators` | External operator contact directory |
-| `notifications` | Per-user notification messages |
-| `change_requests` | User-submitted credential/status change requests |
-| `external_inventory_items` | Non-system inventory items |
-| `inventory_purchase_orders` | POs for external inventory |
-| `inventory_po_lines` | Line items on POs |
-| `inventory_receipts` | Receipts against POs |
-| `inventory_receipt_lines` | Line items on receipts |
-| `inventory_stock_movements` | Stock in/out movements |
-| `api_activity_logs` | Full API audit trail |
-| `approval_role_routing` | Configures which roles handle which approval types |
-| `token_blacklist` | Revoked JWT tokens (logout/rotation) |
+| Table | Rows / Nature | Purpose |
+|-------|---------------|---------|
+| `users` | Core entity | All system users with role, hierarchy, auth state |
+| `devices` | Core entity | Hardware devices with full lifecycle status |
+| `device_history` | Append-only | Immutable audit log of every device state change |
+| `distributions` | Transaction | Distribution requests and their complete lifecycle |
+| `defects` | Transaction | Defect reports with replacement and payment lifecycle |
+| `returns` | Transaction | Return requests for defective / excess devices |
+| `approvals` | Junction | Generic approval records for all approvable entities |
+| `operators` | Reference | External operator contact directory |
+| `notifications` | Inbox | Per-user notification messages |
+| `change_requests` | Request | User-submitted credential or device status change requests |
+| `external_inventory_items` | Inventory | Non-system stock items |
+| `inventory_purchase_orders` | Inventory | POs for external inventory procurement |
+| `inventory_po_lines` | Inventory | Line items on each PO |
+| `inventory_receipts` | Inventory | Goods receipts against POs |
+| `inventory_receipt_lines` | Inventory | Line items on each receipt |
+| `inventory_stock_movements` | Inventory | Every stock movement event |
+| `api_activity_logs` | Audit | Full API call audit trail |
+| `approval_role_routing` | Config | Role → approval type permission map |
+| `token_blacklist` | Security | Revoked JWT tokens |
 
-### Key Relationships
+### 6.2 Key Relationships
 
-- `users.parent_id → users.id` (self-referential hierarchy)
-- `distributions.from_user_id` and `to_user_id` reference user IDs (as VARCHAR, not FK)
-- `defects.device_id → devices.device_id`
-- `returns.defect_id → defects.report_id`
-- `notifications.user_id → users.id`
-- `device_history.device_id → devices.device_id`
+```
+users ──────────────────────────── users (parent_id self-referential)
+  │
+  ├── distributions (from_user_id / to_user_id → VARCHAR, soft ref)
+  ├── defects       (reported_by → VARCHAR, soft ref)
+  ├── returns       (requested_by → VARCHAR, soft ref)
+  ├── approvals     (requested_by, approved_by → VARCHAR)
+  └── notifications (user_id → VARCHAR, soft ref)
 
-### Key Fields Explained
+devices ────────────────────────── device_history (device_id → VARCHAR)
+  │
+  └── defects (device_id → VARCHAR, soft ref)
+        │
+        └── returns (defect_id → VARCHAR via auto_return_id)
+```
 
-**users:**
-- `role` — one of 8 role values
-- `parent_id` — points to managing user
-- `force_email_change`, `force_password_change` — first-login flags
-- `failed_login_attempts`, `locked_until` — brute-force protection
-- `permissions` — JSON blob for custom overrides
+> All foreign-key-like references are stored as **VARCHAR** rather than SQL FK constraints. This is intentional to allow soft-delete and role-type tracking without cascading complexity. Referential integrity is enforced at the **service layer**.
 
-**devices:**
-- `device_id` — system-generated unique ID (`DEV-*`)
-- `status` — available / distributed / defective / returned / replaced
-- `current_holder_id` — ID of the user currently holding the device
-- `metadata` — JSON for type-specific extra fields (e.g., `box_type` for Set-top boxes)
+### 6.3 Critical Table Schema Details
 
-**defects:**
-- `report_id` — system-generated unique ID
-- `report_target` — `manager_admin` or `sub_distributor`
-- `replacement_device_id` — assigned replacement
-- `return_amount` — financial charge
-- `payment_bill_url` — uploaded bill path
-- `payment_confirmed` — boolean
+#### `users`
+```sql
+id                   INT AUTO_INCREMENT PRIMARY KEY
+email                VARCHAR(255) UNIQUE NOT NULL
+name                 VARCHAR(255) NOT NULL
+password_hash        TEXT NOT NULL          -- bcrypt hash, never plaintext
+role                 VARCHAR(64) NOT NULL   -- one of 8 role values
+parent_id            INT NULL               -- points to managing user
+force_email_change   TINYINT(1) DEFAULT 0  -- forces update on next login
+force_password_change TINYINT(1) DEFAULT 0 -- forces update on next login
+failed_login_attempts INT DEFAULT 0        -- incremented on bad password
+locked_until         VARCHAR(64)           -- ISO timestamp of lock expiry
+status               VARCHAR(32)           -- active / inactive / suspended
+permissions          LONGTEXT              -- JSON blob, custom overrides
+theme                VARCHAR(32)           -- light / dark / system
+compact_mode         TINYINT(1) DEFAULT 0
+```
+
+#### `devices`
+```sql
+id                   INT AUTO_INCREMENT PRIMARY KEY
+device_id            VARCHAR(128) UNIQUE    -- DEV-{uuid}
+serial_number        VARCHAR(255) UNIQUE
+mac_address          VARCHAR(255) UNIQUE
+status               VARCHAR(64)            -- available / distributed / in_use
+                                           -- defective / returned / replaced
+current_holder_id    VARCHAR(64)            -- user id holding the device
+current_holder_name  VARCHAR(255)
+current_holder_type  VARCHAR(64)            -- noc / sub_distributor / cluster / operator
+band_type            VARCHAR(64)            -- single_band / dual_band
+nuid                 VARCHAR(255)           -- Set-top box unique ID
+metadata             LONGTEXT               -- JSON (e.g., {"box_type": "HD"})
+```
+
+#### `distributions`
+```sql
+distribution_id      VARCHAR(128) UNIQUE    -- DIST-{uuid}
+device_ids           LONGTEXT               -- JSON array of device IDs
+device_count         INT
+from_user_id         VARCHAR(64)
+to_user_id           VARCHAR(64)
+status               VARCHAR(64)            -- pending_receipt / approved / disputed
+                                           -- returned / cancelled / rejected
+manifest_file        VARCHAR(255)           -- filename of Excel manifest
+approval_date        VARCHAR(64)            -- set when recipient confirms
+```
+
+#### `defects`
+```sql
+report_id            VARCHAR(128) UNIQUE    -- DEF-{uuid}
+device_id            VARCHAR(64)
+defect_type          VARCHAR(64)            -- hardware / software / connectivity
+                                           -- physical_damage / other
+severity             VARCHAR(64)            -- critical / high / medium / low
+report_target        VARCHAR(64)            -- manager_admin / sub_distributor
+forwarded_to_management TINYINT(1)         -- 1 if sub-dist forwarded to mgmt
+status               VARCHAR(64)            -- reported → acknowledged → ...
+replacement_device_id VARCHAR(64)           -- ID of assigned replacement
+auto_return_id       VARCHAR(64)            -- linked return_id for device return
+return_amount        DOUBLE DEFAULT 0       -- financial charge for damage
+payment_bill_url     VARCHAR(255)           -- path to uploaded bill
+payment_confirmed    TINYINT(1) DEFAULT 0
+operator_id          VARCHAR(64)            -- resolved during report creation
+sub_distributor_id   VARCHAR(64)            -- resolved during report creation
+```
 
 ---
+
+<div style="page-break-before: always;"></div>
 
 ## 7. Security & Authentication
 
-### 7.1 Authentication
+### 7.1 Authentication Model
 
-- **Method:** JWT (HS256) via `python-jose`
-- **Storage:** HttpOnly cookies (`access_token`, `refresh_token`) — not in localStorage
-- **Expiry:** Access token: 15 minutes; Refresh token: 7 days
-- **Rotation:** `POST /api/auth/refresh` — new access token issued from refresh token
-- **Revocation:** Logout blacklists the token hash in `token_blacklist`; expired entries are pruned
+| Component | Implementation |
+|-----------|---------------|
+| **Algorithm** | HS256 JWT via `python-jose` |
+| **Storage** | HttpOnly cookies — **never** localStorage or sessionStorage |
+| **Access Token** | 15-minute expiry, validated on every protected route |
+| **Refresh Token** | 7-day expiry, used to silently re-issue access tokens |
+| **Revocation** | Blacklist token hash in `token_blacklist` table on logout |
+| **Cookie flags** | `HttpOnly=true`, `SameSite=Strict`, `Secure=true` in production |
 
-### 7.2 Authorization
+**Token Refresh Cycle (Frontend):**
+```
+Request → 401 Unauthorized
+  → AuthContext intercepts
+  → POST /api/auth/refresh (using refresh cookie)
+  → New access_token set in cookie
+  → Original request retried automatically
+  → If refresh also fails → redirect to /login
+```
 
-- Every protected route uses `Depends(get_current_user)` middleware
-- Role checks performed at both route level (`_ensure_not_md_director`, etc.) and service level
-- Hierarchy access validated via recursive `_branch_contains_user()` tree traversal
-- `md_director` is always read-only regardless of endpoint
+### 7.2 Authorization Layers
 
-### 7.3 Security Hardening
+Authorization is enforced at **two levels** for defense in depth:
+
+**Layer 1 — Route Level:**
+- `Depends(get_current_user)` — validates JWT and loads user object
+- `Depends(require_admin_or_manager)` — blocks non-management
+- `Depends(require_management)` — allows admin, manager, staff
+- `Depends(require_any_role)` — any authenticated user
+- `_ensure_not_md_director()` — blocks MD/Director from mutations
+
+**Layer 2 — Service Level:**
+- Hierarchy traversal (`_branch_contains_user()`) for write access
+- Scope filtering (only show data within user's hierarchy branch)
+- Business rule validation (device ownership, distribution constraints, etc.)
+
+### 7.3 Security Controls Summary
 
 | Control | Implementation |
-|---|---|
-| Rate Limiting | `slowapi`: 5/min on login, 10/min on token refresh, 30/min on logout |
-| CSRF Protection | `starlette-csrf` middleware; login endpoint explicitly exempted |
-| Security Headers | `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`, `Content-Security-Policy` |
-| HTTPS Enforcement | `ENFORCE_HTTPS=true` triggers 307 redirect; HSTS header set in production |
-| Password Hashing | bcrypt via `passlib` — never stored plaintext |
-| SQL Injection | Parameterized queries throughout (`?` placeholders translated to `%s`) |
-| File Upload Validation | Magic byte check for XLSX/XLS; null-byte check for CSV; extension allowlist; size cap (10MB/8MB) |
-| Path Traversal | Uploads served via `serve_upload` with `resolve()` containment check |
-| Sensitive Data | `password_hash` stripped from all API responses |
-| Account Lockout | `failed_login_attempts` tracked; `locked_until` set on threshold breach |
-| Audit Logging | All API actions (actor, method, path, status, IP) written to DB |
+|---------|---------------|
+| **Rate Limiting** | slowapi: 5/min login · 10/min token refresh · 30/min logout |
+| **CSRF Protection** | starlette-csrf middleware on all state-changing requests |
+| **Security Headers** | X-Content-Type-Options, X-Frame-Options: DENY, X-XSS-Protection, Referrer-Policy, Permissions-Policy, Content-Security-Policy |
+| **HTTPS Enforcement** | `ENFORCE_HTTPS=true` → 307 redirect; HSTS header added in production |
+| **Password Hashing** | bcrypt via passlib — never stored plaintext |
+| **SQL Injection** | Parameterized queries throughout (`?` → `%s` translated for MySQL) |
+| **File Upload** | Magic byte validation, extension allowlist, size caps (10MB / 8MB) |
+| **Path Traversal** | Uploads served via route that resolves and checks path within root |
+| **Sensitive Data** | `password_hash` stripped from all API responses |
+| **Account Lockout** | failed_login_attempts tracked; locked_until set on threshold |
+| **Audit Logging** | All API actions logged with actor id, role, IP, status code |
+| **Docs Hidden** | Swagger UI disabled when `DEBUG=false` (production) |
 
-### 7.4 Secret Key Validation
+### 7.4 SECRET\_KEY Validation
 
-`SECRET_KEY` is validated at startup:
-- Must be at least 32 characters
-- Must not contain the string `dms` (prevents use of weak defaults)
-- If invalid, application refuses to start
+At application startup, `Settings` validates the secret key:
+- Must be **≥ 32 characters**
+- Must **not** contain the string `dms` (prevents weak defaults)
+- If invalid → **application refuses to start**
+
+```python
+# Generate a secure key:
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
 
 ---
 
-## 8. API Design
+<div style="page-break-before: always;"></div>
 
-### Base URL
+## 8. API Reference
+
+### 8.1 Base URL & Standard Format
 
 ```
-http(s)://<host>:8080/api
+Base URL: http(s)://<host>:8080/api
 ```
 
-### Standard Response Format
-
-**Success:**
+**Success Response:**
 ```json
 {
   "success": true,
-  "message": "Human-readable message",
+  "message": "Human-readable description",
   "data": { ... },
-  "pagination": { "page": 1, "page_size": 20, "total": 100, "total_pages": 5 }
+  "pagination": {
+    "page": 1, "page_size": 20,
+    "total": 150, "total_pages": 8,
+    "has_next": true, "has_prev": false
+  }
 }
 ```
 
-**Error:**
+**Error Response:**
 ```json
 {
-  "detail": "Error description (never exposes internals)"
+  "detail": "Descriptive error message (never exposes stack traces)"
 }
 ```
 
-### Authentication Endpoints
+### 8.2 HTTP Status Codes
 
-| Method | Path | Description | Auth Required |
-|---|---|---|---|
-| POST | `/api/auth/login` | Login | No |
-| POST | `/api/auth/logout` | Logout + blacklist token | Yes |
-| POST | `/api/auth/refresh` | Refresh access token | No (cookie) |
-| GET | `/api/auth/me` | Get current user | Yes |
-| PUT | `/api/auth/password` | Change own password | Yes |
-| POST | `/api/auth/complete-forced-update` | First-login credential update | Yes |
+| Code | Meaning |
+|------|---------|
+| `200` | Success |
+| `201` | Resource created |
+| `400` | Bad request / validation failure |
+| `401` | Not authenticated |
+| `403` | Authenticated but lacks permission |
+| `404` | Resource not found |
+| `413` | File too large |
+| `422` | Request body schema validation failure |
+| `429` | Rate limit exceeded |
+| `500` | Internal server error (sanitized message only) |
 
-### Device Endpoints
+### 8.3 Authentication Endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/devices` | List devices (scoped by role) |
-| POST | `/api/devices` | Register device |
-| GET | `/api/devices/{id}` | Get device by ID |
-| PUT | `/api/devices/{id}` | Update device |
-| DELETE | `/api/devices/{id}` | Delete device |
-| PATCH | `/api/devices/{id}/status` | Update status |
-| GET | `/api/devices/{id}/history` | Device history |
-| GET | `/api/devices/track/{serial}` | Track by serial |
-| GET | `/api/devices/available` | Devices available to distribute |
-| GET | `/api/devices/for-replacement` | Replacement-eligible devices |
-| GET | `/api/devices/my-overview` | Dashboard-level device stats |
-| POST | `/api/devices/bulk-upload` | Bulk register from Excel/CSV |
-| POST | `/api/devices/{id}/request-edit` | Staff request device edit |
-| POST | `/api/devices/{id}/repair-holder` | Admin repair holder from history |
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `POST` | `/api/auth/login` | Login with email + password | Public |
+| `POST` | `/api/auth/logout` | Logout + blacklist token | Required |
+| `POST` | `/api/auth/refresh` | Issue new access token from refresh cookie | Cookie |
+| `GET` | `/api/auth/me` | Get current user's profile | Required |
+| `PUT` | `/api/auth/password` | Change own password | Required |
+| `POST` | `/api/auth/complete-forced-update` | First-login credential rotation | Required |
 
-### Distribution Endpoints
+**Sample Login Request:**
+```http
+POST /api/auth/login
+Content-Type: application/json
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/distributions` | List distributions |
-| POST | `/api/distributions` | Create distribution |
-| GET | `/api/distributions/{id}` | Get distribution |
-| PATCH | `/api/distributions/{id}/status` | Update status |
-| DELETE | `/api/distributions/{id}` | Cancel distribution |
-| POST | `/api/distributions/{id}/receipt` | Confirm/dispute receipt |
-| POST | `/api/distributions/{id}/confirm-return` | Confirm disputed return |
-| GET | `/api/distributions/{id}/manifest` | Download Excel manifest |
-| GET | `/api/distributions/{id}/export-mac-nuid` | Export MAC/NUID |
-| POST | `/api/distributions/bulk-upload` | Create distribution from file |
-| GET | `/api/distributions/pending` | Get pending approvals |
-| POST | `/api/distributions/sync-devices` | Admin device sync |
+{ "email": "manager1@dms.com", "password": "Manager@123" }
+```
 
-### Defect Endpoints
+**Sample Login Response:**
+```json
+{
+  "success": true,
+  "message": "Login successful",
+  "data": {
+    "access_token": "<jwt>",
+    "refresh_token": "<jwt>",
+    "token_type": "bearer",
+    "user": { "id": "5", "name": "Manager One", "role": "manager" }
+  }
+}
+```
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/defects` | List defects (scoped) |
-| POST | `/api/defects` | Create defect report |
-| GET | `/api/defects/{id}` | Get defect |
-| PUT | `/api/defects/{id}` | Update defect |
-| DELETE | `/api/defects/{id}` | Delete defect |
-| PATCH | `/api/defects/{id}/status` | Update status |
-| PATCH | `/api/defects/{id}/resolve` | Resolve defect |
-| POST | `/api/defects/{id}/replace` | Assign replacement device |
-| POST | `/api/defects/{id}/replacement/confirm` | Operator confirms receipt |
-| POST | `/api/defects/{id}/enquire` | Send replacement enquiry |
-| POST | `/api/defects/{id}/resend-confirmation` | Resend confirmation to operator |
-| POST | `/api/defects/{id}/mark-waiting` | Mark as waiting for shipment |
-| POST | `/api/defects/{id}/forward-to-management` | Forward to management |
-| POST | `/api/defects/{id}/payment-bill` | Upload payment bill |
-| POST | `/api/defects/{id}/confirm-payment` | Confirm payment received |
-| GET | `/api/defects/replacements` | All replacement mappings |
-| GET | `/api/defects/replacements/pending` | Pending replacements |
-| GET | `/api/defects/pending-dues/users` | Users with pending dues |
-| GET | `/api/defects/pending-dues/users/{id}` | Dues for specific user |
-| GET | `/api/defects/pending-dues/me` | My pending dues |
+### 8.4 Device Endpoints
 
-### Other Endpoint Groups
+| Method | Path | Description | Min Role |
+|--------|------|-------------|----------|
+| `GET` | `/api/devices` | List devices (scoped by role) | Any |
+| `POST` | `/api/devices` | Register single device | staff |
+| `GET` | `/api/devices/{id}` | Get device by ID | Any |
+| `PUT` | `/api/devices/{id}` | Update device | manager |
+| `DELETE` | `/api/devices/{id}` | Delete device | manager |
+| `PATCH` | `/api/devices/{id}/status` | Update status | Any |
+| `GET` | `/api/devices/{id}/history` | Full device history | Any |
+| `GET` | `/api/devices/track/{serial}` | Track by serial number | Any |
+| `GET` | `/api/devices/available` | Devices available to distribute | Any |
+| `GET` | `/api/devices/for-replacement` | Replacement-eligible pool | staff |
+| `GET` | `/api/devices/my-overview` | Dashboard device stats | Any |
+| `POST` | `/api/devices/bulk-upload` | Bulk register from file | staff |
+| `POST` | `/api/devices/{id}/request-edit` | Staff submits edit request | staff |
+| `POST` | `/api/devices/{id}/repair-holder` | Admin repairs holder from history | manager |
 
-| Prefix | Routes Include |
-|---|---|
-| `/api/users` | CRUD users, status, credentials, role-filter, hierarchy |
-| `/api/returns` | Create/list/approve returns |
-| `/api/approvals` | List/approve/reject approvals, routing config |
-| `/api/operators` | CRUD external operators |
-| `/api/notifications` | List/read notifications |
-| `/api/reports` | Generate/export reports |
-| `/api/dashboard` | Dashboard stats |
-| `/api/change-requests` | CRUD change requests |
-| `/api/external-inventory` | Inventory items, POs, receipts |
-| `/health` | Health check |
+### 8.5 Distribution Endpoints
 
-### Sample Request: Create Distribution
+| Method | Path | Description | Min Role |
+|--------|------|-------------|----------|
+| `GET` | `/api/distributions` | List distributions | Any |
+| `POST` | `/api/distributions` | Create distribution | operator+ |
+| `GET` | `/api/distributions/{id}` | Get distribution | Any |
+| `PATCH` | `/api/distributions/{id}/status` | Update status | Any |
+| `DELETE` | `/api/distributions/{id}` | Cancel | Creator only |
+| `POST` | `/api/distributions/{id}/receipt` | Confirm or dispute receipt | Recipient only |
+| `POST` | `/api/distributions/{id}/confirm-return` | Confirm disputed return | manager |
+| `GET` | `/api/distributions/{id}/manifest` | Download Excel manifest | Any |
+| `GET` | `/api/distributions/{id}/export-mac-nuid` | Export MAC/NUID CSV or XLSX | Any |
+| `POST` | `/api/distributions/bulk-upload` | Create distribution from file | operator+ |
+| `GET` | `/api/distributions/pending` | Pending distributions | management |
+| `POST` | `/api/distributions/sync-devices` | Admin device sync | manager |
 
+**Sample Create Distribution:**
 ```http
 POST /api/distributions
 Content-Type: application/json
-Cookie: access_token=<jwt>
 
 {
-  "device_ids": ["DEV-abc123", "DEV-def456"],
+  "device_ids": ["101", "102", "103"],
   "to_user_id": "42",
-  "notes": "Batch Q1 2026 deployment"
+  "notes": "Q1 2026 modem deployment"
 }
 ```
 
-**Response:**
+**Sample Response:**
 ```json
 {
   "success": true,
   "message": "Distribution created successfully",
   "data": {
-    "distribution_id": "DIST-xyz789",
-    "status": "pending",
-    "device_count": 2,
+    "distribution_id": "DIST-abc123",
+    "status": "pending_receipt",
+    "device_count": 3,
     "from_user_name": "PDIC Staff",
     "to_user_name": "Operator A",
-    "request_date": "2026-04-07T15:00:00"
+    "request_date": "2026-04-07T15:00:00",
+    "manifest_file": "DIST-abc123-devices.xlsx"
   }
 }
 ```
 
-### Error Handling (API)
+### 8.6 Defect Endpoints
 
-| HTTP Code | Meaning |
-|---|---|
-| 400 | Bad request / validation failure |
-| 401 | Not authenticated |
-| 403 | Authenticated but lacks permission |
-| 404 | Resource not found |
-| 409 | Conflict (e.g., duplicate MAC) |
-| 413 | File too large |
-| 422 | Request body schema validation failure |
-| 429 | Rate limit exceeded |
-| 500 | Internal server error (sanitized message, never stack trace) |
+| Method | Path | Description | Min Role |
+|--------|------|-------------|----------|
+| `GET` | `/api/defects` | List defects (scoped) | Any |
+| `POST` | `/api/defects` | Create defect report | Any |
+| `GET` | `/api/defects/{id}` | Get defect by ID | Any |
+| `PUT` | `/api/defects/{id}` | Update defect | manager |
+| `DELETE` | `/api/defects/{id}` | Delete defect | manager |
+| `PATCH` | `/api/defects/{id}/status` | Update status | management |
+| `PATCH` | `/api/defects/{id}/resolve` | Resolve defect | manager |
+| `POST` | `/api/defects/{id}/replace` | Assign replacement device | management |
+| `POST` | `/api/defects/{id}/replacement/confirm` | Operator confirms replacement | Any |
+| `POST` | `/api/defects/{id}/enquire` | Send replacement enquiry | operator/cluster/sub-dist |
+| `POST` | `/api/defects/{id}/resend-confirmation` | Resend confirmation to operator | management |
+| `POST` | `/api/defects/{id}/mark-waiting` | Mark as waiting for shipment | management |
+| `POST` | `/api/defects/{id}/forward-to-management` | Forward routed defect upward | sub_distributor |
+| `POST` | `/api/defects/{id}/payment-bill` | Upload payment bill file | manager |
+| `POST` | `/api/defects/{id}/confirm-payment` | Confirm payment received | manager |
+| `GET` | `/api/defects/replacements` | All active replacement mappings | Any |
+| `GET` | `/api/defects/replacements/pending` | Defects awaiting replacement | Any |
+| `GET` | `/api/defects/pending-dues/users` | Users with pending dues | management |
+| `GET` | `/api/defects/pending-dues/me` | My pending dues | operator/cluster/sub-dist |
 
-All 500 errors log the full exception via `logger.exception()` server-side but return only `"An internal error occurred. Please try again later."` to the client.
+### 8.7 Other Endpoint Groups
+
+| Prefix | Key Operations |
+|--------|---------------|
+| `/api/users` | CRUD users, update status, reset credentials, get by role |
+| `/api/returns` | Create, approve, mark received |
+| `/api/approvals` | List, approve, reject, configure routing |
+| `/api/operators` | CRUD external operators |
+| `/api/notifications` | List, mark read, mark all read |
+| `/api/reports` | Generate and export reports |
+| `/api/dashboard` | Role-specific KPI stats |
+| `/api/change-requests` | CRUD, approve, reject |
+| `/api/external-inventory` | Items, POs, receipts, stock movements |
+| `/health` | Health check (no auth) |
 
 ---
+
+<div style="page-break-before: always;"></div>
 
 ## 9. UI/UX Structure
 
-### 9.1 Layout
+### 9.1 Layout Shell
 
-- **Sidebar** — Role-specific navigation links, collapsible
-- **Top Navbar** — User avatar, role badge, notification bell with unread count, logout
-- **Main Content Area** — Page-level content with breadcrumbs
-- **Modals** — Used for create/edit/view actions without page navigation
-- **Theme** — Light / Dark / System — stored per user, applied via CSS class on root
+The layout is composed of three zones:
 
-### 9.2 Page Breakdown
+```
+┌──────┬───────────────────────────────────────────────┐
+│      │  Top Navbar                                   │
+│  S   │  [Logo] [Breadcrumb] [Bell🔔] [Profile] [↗]  │
+│  i   ├───────────────────────────────────────────────┤
+│  d   │                                               │
+│  e   │  Main Content Area                            │
+│  b   │  (Page component renders here)                │
+│  a   │                                               │
+│  r   │                                               │
+└──────┴───────────────────────────────────────────────┘
+```
+
+- **Sidebar** — Role-gated navigation links, collapsible on mobile
+- **Navbar** — User name, role badge, notification bell with unread count, logout
+- **Theme** — Light / Dark / System — stored per user in DB, applied via CSS class
+
+### 9.2 All Application Pages
 
 | Route | Page | Key UI Elements |
-|---|---|---|
-| `/` | Dashboard | KPI cards, charts, recent activity |
-| `/devices` | Devices | Filterable table, view modal, register button |
-| `/devices/register` | Register Device | Form for single-device registration |
-| `/devices/bulk-import` | Bulk Import | File drop zone, validation results table |
-| `/devices/track` | Track Device | Serial number search, QR scanner, history timeline |
-| `/distributions` | Distributions | Filterable table, KPI breakdown cards |
-| `/distributions/create` | Create Distribution | Device selector, recipient picker, notes |
-| `/distributions/bulk-upload` | Bulk Distribution | File upload, recipient picker |
-| `/defects` | Defect Reports | Tabbed by status, filter panel |
-| `/defects/create` | Create Defect Report | Device search, severity/type selectors, image upload |
-| `/replacements` | Replacements | List of active replacement mappings |
+|-------|------|-----------------|
+| `/login` | Login | Email/password form, error states |
+| `/force-update-credentials` | Force Update | Mandatory new email + password form |
+| `/` | Dashboard | Role-specific KPI cards, distribution/defect charts |
+| `/devices` | Devices | Filterable table, status badges, device detail modal |
+| `/devices/register` | Register Device | Form with device type selector, band type |
+| `/devices/bulk-import` | Bulk Import Devices | Drop zone, schema selector, error table |
+| `/devices/track` | Track Device | Serial search, QR scanner, history timeline |
+| `/distributions` | Distributions | KPI breakdown cards, status filter, detail modal |
+| `/distributions/create` | Create Distribution | Device picker, recipient search, notes |
+| `/distributions/bulk-upload` | Bulk Upload Distribution | File upload, recipient picker, row errors |
+| `/defects` | Defect Reports | Tabbed by status, filter panel, modal |
+| `/defects/create` | Create Defect Report | Device search, severity picker, image upload |
+| `/replacements` | Replacements | Active replacement mappings list |
 | `/replacements/pending` | Pending Replacements | Defects awaiting replacement assignment |
-| `/pending-dues` | Pending Dues | Financial obligations summary |
-| `/returns` | Returns | Return requests and status |
-| `/delivery-confirmations` | Delivery Confirmations | Incoming distributions for recipient |
-| `/replacement-confirmation` | Replacement Confirmation | Confirm replacement device received |
-| `/users` | Users | User management table with CRUD |
-| `/users/hierarchy` | User Hierarchy | Visual tree of organizational structure |
-| `/approvals` | Approvals | Pending approvals with approve/reject actions |
-| `/reports` | Reports | Report generation with filters + PDF export |
+| `/pending-dues` | Pending Dues | Financial obligations summary per user |
+| `/returns` | Returns | Return request list with approval actions |
+| `/delivery-confirmations` | Delivery Confirmations | Pending distributions for recipient |
+| `/replacement-confirmation` | Replacement Confirmation | Confirm replacement receipt |
+| `/users` | Users | Searchable table, create/edit/status modals |
+| `/users/hierarchy` | User Hierarchy | Visual org chart tree |
+| `/approvals` | Approvals | Approve/reject queue with routing config |
+| `/reports` | Reports | Filter form, export to PDF |
 | `/backup` | Backup | Download backup, scheduler status |
-| `/activities` | Activity Log | Paginated API action timeline |
-| `/notifications` | Notifications | Full notification list |
-| `/external-inventory` | External Inventory | Item list, PO management |
-| `/change-requests` | Change Requests | Pending credential/status change requests |
-| `/profile` | Profile | View/edit own profile |
+| `/activities` | Activity Log | Paginated timeline of all API actions |
+| `/notifications` | Notifications | Full list with read/unread state |
+| `/external-inventory` | External Inventory | Items, POs, receipts, movements |
+| `/change-requests` | Change Requests | Pending requests with review UI |
+| `/profile` | Profile | View/edit own profile fields |
 | `/settings` | Settings | Theme, compact mode, notification preferences |
+| `/unauthorized` | Unauthorized | Role access denied page |
+| `*` | Not Found | 404 page |
 
-### 9.3 Navigation Flow
+### 9.3 Navigation Guard Logic
 
-1. Unauthenticated user → `/login`
-2. First-login forced update → `/force-update-credentials`
-3. Normal user → `/` (Dashboard)
-4. Sidebar links render based on role (ProtectedRoute guards at route level + conditional rendering in sidebar)
-5. Unauthorized access → `/unauthorized`
-6. Unknown route → `/not-found`
+```javascript
+// ProtectedRoute checks in order:
+1. isAuthenticated?          → No  → redirect /login
+2. loading?                  → Yes → show spinner
+3. isForcedCredentialUpdate? → Yes → redirect /force-update-credentials
+4. allowedRoles check?       → Fail → redirect /unauthorized
+5. → render children
+```
 
 ### 9.4 Key UI Interactions
 
-- **Role-gated sidebar links** — Rendered conditionally per role
-- **Modals** — Distribution detail, device detail, defect detail — opened inline without nav change
-- **Pagination** — Server-side pagination with page controls
-- **Search** — Client-side search input → debounced API call with `search` param
-- **Status badges** — Color-coded chips per status value
-- **Confirmation dialogs** — Before destructive actions (cancel, delete)
-- **Toast notifications** — Success/error feedback on API actions
-- **Compact mode** — Tighter padding/font sizes, toggled via settings
+| Interaction | Behavior |
+|------------|---------|
+| Status badges | Color-coded chips per status value |
+| Detail modals | Open inline — device, distribution, defect info without navigation |
+| Confirmation dialogs | Before destructive actions (cancel distribution, delete device) |
+| Toast notifications | Success/error feedback on all API responses |
+| Debounced search | Input pause → API call with `search` query param |
+| Compact mode | Tighter padding and reduced font sizes, toggled in settings |
+| QR Scanner | Opens camera in device track page to scan serial number labels |
+| Notification bell | Red badge with unread count; dropdown shows latest 5 |
 
 ---
+
+<div style="page-break-before: always;"></div>
 
 ## 10. Error Handling & Edge Cases
 
 ### 10.1 System-Level Errors
 
-| Scenario | Handling |
-|---|---|
-| DB connection failure | Connection pool raises; response: 500 with generic message |
-| MySQL pool exhausted | aiomysql raises; 500 returned |
-| File disk write failure | Try/except in upload handler; 500 with generic message |
-| Backup scheduler crash | Background task cancelled gracefully on shutdown |
-| Token blacklist not found | Token validated by signature only; blacklist check is additional |
+| Scenario | Behavior |
+|----------|---------|
+| MySQL pool exhaustion | `aiomysql` raises `PoolClosedError`; route returns `500` with generic message |
+| DB connection failure on startup | `init_db()` raises; Uvicorn fails to start |
+| File disk write failure | Try/except in upload handler; `500` with generic message |
+| Backup scheduler crash | Background task cancelled gracefully via `asyncio.CancelledError` on shutdown |
+| Migration already applied | `ALTER TABLE` errors silently caught per statement |
+| Token signature invalid | `401 Not authenticated` |
 
 ### 10.2 User-Level Errors
 
-| Scenario | Response |
-|---|---|
-| Wrong credentials | 401 "Invalid email or password" |
-| Inactive account | 403 "Account is not active" |
-| Duplicate MAC/serial | 400 with field-specific message |
-| Distributing device not in your possession | 400 from service validation |
-| Approving already-approved distribution | 400 "Distribution is not in pending state" |
-| Confirming receipt not addressed to you | 400 "You are not the recipient" |
-| Uploading invalid file type | 400 with extension allowlist message |
-| File magic bytes mismatch | 400 "Invalid XLSX/XLS file content" |
-| Bulk upload with partial errors | 200 returned with per-row error list; valid rows still processed |
+| Scenario | Status | Message |
+|----------|--------|---------|
+| Wrong credentials | `401` | "Invalid email or password" |
+| Inactive/suspended account | `403` | "Account is not active" |
+| Duplicate MAC or serial | `400` | Field-specific message |
+| Distributing unowned device | `400` | "Device X is not in your possession" |
+| Distributing locked device | `400` | "Device X is in an unconfirmed distribution" |
+| Re-distributing before receipt | `400` | "Confirm receipt of incoming transfer first" |
+| Distributing defective device | `400` | "Device X is defective and cannot be transferred" |
+| Wrong hierarchy level | `400` | Role-specific hierarchy message |
+| Duplicate active defect | `400` | "Device already has an active defect report" |
+| Invalid file type | `400` | Extension allowlist message |
+| File magic bytes mismatch | `400` | "Invalid XLSX/XLS file content" |
+| Confirming payment early | `400` | "Cannot confirm payment before device is received" |
+| Bulk upload with errors | `200` | Per-row error list returned; distribution not created |
 
 ### 10.3 Fail-Safe Mechanisms
 
-- **Idempotent migrations** — All `ALTER TABLE` in migrations wrapped in `try/except`; already-existing columns silently ignored
-- **Transaction rollback** — `db.rollback()` on unhandled exceptions in service layer
-- **Token expiry** — Frontend intercepts 401 → attempts refresh → re-queues original request → if refresh fails, redirects to login
-- **Disputed distribution lock** — Sender cannot redistribute devices while distribution is in `disputed` state
+| Mechanism | Detail |
+|-----------|--------|
+| **Device holder deferred transfer** | Devices move to recipient **only** after receipt is confirmed, never on distribution creation |
+| **Transaction rollback** | All DB writes use `await db.commit()` — uncommitted work is rolled back on exception |
+| **Manifest generation failure** | If Excel manifest fails, distribution still succeeds; manifest is optional |
+| **Auto-return creation failure** | If auto-return creation fails after defect approval, status update still succeeds |
+| **Idempotent migrations** | All `ALTER TABLE` migration statements are individually wrapped in `try/except` |
+| **Token refresh on 401** | Frontend authContext intercepts `401`, silently refreshes, retries original request |
+| **Disputed device lock** | Sender **cannot** redistribute devices while a distribution is in `disputed` state |
 
 ---
 
-## 11. Deployment & Infrastructure
+<div style="page-break-before: always;"></div>
 
-### 11.1 Local Development Setup (Windows)
+## 11. Setup & Deployment
 
-**Prerequisites:**
-- Python 3.11+
-- Node.js 18+
-- Docker Desktop (for MySQL)
-- Git
+### 11.1 Prerequisites
 
-**Step 1 — Clone repository:**
+| Requirement | Local Dev | Production |
+|------------|-----------|------------|
+| Python | 3.11+ | —  (in Docker) |
+| Node.js | 18+ | — (in Docker) |
+| Docker Desktop | For MySQL | Required |
+| Docker Compose plugin | Optional | Required |
+| Git | Required | Required |
+| Tailscale | Optional | Required |
+
+---
+
+### 11.2 Local Development Setup (Windows)
+
+**Step 1 — Clone the repository:**
 ```bash
 git clone <repo-url> distribution-management-system
 cd distribution-management-system
@@ -952,62 +1379,82 @@ cd distribution-management-system
 ```bash
 docker compose up mysql -d
 ```
+Wait ~15 seconds for MySQL to complete its healthcheck.
 
-**Step 3 — Backend setup:**
+**Step 3 — Set up Python backend:**
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate        # Windows
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-**Step 4 — Backend environment:**
+**Step 4 — Create backend environment file:**
 
-Create `backend/.env`:
+Create the file `backend/.env` with the following contents:
 ```dotenv
+# Application
+APP_NAME=Distribution Management System
+APP_VERSION=1.0.0
 DEBUG=true
 ENVIRONMENT=development
+
+# Server
+HOST=127.0.0.1
+PORT=8080
+
+# Database (matches docker-compose.yml defaults)
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=dms_user
 DB_PASSWORD=dms_password
 DB_NAME=distribution_management_system
-SECRET_KEY=<generate with: python -c "import secrets; print(secrets.token_urlsafe(64))">
+
+# Security — generate a fresh key before starting
+SECRET_KEY=<run: python -c "import secrets; print(secrets.token_urlsafe(64))">
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=15
 REFRESH_TOKEN_EXPIRE_DAYS=7
 CSRF_COOKIE_SECURE=false
 ENFORCE_HTTPS=false
+
+# CORS
 CORS_ORIGINS=http://localhost:5173
 ```
 
-**Step 5 — Start backend:**
+**Step 5 — Start the backend:**
 ```bash
 python -m uvicorn app.main:app --reload --port 8080
 ```
 
-Backend available at: `http://localhost:8080`
-Swagger docs at: `http://localhost:8080/docs`
+On first start, the backend automatically:
+- Creates all 19 database tables
+- Applies column migrations (idempotent)
+- Seeds the super admin account (`admin@dms.com`)
+- Starts the monthly backup scheduler
 
-**Step 6 — Frontend setup:**
+Backend available at: `http://localhost:8080`  
+Swagger UI (dev only): `http://localhost:8080/docs`
+
+**Step 6 — Set up the frontend:**
 ```bash
-cd frontend
+cd ../frontend
 npm install
 ```
 
-Create `frontend/.env`:
+Create the file `frontend/.env`:
 ```dotenv
 VITE_API_URL=http://localhost:8080/api
 ```
 
-**Step 7 — Start frontend:**
+**Step 7 — Start the frontend:**
 ```bash
 npm run dev
 ```
 
 Frontend available at: `http://localhost:5173`
 
-**Or use PowerShell convenience scripts:**
+**Step 8 — Optional: Use PowerShell convenience scripts:**
 ```powershell
 .\start.ps1    # starts backend + frontend
 .\stop.ps1     # stops both
@@ -1015,235 +1462,418 @@ Frontend available at: `http://localhost:5173`
 
 ---
 
-### 11.2 Docker Compose (Full Stack)
+### 11.3 Default Login Credentials
 
+These credentials are seeded on first startup in development mode.
+
+| Role | Email | Password |
+|------|-------|----------|
+| Super Admin | `admin@dms.com` | `Admin@123` |
+| Manager | `manager1@dms.com` | `Manager@123` |
+| PDIC Staff | `staff1@dms.com` | `Staff@123` |
+| Sub Distributor | `subdist1@dms.com` | `SubDist@123` |
+| Operator | `operator1@dms.com` | `Oper@123` |
+
+> ⚠️ All first-time logins trigger the **Forced Credential Update** screen. Users must set a new email and password before proceeding.
+
+**Seed full test data (development only):**
 ```bash
-# Start all services (MySQL + Backend + Frontend)
-docker compose up -d --build
-
-# View logs
-docker compose logs -f backend
-
-# Stop services
-docker compose down
+curl -X POST http://localhost:8080/reset-and-seed
+# Creates: 39 users, 200 devices, 50 distributions, 30 defects
 ```
-
-Services:
-- `dms-mysql` on port `3306` (internal only in production)
-- `dms-backend` on port `8080`
-- `dms-frontend` on port `5173`
-
-Persistent volumes:
-- `mysql_data` — database files
-- `./backend/distribution_manifests` — Excel manifests
-- `./backend/monthly_backups` — scheduled backups
-- `./backend/uploads` — uploaded files (images, bills)
 
 ---
 
-### 11.3 Production Deployment (Headless Server + Tailscale)
+### 11.4 Docker Compose — Full Stack
+
+Run the entire stack (MySQL + Backend + Frontend) together:
+
+```bash
+# Build and start all containers
+docker compose up -d --build
+
+# View real-time logs
+docker compose logs -f backend
+
+# Restart a service
+docker compose restart backend
+
+# Stop all services
+docker compose down
+```
+
+**Container summary:**
+
+| Container | Port | Purpose |
+|-----------|------|---------|
+| `dms-mysql` | `3306` | MySQL 8.4 database |
+| `dms-backend` | `8080` | FastAPI API server |
+| `dms-frontend` | `5173` | Vite / React SPA |
+
+**Persistent volumes:**
+
+| Volume | Contents |
+|--------|---------|
+| `mysql_data` | All database files |
+| `./backend/distribution_manifests` | Generated Excel distribution manifests |
+| `./backend/monthly_backups` | Scheduled backup files |
+| `./backend/uploads` | Uploaded images, payment bills |
+
+---
+
+### 11.5 Production Deployment — Headless Server + Tailscale
+
+This section covers deploying the DMS on a Linux server with no GUI, accessible privately via Tailscale VPN.
 
 **Architecture:**
-- Ubuntu 22.04/24.04 Linux server (no GUI)
-- Docker Compose stack
-- Tailscale for private network access
-- Tailscale Serve for HTTPS termination
+```
+User Device (Tailscale client)
+      │  HTTPS
+      ▼
+Linux Server (Tailscale node)
+  ├── Tailscale Serve → port 5173 (frontend)
+  ├── docker-compose
+  │     ├── dms-frontend :5173
+  │     ├── dms-backend  :8080
+  │     └── dms-mysql    :3306 (internal only)
+  └── Persistent volumes on host filesystem
+```
 
-**Step 1 — Server preparation:**
+#### Step 1 — Prepare the server
+
 ```bash
 sudo apt update && sudo apt -y upgrade
 sudo apt -y install ca-certificates curl gnupg git ufw jq
+
+# Firewall baseline
 sudo ufw default deny incoming
-sudo ufw allow 22/tcp
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp    # SSH only
 sudo ufw enable
 ```
 
-**Step 2 — Install Docker:**
+> **Do not** expose ports 8080, 5173, or 3306 publicly. All access goes through Tailscale.
+
+#### Step 2 — Install Docker
+
 ```bash
 sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) \
+  signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
 sudo apt update
-sudo apt -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+sudo apt -y install docker-ce docker-ce-cli containerd.io \
+                    docker-buildx-plugin docker-compose-plugin
 sudo systemctl enable --now docker
 sudo usermod -aG docker $USER
 ```
-Log out and back in for group membership to apply.
 
-**Step 3 — Install Tailscale:**
+Log out and back in for the group membership to take effect.
+
+#### Step 3 — Install and join Tailscale
+
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
-```
-Approve the server in your Tailscale admin console.
+# Follow the printed URL to authorize the server in your Tailscale admin console
 
-**Step 4 — Deploy application:**
+tailscale status  # confirm connected
+tailscale ip -4   # note the tailnet IP
+```
+
+#### Step 4 — Deploy application code
+
 ```bash
 sudo mkdir -p /opt/dms
+sudo chown $USER:$USER /opt/dms
 cd /opt/dms
 git clone <repo-url> distribution-management-system
 cd distribution-management-system
+git checkout <release-tag>
 ```
 
-**Step 5 — Production environment files:**
+#### Step 5 — Configure production environment
 
-`backend/.env`:
+**Create `backend/.env`:**
 ```dotenv
 APP_NAME=Distribution Management System
 APP_VERSION=1.0.0
 DEBUG=False
 ENVIRONMENT=production
+
 HOST=0.0.0.0
 PORT=8080
+
 DB_HOST=mysql
 DB_PORT=3306
 DB_USER=dms_user
-DB_PASSWORD=<strong-random-password>
+DB_PASSWORD=<strong-random-db-password>
 DB_NAME=distribution_management_system
+
 SECRET_KEY=<64-byte-urlsafe-secret>
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=15
 REFRESH_TOKEN_EXPIRE_DAYS=7
 CSRF_COOKIE_SECURE=true
 ENFORCE_HTTPS=false
+
 CORS_ORIGINS=https://<server-hostname>.<tailnet>.ts.net
-ADMIN_INITIAL_PASSWORD=<strong-temp-password>
+ADMIN_INITIAL_PASSWORD=<strong-temporary-admin-password>
 ```
 
-`frontend/.env.production`:
+Generate a secure secret key:
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+**Create `frontend/.env.production`:**
 ```dotenv
 VITE_API_URL=https://<server-hostname>.<tailnet>.ts.net/api
 ```
 
-**Step 6 — Start production stack:**
-```bash
-docker compose up -d --build
+> This file is **critical**. Without it, the frontend is built with `http://localhost:8080/api` which will not work for remote users.
+
+#### Step 6 — Optional: Remove MySQL host port exposure
+
+Create `docker-compose.prod.yml`:
+```yaml
+services:
+  mysql:
+    ports: []
 ```
 
-**Step 7 — Enable HTTPS via Tailscale Serve:**
+#### Step 7 — Start services
+
+```bash
+# Standard
+docker compose up -d --build
+
+# With production override (recommended)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+#### Step 8 — Enable HTTPS via Tailscale Serve
+
 ```bash
 sudo tailscale serve --https=443 / http://127.0.0.1:5173
-sudo systemctl enable --now tailscaled
+sudo tailscale serve status    # verify configuration
+sudo systemctl enable --now tailscaled  # persist across reboots
 ```
 
-Users access the app at: `https://<server-hostname>.<tailnet>.ts.net`
+Users access the application at:
+```
+https://<server-hostname>.<tailnet>.ts.net
+```
 
-**Step 8 — Validate:**
+#### Step 9 — Validate go-live
+
 ```bash
+# Backend health
 curl -sS http://127.0.0.1:8080/health
+# Expected: {"status":"healthy"}
+
+# Frontend reachable
+curl -I http://127.0.0.1:5173
+
+# Container status
 docker compose ps
+
+# Tailscale
 tailscale serve status
 ```
 
 ---
 
-### 11.4 Initial Data Seeding
+### 11.6 Adding Users to the System
 
-On first backend startup, `seed_initial_data()` is called automatically:
-- Creates super admin: `admin@dms.com`
-- Password: value in `ADMIN_INITIAL_PASSWORD` env var, or a fallback default
-- `force_email_change=1` and `force_password_change=1` are set
+#### Technical Access (Tailnet)
+1. In Tailscale admin console → **Invite user** by email
+2. Assign ACL group (e.g., `group:dms-users`)
+3. Ensure ACL allows destination port `443`
+4. User accepts invite, installs Tailscale, connects
 
-**Development seed (full data):**
-```bash
-# POST to reset-and-seed (development only)
-curl -X POST http://localhost:8080/reset-and-seed
-```
-Creates: 39 users, 200 devices, 50 distributions, 30 defects, 25 returns, 300+ notifications.
-
-**Default test credentials:**
-- Admin: `admin@dms.com` / `Admin@123`
-- Manager: `manager1@dms.com` / `Manager@123`
-- Operator: `operator1@dms.com` / `Oper@123`
+#### Application Access (DMS Login)
+1. Log in as super admin (`admin@dms.com`)
+2. Navigate to **Users** → **Add User**
+3. Fill in name, email, role, and parent user (where required)
+4. Share credentials securely
+5. User logs in → forced to update email and password on first login
 
 ---
+
+### 11.7 Day-2 Operations
+
+```bash
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f backend
+docker compose logs -f mysql
+
+# Restart service
+docker compose restart backend
+
+# Update deployment
+git fetch --all
+git checkout <new-release-tag>
+git pull --ff-only
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+**Backup policy recommendations:**
+- Daily MySQL dump using `mysqldump` from within the container
+- Daily filesystem sync of `backend/uploads` and `backend/monthly_backups`
+- Minimum 30-day retention
+- Monthly restore test
+
+---
+
+<div style="page-break-before: always;"></div>
 
 ## 12. Logging & Monitoring
 
-### 12.1 Application Logging
+### 12.1 Logging Layers
 
-**Audit Logger (`app.core.audit`):**
-- Dedicated logger for sensitive security events
-- Events: `LOGIN_SUCCESS`, `LOGIN_FAILED`, `LOGOUT_SUCCESS`, `TOKEN_REFRESH_*`, `PASSWORD_CHANGE_*`, `FORCED_CREDENTIAL_ROTATION_COMPLETE`, `USER_DELETE`, `USER_STATUS_UPDATE`, `USER_CREDENTIALS_UPDATE`, `DB_RESET`
-- Written to server stdout + application log file
+The system uses three distinct logging mechanisms:
 
-**API Activity Logger (`app.core.activity_logger`):**
-- Every significant API call logged to `api_activity_logs` table in DB
-- Captures: actor_id, actor_name, actor_role, method, path, status_code, ip_address, timestamp
-- Insignificant paths (health checks, OPTIONS) silently ignored
-- Viewable in `/activities` page by super_admin and md_director
+#### Audit Logger (`app.core.audit`)
+A dedicated security event logger for sensitive actions. Writes to server stdout and a persistent log file.
 
-**Application Logger:**
-- Standard Python `logging` module used in all route handlers
-- `logger.exception()` called on every unhandled exception to capture full stack trace server-side
-- Clients never receive stack traces
+| Event Key | Trigger |
+|-----------|---------|
+| `LOGIN_SUCCESS` | Successful authentication |
+| `LOGIN_FAILED` | Wrong credentials |
+| `LOGIN_BLOCKED_INACTIVE` | Login attempt on inactive account |
+| `LOGOUT_SUCCESS` | User logout |
+| `TOKEN_REFRESH_SUCCESS/FAILED` | Token refresh attempt |
+| `PASSWORD_CHANGE_SUCCESS/FAILED` | Password change |
+| `FORCED_CREDENTIAL_ROTATION_COMPLETE` | First-login credential update done |
+| `USER_DELETE` | User account deleted |
+| `USER_STATUS_UPDATE` | Account status changed |
+| `USER_CREDENTIALS_UPDATE` | Admin credential reset |
+| `DB_RESET` | Development database reset (with IP logged) |
 
-### 12.2 Backend Logs (Docker)
+#### API Activity Logger (`app.core.activity_logger`)
+Captures every significant API request via `ApiActivityLoggingMiddleware`. Stored in `api_activity_logs` table.
+
+```
+Every API request → middleware runs post-response
+  → build_meaningful_activity_description(method, path, status_code)
+  → if description exists → write to api_activity_logs
+  → if description is None → silently skip (e.g., GET /health)
+```
+
+#### Application Logger (Python standard `logging`)
+Each route module has `logger = logging.getLogger(__name__)`. Unhandled exceptions are captured with `logger.exception()` — full stack traces go to server logs, never to the client.
+
+### 12.2 Health Check
+
+```http
+GET /health
+→ 200 OK  {"status": "healthy"}
+```
+
+Used by Docker healthchecks and external uptime monitors.
+
+### 12.3 Viewing Logs
 
 ```bash
-# Tail backend logs
+# Container backend logs (follow)
 docker compose logs -f backend
 
-# View MySQL logs
-docker compose logs -f mysql
-
-# View last 100 lines
+# Last 100 lines
 docker compose logs backend --tail=100
-```
 
-### 12.3 Health Check
+# MySQL logs
+docker compose logs mysql --tail=50
 
+# Activity log in-app
+# Navigate to /activities (super_admin or md_director only)
 ```
-GET /health
-→ { "status": "healthy" }
-```
-
-Used by Docker and load balancers to verify service availability.
 
 ### 12.4 Monitoring Recommendations
 
-- **Uptime:** Configure a cron job or external tool (Uptime Kuma, etc.) to poll `/health` every 60 seconds
-- **Log aggregation:** Ship Docker logs to a centralized tool (Grafana Loki, ELK, or similar)
-- **DB backup validation:** Monthly restore test from `monthly_backups/`
-- **Disk space:** Monitor `backend/uploads` and `backend/monthly_backups` directories
+| Area | Recommendation |
+|------|---------------|
+| **Uptime** | Poll `GET /health` every 60s via Uptime Kuma or similar |
+| **Log aggregation** | Ship Docker logs to Grafana Loki, ELK, or cloud logging |
+| **Disk space** | Monitor `backend/uploads` and `backend/monthly_backups` growth |
+| **DB backup validation** | Monthly restore test from `monthly_backups/` |
+| **Failed login alerts** | Monitor audit log for repeated `LOGIN_FAILED` events per IP |
 
 ---
+
+<div style="page-break-before: always;"></div>
 
 ## 13. Future Improvements
 
 ### 13.1 Scalability
 
-- **Horizontal scaling:** Replace single MySQL container with managed RDS; use a shared session store for tokens
-- **Message queue:** Add Redis/Celery for async notifications instead of synchronous DB writes
-- **CDN for uploads:** Move uploaded files (images, bills) to object storage (S3-compatible)
-- **WebSocket notifications:** Replace polling notification pattern with WebSocket push
+| Area | Recommendation |
+|------|---------------|
+| **Database** | Migrate from single MySQL container to managed RDS with read replicas |
+| **Async jobs** | Add Celery + Redis for notification delivery and report generation |
+| **File storage** | Move uploads to S3-compatible object storage (AWS S3, MinIO) |
+| **WebSockets** | Replace polling notification pattern with real-time WebSocket push |
+| **Caching** | Add Redis caching for frequently read, rarely changing data (user hierarchy, routing config) |
+| **Load balancing** | Add Nginx reverse proxy layer with multiple Uvicorn workers |
 
 ### 13.2 Feature Enhancements
 
-- **Mobile app:** Expose API to React Native or Flutter app for field operators
-- **QR code generation:** Generate QR labels for each device at registration
-- **Geo-tracking:** Integrate GPS coordinates for operator location at time of defect report
-- **Email notifications:** Send email alerts on approval actions (SMTP integration)
-- **Advanced analytics:** Time-series defect trends, MTTR tracking, distribution velocity
-- **Multi-tenancy:** Support multiple independent organizations on one deployment
-- **SSO:** OAuth2/SAML integration for enterprise identity providers
-- **SLA management:** Set SLA timers on defect statuses with automatic escalation
-- **Inventory forecasting:** Reorder alerts when stock drops below `reorder_level`
+| Feature | Description |
+|---------|-------------|
+| **Email notifications** | SMTP integration for approval alerts and defect updates |
+| **Mobile app** | React Native / Flutter app for field operators |
+| **QR code generation** | Generate printable QR labels at device registration |
+| **Geo-tracking** | GPS coordinates at time of defect report |
+| **SLA management** | Automatic escalation when defect statuses exceed configured time thresholds |
+| **Advanced analytics** | MTTR tracking, defect root cause trends, distribution velocity heatmaps |
+| **Inventory forecasting** | Low-stock alerts when `quantity_on_hand` drops below `reorder_level` |
+| **Multi-tenancy** | Support multiple independent organizations on one deployment |
+| **SSO / OAuth2** | SAML/OAuth2 integration for enterprise identity providers |
+| **2FA** | TOTP-based two-factor authentication for admin and manager accounts |
 
 ### 13.3 Operational Improvements
 
-- **CI/CD pipeline:** GitHub Actions → build Docker images → push to registry → deploy to server
-- **Database migrations:** Migrate from inline `ALTER TABLE` to a proper migration tool (Alembic)
-- **Automated backups to cloud:** Schedule upload of `monthly_backups` to S3 or cloud storage
-- **Two-factor authentication:** TOTP-based 2FA for admin and manager accounts
-- **Secrets management:** Replace `.env` file secrets with a secrets manager (Vault, AWS Secrets Manager)
+| Area | Recommendation |
+|------|---------------|
+| **CI/CD** | GitHub Actions → build Docker images → push to registry → deploy via SSH |
+| **Database migrations** | Migrate from inline `ALTER TABLE` to Alembic for version-controlled schema changes |
+| **Secrets management** | Replace `.env` file secrets with HashiCorp Vault or AWS Secrets Manager |
+| **Automated cloud backups** | Schedule upload of `monthly_backups/` to S3 or similar |
+| **Key rotation** | Automate `SECRET_KEY` rotation with a grace period for existing tokens |
+| **Dependency scanning** | Add `pip-audit` and `npm audit` to CI pipeline |
 
 ---
 
-*End of Documentation*
+<div style="page-break-before: always;"></div>
 
-**Document Metadata:**
-- System: Distribution Management System v1.0.0
-- Backend: FastAPI + Python + MySQL
-- Frontend: React 18 + Vite 6 + Tailwind CSS 3
-- Deployment: Docker Compose + Tailscale
-- Generated: 2026-04-07
+---
+
+<div align="center">
+
+## Document Information
+
+| Field | Value |
+|-------|-------|
+| **System Name** | Distribution Management System |
+| **Version** | 1.0.0 |
+| **Backend** | FastAPI · Python 3.11+ · MySQL 8.4 |
+| **Frontend** | React 18 · Vite 6 · Tailwind CSS 3 |
+| **Deployment** | Docker Compose · Tailscale |
+| **Document Date** | April 2026 |
+| **Classification** | Confidential |
+
+---
+
+*This document was generated from direct source code analysis of the production codebase.*  
+*All workflows, API endpoints, database schemas, and security controls reflect the actual implementation.*
+
+</div>

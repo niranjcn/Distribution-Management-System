@@ -1,4 +1,7 @@
 import logging
+import json
+import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File
 from typing import Optional, Dict, Any
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceType
@@ -255,18 +258,57 @@ async def request_device_edit(
     payload: Dict[str, Any],
     current_user: dict = Depends(get_current_user)
 ):
-    """Staff: request an edit to a device. Sends an approval notification to admins/managers.
-    The device is NOT modified until a manager/admin reviews and applies the change."""
-    if current_user["role"] not in ["pdic_staff", "super_admin", "manager"]:
+    """PDIC staff: request an edit to a device.
+    The device is not modified until a manager or super admin approves it from Change Requests."""
+    if current_user["role"] != "pdic_staff":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only management users can request device edits"
+            detail="Only PDIC staff can submit device edit approval requests"
         )
 
     try:
+        if not str(device_id).isdigit():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid device id")
+
         device = await device_service.get_device_by_id(device_id)
         if not device:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+        allowed_fields = {
+            "device_type", "serial_number", "mac_address", "model", "manufacturer",
+            "band_type", "box_type", "nuid", "status", "current_location",
+            "warranty_expiry", "metadata"
+        }
+        proposed_changes = {k: v for k, v in (payload or {}).items() if k in allowed_fields}
+        if not proposed_changes:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid device edit fields provided")
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        request_id = f"CR-{uuid.uuid4().hex[:8].upper()}"
+
+        from app.database import get_db
+        async with get_db() as db:
+            await db.execute(
+                """INSERT INTO change_requests
+                   (request_id, requested_by, requested_by_name, requested_by_role,
+                    request_type, device_id, reason, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'device_edit_change', ?, ?, 'pending', ?, ?)""",
+                (
+                    request_id,
+                    int(current_user["id"]),
+                    current_user.get("name") or current_user.get("email") or "PDIC Staff",
+                    current_user.get("role"),
+                    str(device_id),
+                    json.dumps({"changes": proposed_changes}),
+                    now,
+                    now,
+                )
+            )
+
+            cursor = await db.execute("SELECT id FROM users WHERE role IN ('super_admin', 'manager') AND status = 'active'")
+            reviewer_rows = await cursor.fetchall()
+            reviewer_ids = [str(row[0]) for row in reviewer_rows]
+            await db.commit()
 
         proposer_name = current_user.get("name") or current_user.get("email", "pdic_staff")
         changes_summary = ", ".join(
@@ -279,27 +321,45 @@ async def request_device_edit(
             f"Proposed Changes: {changes_summary or 'No changes specified'}"
         )
 
-        from app.database import get_db, rows_to_list
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')"
-            )
-            rows = await cursor.fetchall()
-            admin_ids = [str(row[0]) for row in rows]
+        notified_count = 0
+        notification_failures = 0
+        for reviewer_id in reviewer_ids:
+            try:
+                await notification_service.create_notification(
+                    user_id=reviewer_id,
+                    title="Device Edit Approval Request",
+                    message=message,
+                    notification_type="device_edit_request",
+                    link="/devices/edit-requests",
+                    category="approval",
+                    metadata={
+                        "action": "device_edit_change",
+                        "request_id": request_id,
+                        "device_id": str(device_id),
+                        "requested_by": str(current_user.get("id") or ""),
+                    },
+                )
+                notified_count += 1
+            except Exception:
+                notification_failures += 1
+                logger.exception(
+                    "Failed sending device edit notification | request_id=%s | reviewer_id=%s",
+                    request_id,
+                    reviewer_id,
+                )
 
-        for admin_id in admin_ids:
-            await notification_service.create_notification(
-                user_id=admin_id,
-                title="Device Edit Approval Request",
-                message=message,
-                notification_type="device_edit_request",
-                reference_id=device_id,
-                reference_type="device"
-            )
+        message_text = f"Edit request submitted. Sent to {notified_count} reviewer(s) for approval."
+        if notification_failures:
+            message_text += f" {notification_failures} notification(s) failed to deliver."
 
         return {
             "success": True,
-            "message": f"Edit request sent to {len(admin_ids)} management user(s) for approval."
+            "message": message_text,
+            "data": {
+                "request_id": request_id,
+                "notified_reviewers": notified_count,
+                "notification_failures": notification_failures,
+            },
         }
     except HTTPException:
         raise

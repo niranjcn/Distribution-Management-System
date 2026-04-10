@@ -7,12 +7,23 @@ const normalizeType = (value) => {
 };
 
 export const isSbDevice = (device) => {
-  const type = normalizeType(device?.device_type || device?.defective_device?.device_type || '');
+  const type = normalizeType(
+    device?.device_type ||
+    device?.defective_device?.device_type ||
+    device?.replacement_device?.device_type ||
+    ''
+  );
   return type === 'SB';
 };
 
 export const getDeviceNuid = (device) =>
-  device?.nuid || device?.defective_device?.nuid || device?.replacement_device?.nuid || 'N/A';
+  device?.nuid ||
+  device?.device_nuid ||
+  device?.defective_device_nuid ||
+  device?.source_device_nuid ||
+  device?.defective_device?.nuid ||
+  device?.replacement_device?.nuid ||
+  'N/A';
 
 export const getDeviceModel = (device) => {
   const directModel = device?.model || device?.device_model || device?.defective_device?.model || device?.replacement_device?.model;
@@ -38,7 +49,12 @@ export const getDeviceMac = (device) => {
 };
 
 export const getDeviceType = (device) =>
-  normalizeType(device?.device_type || device?.defective_device?.device_type || 'Unknown Type');
+  normalizeType(
+    device?.device_type ||
+    device?.defective_device?.device_type ||
+    device?.replacement_device?.device_type ||
+    'Unknown Type'
+  );
 
 export const getDeviceSelectLabel = (device) => {
   const model = getDeviceModel(device);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -6,10 +6,10 @@ import Timeline from '../components/ui/Timeline';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
-import { devicesAPI, changeRequestsAPI, defectsAPI } from '../services/api';
+import { devicesAPI, changeRequestsAPI, defectsAPI, usersAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { Search, Box, MapPin, Clock, User, ChevronRight, Loader2, Edit, Send, RefreshCw, Link2, AlertTriangle } from 'lucide-react';
+import { Search, Box, MapPin, Clock, User, ChevronRight, Loader2, Edit, Send, RefreshCw, Link2, AlertTriangle, Filter } from 'lucide-react';
 
 const DEVICE_STATUSES = [
   { value: 'available', label: 'Available' },
@@ -31,9 +31,18 @@ const TrackDevice = () => {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [allDevices, setAllDevices] = useState([]);
+  const [hierarchyUsers, setHierarchyUsers] = useState([]);
   const [replacementMappings, setReplacementMappings] = useState([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
   const [deviceHistory, setDeviceHistory] = useState([]);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [tableFilters, setTableFilters] = useState({
+    device_type: '',
+    manufacturer: '',
+    status: '',
+    sub_distributor_id: '',
+    cluster_id: '',
+  });
 
   // Availability status change state
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -66,6 +75,26 @@ const TrackDevice = () => {
       ]);
       setAllDevices(overviewResponse.data?.all_under_me || []);
       setReplacementMappings(Array.isArray(replacementsResponse.data) ? replacementsResponse.data : []);
+
+      if (['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role)) {
+        try {
+          const [subsResponse, clustersResponse] = await Promise.all([
+            usersAPI.getUsers({ role: 'sub_distributor', page_size: 100 }),
+            usersAPI.getUsers({ role: 'cluster', page_size: 100 }),
+          ]);
+          const collect = (response) => {
+            const payload = response?.data;
+            if (Array.isArray(payload)) return payload;
+            if (Array.isArray(payload?.users)) return payload.users;
+            return [];
+          };
+          setHierarchyUsers([...collect(subsResponse), ...collect(clustersResponse)]);
+        } catch {
+          setHierarchyUsers([]);
+        }
+      } else {
+        setHierarchyUsers([]);
+      }
     } catch (error) {
       console.error('Failed to fetch devices:', error);
     } finally {
@@ -80,8 +109,95 @@ const TrackDevice = () => {
     return acc;
   }, {});
 
-  const activeDevices = allDevices.filter((device) => device.status !== 'replaced');
-  const replacedDevices = allDevices.filter((device) => device.status === 'replaced');
+  const isManagement = ['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role);
+
+  const hierarchyIndex = useMemo(() => {
+    const subDistributors = hierarchyUsers.filter((u) => u.role === 'sub_distributor');
+    const clusters = hierarchyUsers.filter((u) => u.role === 'cluster');
+    const clustersBySub = {};
+    for (const cluster of clusters) {
+      const parentKey = String(cluster.parent_id || '');
+      if (!parentKey) continue;
+      if (!clustersBySub[parentKey]) clustersBySub[parentKey] = [];
+      clustersBySub[parentKey].push(cluster);
+    }
+    return { subDistributors, clusters, clustersBySub };
+  }, [hierarchyUsers]);
+
+  const devicesByHolder = useMemo(() => {
+    const grouped = {};
+    for (const device of allDevices) {
+      const holderId = String(device.current_holder_id || '');
+      if (!holderId) continue;
+      if (!grouped[holderId]) grouped[holderId] = [];
+      grouped[holderId].push(device);
+    }
+    return grouped;
+  }, [allDevices]);
+
+  const subDistributorSummary = useMemo(() => {
+    return hierarchyIndex.subDistributors
+      .map((sub) => {
+        const subId = String(sub.id);
+        const childClusters = hierarchyIndex.clustersBySub[subId] || [];
+        const holderIds = [subId, ...childClusters.map((cluster) => String(cluster.id))];
+        let total = 0;
+        for (const holderId of holderIds) {
+          total += (devicesByHolder[holderId] || []).length;
+        }
+        return {
+          id: subId,
+          name: sub.name || 'Unknown Sub Distribution',
+          total,
+          holderIds,
+        };
+      })
+      .filter((item) => item.total > 0)
+      .sort((a, b) => b.total - a.total);
+  }, [devicesByHolder, hierarchyIndex]);
+
+  const clusterSummary = useMemo(() => {
+    return hierarchyIndex.clusters
+      .map((cluster) => {
+        const clusterId = String(cluster.id);
+        return {
+          id: clusterId,
+          name: cluster.name || 'Unknown Cluster',
+          total: (devicesByHolder[clusterId] || []).length,
+          holderIds: [clusterId],
+        };
+      })
+      .filter((item) => item.total > 0)
+      .sort((a, b) => b.total - a.total);
+  }, [devicesByHolder, hierarchyIndex]);
+
+  const filterOptions = useMemo(() => {
+    const deviceTypes = [...new Set(allDevices.map((d) => d.device_type).filter(Boolean))].sort();
+    const manufacturers = [...new Set(allDevices.map((d) => (d.manufacturer || '').trim()).filter(Boolean))].sort();
+    const subDistributors = subDistributorSummary.map((item) => ({ id: item.id, name: item.name }));
+    const clusters = clusterSummary.map((item) => ({ id: item.id, name: item.name }));
+    return { deviceTypes, manufacturers, subDistributors, clusters };
+  }, [allDevices, subDistributorSummary, clusterSummary]);
+
+  const filteredAllDevices = useMemo(() => {
+    if (!isManagement) return allDevices;
+    const selectedSub = subDistributorSummary.find((item) => item.id === tableFilters.sub_distributor_id);
+    const selectedCluster = clusterSummary.find((item) => item.id === tableFilters.cluster_id);
+    const subHolderSet = selectedSub ? new Set(selectedSub.holderIds) : null;
+    const clusterHolderSet = selectedCluster ? new Set(selectedCluster.holderIds) : null;
+
+    return allDevices.filter((device) => {
+      if (tableFilters.device_type && device.device_type !== tableFilters.device_type) return false;
+      if (tableFilters.manufacturer && (device.manufacturer || '').trim() !== tableFilters.manufacturer) return false;
+      if (tableFilters.status && device.status !== tableFilters.status) return false;
+      if (subHolderSet && !subHolderSet.has(String(device.current_holder_id || ''))) return false;
+      if (clusterHolderSet && !clusterHolderSet.has(String(device.current_holder_id || ''))) return false;
+      return true;
+    });
+  }, [allDevices, isManagement, tableFilters, subDistributorSummary, clusterSummary]);
+
+  const activeDevices = filteredAllDevices.filter((device) => device.status !== 'replaced');
+  const replacedDevices = filteredAllDevices.filter((device) => device.status === 'replaced');
 
   const searchedReplacementMapping = searchResult
     ? replacementMapByDefectiveId[String(searchResult.id)]
@@ -181,12 +297,26 @@ const TrackDevice = () => {
   const canChangeStatusDirectly = currentUser && ['super_admin', 'manager'].includes(currentUser.role);
   const canRequestStatusChange = currentUser && currentUser.role === 'pdic_staff';
 
+  const refreshTrackedDevice = async (deviceId) => {
+    if (!deviceId) return;
+    try {
+      const [deviceResponse, historyResponse] = await Promise.all([
+        devicesAPI.getDevice(deviceId),
+        devicesAPI.getDeviceHistory(deviceId),
+      ]);
+      setSearchResult(deviceResponse?.data || null);
+      setDeviceHistory(historyResponse?.data || []);
+    } catch (error) {
+      showToast(error.message || 'Failed to refresh tracked device', 'error');
+    }
+  };
+
   const handleRepairHolder = async () => {
     if (!searchResult) return;
     try {
       await devicesAPI.repairDeviceHolder(searchResult.id);
       showToast('Device holder repaired successfully', 'success');
-      await handleSearchBySerial(searchResult.serial_number);
+      await refreshTrackedDevice(searchResult.id);
     } catch (err) {
       showToast(err.message || 'Failed to repair device holder', 'error');
     }
@@ -200,7 +330,7 @@ const TrackDevice = () => {
       showToast('Device availability status updated successfully', 'success');
       setShowStatusModal(false);
       setStatusNotes('');
-      await handleSearchBySerial(searchResult.serial_number);
+      await refreshTrackedDevice(searchResult.id);
     } catch (err) {
       showToast(err.message || 'Failed to update status', 'error');
     } finally {
@@ -276,6 +406,105 @@ const TrackDevice = () => {
             </div>
           ) : (
             <div className="space-y-2">
+              {isManagement && (
+                <div className="p-4 rounded-lg border border-gray-200 bg-gray-50 mb-2">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2">
+                      <Filter className="w-4 h-4 text-blue-600" />
+                      <h3 className="text-sm font-semibold text-gray-800">Table Filters (ALL Devices)</h3>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                      className="text-xs"
+                    >
+                      {showAdvancedFilters ? 'Hide Filters' : 'Show Filters'}
+                    </Button>
+                  </div>
+
+                  {showAdvancedFilters && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                      <select
+                        value={tableFilters.device_type}
+                        onChange={(e) => setTableFilters((prev) => ({ ...prev, device_type: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      >
+                        <option value="">All Device Types</option>
+                        {filterOptions.deviceTypes.map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        value={tableFilters.manufacturer}
+                        onChange={(e) => setTableFilters((prev) => ({ ...prev, manufacturer: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      >
+                        <option value="">All Vendors</option>
+                        {filterOptions.manufacturers.map((manufacturer) => (
+                          <option key={manufacturer} value={manufacturer}>{manufacturer}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        value={tableFilters.sub_distributor_id}
+                        onChange={(e) => setTableFilters((prev) => ({ ...prev, sub_distributor_id: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      >
+                        <option value="">All Sub Distributions</option>
+                        {filterOptions.subDistributors.map((entity) => (
+                          <option key={entity.id} value={entity.id}>{entity.name}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        value={tableFilters.cluster_id}
+                        onChange={(e) => setTableFilters((prev) => ({ ...prev, cluster_id: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      >
+                        <option value="">All Clusters</option>
+                        {filterOptions.clusters.map((entity) => (
+                          <option key={entity.id} value={entity.id}>{entity.name}</option>
+                        ))}
+                      </select>
+
+                      <div className="flex gap-2">
+                        <select
+                          value={tableFilters.status}
+                          onChange={(e) => setTableFilters((prev) => ({ ...prev, status: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        >
+                          <option value="">All Statuses</option>
+                          <option value="available">available</option>
+                          <option value="distributed">distributed</option>
+                          <option value="in_use">in_use</option>
+                          <option value="defective">defective</option>
+                          <option value="replaced">replaced</option>
+                          <option value="returned">returned</option>
+                          <option value="maintenance">maintenance</option>
+                        </select>
+                        <Button
+                          variant="secondary"
+                          onClick={() => setTableFilters({
+                            device_type: '',
+                            manufacturer: '',
+                            status: '',
+                            sub_distributor_id: '',
+                            cluster_id: '',
+                          })}
+                          className="whitespace-nowrap"
+                        >
+                          Reset
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-gray-500 mt-3">
+                    Filtered results: {filteredAllDevices.length}
+                  </p>
+                </div>
+              )}
               <p className="text-sm text-gray-500 mb-2">Active devices are listed first. Replaced devices are shown in a separate section below.</p>
 
               <h3 className="text-sm font-semibold text-gray-700 mt-2">Active Devices</h3>

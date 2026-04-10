@@ -514,6 +514,16 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         users_cursor = await db.execute("SELECT id, name FROM users")
         users_rows = rows_to_list(await users_cursor.fetchall())
 
+        approvals_cursor = await db.execute(
+            """
+            SELECT approval_type, entity_id, approved_by, approved_by_name, approval_date, request_date, status
+            FROM approvals
+            WHERE approval_type IN ('return', 'defect')
+            ORDER BY COALESCE(approval_date, request_date) DESC
+            """
+        )
+        approval_rows = rows_to_list(await approvals_cursor.fetchall())
+
     device_lookup: Dict[str, Dict[str, Any]] = {}
     for device in devices_rows:
         db_id = str(device.get("id") or "").strip()
@@ -529,6 +539,20 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         if str(user.get("id") or "").strip()
     }
 
+    return_approval_lookup: Dict[str, Dict[str, Any]] = {}
+    defect_approval_lookup: Dict[str, Dict[str, Any]] = {}
+    for approval in approval_rows:
+        if str(approval.get("status") or "").lower() != "approved":
+            continue
+        entity_id = str(approval.get("entity_id") or "").strip()
+        if not entity_id:
+            continue
+        approval_type = str(approval.get("approval_type") or "").strip().lower()
+        if approval_type == "return" and entity_id not in return_approval_lookup:
+            return_approval_lookup[entity_id] = approval
+        elif approval_type == "defect" and entity_id not in defect_approval_lookup:
+            defect_approval_lookup[entity_id] = approval
+
     for row in returns_rows:
         raw_device_id = str(row.get("device_id") or "").strip()
         resolved_device = device_lookup.get(raw_device_id)
@@ -543,15 +567,25 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         is_sb = resolved_type.strip().lower() in {"set-top box", "set top box", "sb", "stb"}
         if is_sb:
             row["device_serial"] = ""
-        elif not str(row.get("device_serial") or "").strip():
-            row["device_serial"] = str((resolved_device or {}).get("serial_number") or "")
+
+        return_db_id = str(row.get("id") or "").strip()
+        return_approval = return_approval_lookup.get(return_db_id)
 
         if not str(row.get("requested_by_name") or "").strip():
             row["requested_by_name"] = user_name_lookup.get(str(row.get("requested_by") or "").strip(), "")
         if not str(row.get("return_to_name") or "").strip():
             row["return_to_name"] = user_name_lookup.get(str(row.get("return_to") or "").strip(), "")
         if not str(row.get("approved_by_name") or "").strip():
-            row["approved_by_name"] = user_name_lookup.get(str(row.get("approved_by") or "").strip(), "")
+            row["approved_by_name"] = (
+                str((return_approval or {}).get("approved_by_name") or "").strip()
+                or user_name_lookup.get(str((return_approval or {}).get("approved_by") or "").strip(), "")
+                or user_name_lookup.get(str(row.get("approved_by") or "").strip(), "")
+            )
+        if not str(row.get("approval_date") or "").strip():
+            row["approval_date"] = (
+                str((return_approval or {}).get("approval_date") or "").strip()
+                or str((return_approval or {}).get("request_date") or "").strip()
+            )
 
     for row in defects_rows:
         raw_device_id = str(row.get("device_id") or "").strip()
@@ -567,13 +601,27 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         is_sb = resolved_type.strip().lower() in {"set-top box", "set top box", "sb", "stb"}
         if is_sb:
             row["device_serial"] = ""
-        elif not str(row.get("device_serial") or "").strip():
-            row["device_serial"] = str((resolved_device or {}).get("serial_number") or "")
+
+        defect_db_id = str(row.get("id") or "").strip()
+        defect_approval = defect_approval_lookup.get(defect_db_id)
 
         if not str(row.get("reported_by_name") or "").strip():
             row["reported_by_name"] = user_name_lookup.get(str(row.get("reported_by") or "").strip(), "")
-        if not str(row.get("resolved_by_name") or "").strip():
-            row["resolved_by_name"] = user_name_lookup.get(str(row.get("resolved_by") or "").strip(), "")
+        resolved_name = str(row.get("resolved_by_name") or "").strip()
+        if defect_approval:
+            resolved_name = (
+                str(defect_approval.get("approved_by_name") or "").strip()
+                or user_name_lookup.get(str(defect_approval.get("approved_by") or "").strip(), "")
+                or resolved_name
+            )
+        elif not resolved_name or resolved_name == str(row.get("reported_by_name") or "").strip():
+            resolved_name = user_name_lookup.get(str(row.get("resolved_by") or "").strip(), resolved_name)
+        row["resolved_by_name"] = resolved_name
+        if not str(row.get("resolved_at") or "").strip() and defect_approval:
+            row["resolved_at"] = (
+                str(defect_approval.get("approval_date") or "").strip()
+                or str(defect_approval.get("request_date") or "").strip()
+            )
 
         row["operator_name"] = user_name_lookup.get(str(row.get("operator_id") or "").strip(), "")
         row["sub_distributor_name"] = user_name_lookup.get(str(row.get("sub_distributor_id") or "").strip(), "")

@@ -85,6 +85,7 @@ const Devices = () => {
   const canRegister = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const isStaff = user?.role === 'pdic_staff';
   const isAdminOrManager = ['super_admin', 'manager'].includes(user?.role);
+  const canDeleteDevice = ['super_admin', 'manager'].includes(user?.role);
 
   useEffect(() => {
     fetchDevices();
@@ -547,17 +548,19 @@ const Devices = () => {
               >
                 <Edit className="w-4 h-4" />
               </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedDevice(row);
-                  setShowDeleteModal(true);
-                }}
-                className="p-1 text-red-600 hover:bg-red-50 rounded"
-                title="Delete Device"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {canDeleteDevice && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedDevice(row);
+                    setShowDeleteModal(true);
+                  }}
+                  className="p-1 text-red-600 hover:bg-red-50 rounded"
+                  title="Delete Device"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </>
           )}
         </div>

@@ -248,6 +248,10 @@ async def _enrich_defect_rows(db, defects: List[Dict[str, Any]]) -> List[Dict[st
                 defect["device_type"] = defective_device.get("device_type")
             if not defect.get("device_name"):
                 defect["device_name"] = defective_device.get("model") or defective_device.get("device_type")
+            if not defect.get("nuid"):
+                defect["nuid"] = defective_device.get("nuid")
+            if not defect.get("device_nuid"):
+                defect["device_nuid"] = defective_device.get("nuid")
 
     # Enrich with auto_return_status for replace-button gating
     auto_return_ids = [d.get("auto_return_id") for d in defects if d.get("auto_return_id")]

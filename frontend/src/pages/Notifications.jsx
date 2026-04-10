@@ -14,6 +14,7 @@ const VALID_BASE_ROUTES = new Set([
   '/devices/register',
   '/devices/track',
   '/devices/bulk-import',
+  '/devices/edit-requests',
   '/distributions',
   '/distributions/create',
   '/defects',
@@ -166,6 +167,9 @@ const normalizeNotificationLink = (link) => {
 };
 
 const isAuthorizedForPath = (role, path) => {
+  if (path.startsWith('/devices/edit-requests')) {
+    return ['super_admin', 'manager'].includes(role);
+  }
   if (path.startsWith('/change-requests')) {
     return ['super_admin', 'manager'].includes(role);
   }
@@ -205,7 +209,12 @@ const resolveNotificationLink = (notification, userRole) => {
   }
 
   const categoryFallback = (() => {
-    if (notification?.category === 'approval') return '/change-requests';
+    if (notification?.category === 'approval') {
+      if (action.includes('device_edit_change') || action.includes('device_edit_request')) {
+        return '/devices/edit-requests';
+      }
+      return '/change-requests';
+    }
     if (notification?.category === 'distribution') return '/distributions';
     if (notification?.category === 'return') return '/returns';
     if (notification?.category === 'defect') {

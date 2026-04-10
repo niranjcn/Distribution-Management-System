@@ -175,20 +175,13 @@ async def get_users(
                     parent_id_filter = None
     elif actor_role == SUB_DISTRIBUTOR:
         parent_id_filter = str(current_user["id"])
-        if normalized_role_filter == CLUSTER:
-            sub_dist_manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=str(current_user["id"]), page_size=1_000_000)
-            parent_ids_in_filter = [int(m["id"]) for m in sub_dist_manager_result["data"]]
-            parent_id_filter = None
-        elif normalized_role_filter == OPERATOR:
+        if normalized_role_filter == OPERATOR:
             sub_dist_manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=str(current_user["id"]), page_size=1_000_000)
             sub_dist_manager_ids = [int(m["id"]) for m in sub_dist_manager_result["data"]]
-            if not sub_dist_manager_ids:
-                parent_ids_in_filter = []
-                parent_id_filter = None
-            else:
-                clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=sub_dist_manager_ids, page_size=1_000_000)
-                parent_ids_in_filter = [int(c["id"]) for c in clusters_result["data"]]
-                parent_id_filter = None
+            candidate_cluster_parent_ids = [int(current_user["id"])] + sub_dist_manager_ids
+            clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=candidate_cluster_parent_ids, page_size=1_000_000)
+            parent_ids_in_filter = [int(c["id"]) for c in clusters_result["data"]]
+            parent_id_filter = None
     elif actor_role == CLUSTER:
         parent_id_filter = str(current_user["id"])
     elif actor_role == OPERATOR:
@@ -285,20 +278,20 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
 
     if target_role == CLUSTER:
         if actor_role == SUB_DISTRIBUTION_MANAGER and not user_data.parent_id:
-            user_data = user_data.model_copy(update={"parent_id": str(current_user["id"])})
+            user_data = user_data.model_copy(update={"parent_id": str(current_user.get("parent_id"))})
 
         if not user_data.parent_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must select a sub distribution manager parent for cluster")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must select a sub distributor parent for cluster")
 
         parent_user = await user_service.get_user_by_id(user_data.parent_id)
-        if not parent_user or normalize_role(parent_user.get("role")) != SUB_DISTRIBUTION_MANAGER:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sub distribution manager selected")
+        if not parent_user or normalize_role(parent_user.get("role")) != SUB_DISTRIBUTOR:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sub distributor selected")
 
-        if actor_role == SUB_DISTRIBUTION_MANAGER and str(user_data.parent_id) != str(current_user.get("id")):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only assign clusters under your own account")
+        if actor_role == SUB_DISTRIBUTION_MANAGER and str(user_data.parent_id) != str(current_user.get("parent_id")):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only assign clusters under your own sub distribution")
 
         if actor_role == SUB_DISTRIBUTOR and not await _branch_contains_user(current_user.get("id"), user_data.parent_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected sub distribution manager is outside your branch")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected sub distributor is outside your branch")
 
     if actor_role == CLUSTER and target_role == OPERATOR and not user_data.parent_id:
         user_data = user_data.model_copy(update={"parent_id": str(current_user["id"])})
