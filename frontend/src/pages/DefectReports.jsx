@@ -96,6 +96,7 @@ const DefectReports = () => {
 
   const canReport = ['operator', 'sub_distributor', 'cluster'].includes(user?.role);
   const canReview = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
+  const canConfirmPayment = ['super_admin', 'manager'].includes(user?.role);
   const canForwardToManagement = user?.role === 'sub_distributor';
   const canReplace = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canConfirmReplacement = ['operator', 'cluster', 'sub_distributor'].includes(user?.role);
@@ -202,6 +203,36 @@ const DefectReports = () => {
       .some((value) => String(value).toLowerCase().includes(query));
   });
 
+  const renderPaymentStatus = (row) => {
+    const amount = Number(row?.return_amount || 0);
+    const dueName = row?.payment_due_user_name || row?.reported_by_name || 'N/A';
+
+    if (amount <= 0) {
+      return <span className="text-xs text-gray-500">N/A</span>;
+    }
+
+    if (row?.payment_confirmed) {
+      const confirmer = row?.payment_confirmed_by_name || 'Management';
+      return (
+        <div className="text-xs">
+          <span className="inline-flex items-center px-2 py-1 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold">
+            Confirmed
+          </span>
+          <p className="text-gray-500 mt-1">By: {confirmer}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="text-xs">
+        <span className="inline-flex items-center px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-700 font-semibold">
+          Pending Payment
+        </span>
+        <p className="text-gray-500 mt-1">Due To: {dueName}</p>
+      </div>
+    );
+  };
+
   const columns = [
     {
       key: 'device_name',
@@ -222,6 +253,11 @@ const DefectReports = () => {
       key: 'status',
       label: 'Status',
       render: (value) => <StatusBadge status={value} />
+    },
+    {
+      key: 'payment_status',
+      label: 'Payment Status',
+      render: (_, row) => renderPaymentStatus(row)
     },
     {
       key: 'actions',
@@ -304,23 +340,22 @@ const DefectReports = () => {
                   Confirm
                 </button>
               )}
-
-              {canReview &&
-                Number(row.return_amount || 0) > 0 &&
-                !row.payment_confirmed &&
-                row.auto_return_status === 'received' && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleConfirmPayment(row);
-                    }}
-                    className="flex items-center gap-1 px-2 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 transition-colors"
-                    title="Confirm payment"
-                  >
-                    <DollarSign className="w-3 h-3" />
-                    Confirm Payment
-                  </button>
-                )}
+            {canConfirmPayment &&
+              Number(row.return_amount || 0) > 0 &&
+              !row.payment_confirmed &&
+              row.auto_return_status === 'received' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleConfirmPayment(row);
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 transition-colors"
+                  title="Confirm payment"
+                >
+                  <DollarSign className="w-3 h-3" />
+                  Confirm Payment
+                </button>
+              )}
           </div>
 
         </div>
@@ -729,7 +764,7 @@ const DefectReports = () => {
                 Confirm Replacement Receipt
               </Button>
             )}
-            {canReview &&
+            {canConfirmPayment &&
               Number(selectedDefect?.return_amount || 0) > 0 &&
               !selectedDefect?.payment_confirmed &&
               selectedDefect?.auto_return_status === 'received' && (

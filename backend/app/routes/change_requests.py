@@ -1,8 +1,10 @@
 import logging
+import json
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
 from typing import Optional
 from pydantic import BaseModel
 from app.database import get_db, row_to_dict, rows_to_list
+from app.models.device import DeviceUpdate
 from app.middleware.auth_middleware import get_current_user, require_admin, require_admin_or_manager
 from app.utils.security import get_password_hash
 from app.utils.helpers import get_pagination
@@ -23,7 +25,7 @@ def _looks_like_bcrypt_hash(value: Optional[str]) -> bool:
 
 
 class ChangeRequestCreate(BaseModel):
-    request_type: str  # 'email_change', 'password_reset', 'both', 'device_status_change', 'replacement_transfer_fix'
+    request_type: str  # 'email_change', 'password_reset', 'both', 'device_status_change', 'device_edit_change', 'replacement_transfer_fix'
     new_email: Optional[str] = None
     new_password: Optional[str] = None
     device_id: Optional[str] = None
@@ -88,7 +90,7 @@ async def submit_change_request(
     current_user: dict = Depends(get_current_user)
 ):
     """Submit a change request"""
-    VALID_TYPES = ["email_change", "password_reset", "both", "device_status_change", "replacement_transfer_fix"]
+    VALID_TYPES = ["email_change", "password_reset", "both", "device_status_change", "device_edit_change", "replacement_transfer_fix"]
     if data.request_type not in VALID_TYPES:
         raise HTTPException(status_code=400, detail="Invalid request_type")
 
@@ -379,6 +381,32 @@ async def review_change_request(
                                 reporter=defect_reporter,
                                 notes=" ".join(defect_notes_parts)
                             )
+                elif req["request_type"] == "device_edit_change":
+                    dev_id = req.get("device_id")
+                    if not dev_id:
+                        raise HTTPException(status_code=400, detail="device_id is required for device edit change requests")
+
+                    raw_reason = req.get("reason")
+                    changes_payload = {}
+                    if raw_reason:
+                        try:
+                            parsed = json.loads(raw_reason)
+                            if isinstance(parsed, dict) and isinstance(parsed.get("changes"), dict):
+                                changes_payload = parsed.get("changes") or {}
+                            elif isinstance(parsed, dict):
+                                changes_payload = parsed
+                        except Exception:
+                            raise HTTPException(status_code=400, detail="Invalid device edit payload stored in request")
+
+                    if not changes_payload:
+                        raise HTTPException(status_code=400, detail="No device edit changes found in request")
+
+                    updated_device = await device_service.update_device(
+                        device_id=str(dev_id),
+                        device_data=DeviceUpdate(**changes_payload)
+                    )
+                    if not updated_device:
+                        raise HTTPException(status_code=404, detail="Device not found for edit approval")
                 elif req["request_type"] in ["email_change", "password_reset", "both"]:
                     # Use override values if provided, else use original request values
                     email_to_set = review.new_email or req.get("new_email")
@@ -518,6 +546,7 @@ async def review_change_request(
                     },
                 }
             elif review.action == "reject":
+                rejection_link = "/devices/edit-requests" if req.get("request_type") == "device_edit_change" else "/change-requests"
                 requester_rejection_notification_payload = {
                     "user_id": str(req["requested_by"]),
                     "title": "Update Request Rejected",
@@ -528,7 +557,7 @@ async def review_change_request(
                     ),
                     "notification_type": "warning",
                     "category": "approval",
-                    "link": "/change-requests",
+                    "link": rejection_link,
                     "metadata": {
                         "action": "change_request_rejected",
                         "request_id": request_id,

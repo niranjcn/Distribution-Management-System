@@ -3,6 +3,7 @@ import Card from '../components/ui/Card';
 import Modal from '../components/ui/Modal';
 import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
+import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { defectsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { ArrowLeftRight, Loader2 } from 'lucide-react';
@@ -91,13 +92,17 @@ const Replacements = () => {
                     >
                       <td className="py-3 px-3 font-semibold text-gray-800">{row.report_id}</td>
                       <td className="py-3 px-3">
-                        <p className="font-medium text-gray-800">{defective.serial_number || row.device_serial || 'N/A'}</p>
-                        <p className="text-xs text-gray-600">{defective.mac_address || 'N/A'} | {defective.device_type || row.device_type || 'N/A'}</p>
+                        <DeviceIdentity
+                          device={{
+                            ...row,
+                            ...defective,
+                            serial_number: defective.serial_number || row.device_serial,
+                          }}
+                        />
                       </td>
                       <td className="py-3 px-3 text-center text-gray-500">-&gt;</td>
                       <td className="py-3 px-3">
-                        <p className="font-medium text-gray-800">{replacement.serial_number || 'N/A'}</p>
-                        <p className="text-xs text-gray-600">{replacement.mac_address || 'N/A'} | {replacement.device_type || 'N/A'}</p>
+                        <DeviceIdentity device={replacement} />
                       </td>
                       <td className="py-3 px-3">
                         <StatusBadge status={row.status} size="sm" />
@@ -132,19 +137,20 @@ const Replacements = () => {
               <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-xs uppercase tracking-wider text-red-700 mb-2">Defective Device</p>
                 <p className="text-sm text-red-900">Device ID: {selectedRow.defective_device?.device_id || 'N/A'}</p>
-                <p className="text-sm text-red-800">Serial: {selectedRow.defective_device?.serial_number || selectedRow.device_serial || 'N/A'}</p>
-                <p className="text-sm text-red-800">MAC: {selectedRow.defective_device?.mac_address || 'N/A'}</p>
-                <p className="text-sm text-red-800">Type: {selectedRow.defective_device?.device_type || selectedRow.device_type || 'N/A'}</p>
-                <p className="text-sm text-red-800">Model: {selectedRow.defective_device?.model || 'N/A'}</p>
+                <DeviceIdentity
+                  className="mt-2"
+                  device={{
+                    ...selectedRow,
+                    ...(selectedRow.defective_device || {}),
+                    serial_number: selectedRow.defective_device?.serial_number || selectedRow.device_serial,
+                  }}
+                />
               </div>
 
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
                 <p className="text-xs uppercase tracking-wider text-emerald-700 mb-2">Replacement Device</p>
                 <p className="text-sm text-emerald-900">Device ID: {selectedRow.replacement_device?.device_id || 'N/A'}</p>
-                <p className="text-sm text-emerald-800">Serial: {selectedRow.replacement_device?.serial_number || 'N/A'}</p>
-                <p className="text-sm text-emerald-800">MAC: {selectedRow.replacement_device?.mac_address || 'N/A'}</p>
-                <p className="text-sm text-emerald-800">Type: {selectedRow.replacement_device?.device_type || 'N/A'}</p>
-                <p className="text-sm text-emerald-800">Model: {selectedRow.replacement_device?.model || 'N/A'}</p>
+                <DeviceIdentity className="mt-2" device={selectedRow.replacement_device || {}} />
               </div>
             </div>
 

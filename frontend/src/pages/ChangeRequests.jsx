@@ -17,10 +17,27 @@ const TYPE_LABELS = {
   password_reset: 'Password Reset',
   both: 'Email & Password',
   device_status_change: 'Device Status Change',
+  device_edit_change: 'Device Edit Change',
   replacement_transfer_fix: 'Replacement Transfer Fix',
 };
 
-const ChangeRequests = () => {
+const parseDeviceEditChanges = (reason) => {
+  if (!reason) return null;
+  try {
+    const parsed = JSON.parse(reason);
+    if (parsed && typeof parsed === 'object' && parsed.changes && typeof parsed.changes === 'object') {
+      return parsed.changes;
+    }
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+const ChangeRequests = ({ mode = 'password' }) => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const [requests, setRequests] = useState([]);
@@ -29,6 +46,7 @@ const ChangeRequests = () => {
   const [reviewing, setReviewing] = useState(null); // { req, action }
   const [reviewForm, setReviewForm] = useState({ review_note: '', new_email: '', new_password: '' });
   const [submitting, setSubmitting] = useState(false);
+  const isEditMode = mode === 'edit';
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
@@ -36,7 +54,12 @@ const ChangeRequests = () => {
       const params = {};
       if (statusFilter !== 'all') params.status = statusFilter;
       const res = await changeRequestsAPI.getRequests(params);
-      setRequests(res.data || []);
+      const data = res.data || [];
+      const filtered = data.filter((req) => {
+        if (isEditMode) return req.request_type === 'device_edit_change';
+        return req.request_type !== 'device_edit_change';
+      });
+      setRequests(filtered);
     } catch (err) {
       showToast('Failed to load requests', 'error');
     } finally {
@@ -78,8 +101,12 @@ const ChangeRequests = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Change Requests</h1>
-          <p className="text-gray-500 mt-1 text-sm">Review and approve account change requests</p>
+          <h1 className="text-2xl font-bold text-gray-800">{isEditMode ? 'Edit Requests' : 'Password Change Requests'}</h1>
+          <p className="text-gray-500 mt-1 text-sm">
+            {isEditMode
+              ? 'Review and approve device update requests'
+              : 'Review and approve account/password change requests'}
+          </p>
         </div>
         <Button variant="outline" icon={RefreshCw} onClick={fetchRequests}>Refresh</Button>
       </div>
@@ -134,6 +161,13 @@ const ChangeRequests = () => {
                         <div>
                           <div>Device ID: {req.device_id || '—'}</div>
                           <div>New Status: <span className="font-medium capitalize">{req.requested_status || '—'}</span></div>
+                        </div>
+                      ) : req.request_type === 'device_edit_change' ? (
+                        <div>
+                          <div>Device ID: {req.device_id || '—'}</div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Proposed fields: {Object.keys(parseDeviceEditChanges(req.reason) || {}).length}
+                          </div>
                         </div>
                       ) : req.request_type === 'replacement_transfer_fix' ? (
                         <div>
@@ -208,7 +242,14 @@ const ChangeRequests = () => {
                   <p className="text-blue-600 mt-1">Approving will update the device status immediately.</p>
                 </div>
               )}
-              {reviewing.action === 'approve' && reviewing.req.request_type !== 'device_status_change' && reviewing.req.request_type !== 'replacement_transfer_fix' && (
+              {reviewing.action === 'approve' && reviewing.req.request_type === 'device_edit_change' && (
+                <div className="p-3 bg-blue-50 rounded-lg text-sm">
+                  <p className="font-medium text-blue-800 mb-1">Device Edit Change Request</p>
+                  <p className="text-blue-700">Device ID: {reviewing.req.device_id}</p>
+                  <p className="text-blue-600 mt-1">Approving will apply the requested device field updates.</p>
+                </div>
+              )}
+              {reviewing.action === 'approve' && reviewing.req.request_type !== 'device_status_change' && reviewing.req.request_type !== 'device_edit_change' && reviewing.req.request_type !== 'replacement_transfer_fix' && (
                 <>
                   <p className="text-sm text-gray-600">You can override the requested values before approving:</p>
                   {reviewing.req.request_type !== 'password_reset' && (

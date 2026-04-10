@@ -16,7 +16,6 @@ import {
   ChevronRight,
   Package,
   ClipboardList,
-  UserCog,
   BarChart3,
   Warehouse,
   X,
@@ -61,6 +60,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           children: [
             { path: '/users', label: 'All Users' },
             { path: '/users/hierarchy', label: 'User Hierarchy' },
+            { path: '/change-requests', label: 'Password Change Requests' },
           ]
         },
         {
@@ -71,6 +71,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/devices', label: 'All Devices' },
             { path: '/devices/register', label: 'Register Device' },
             { path: '/devices/bulk-import', label: 'Bulk Import' },
+            { path: '/devices/edit-requests', label: 'Edit Requests' },
           ]
         },
         {
@@ -80,6 +81,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           children: [
             { path: '/distributions', label: 'All Distributions' },
             { path: '/distributions/create', label: 'Create Distribution' },
+            { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
           ]
         },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
@@ -89,7 +91,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/returns', icon: RotateCcw, label: 'Returns' },
         { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
         { path: '/reports', icon: BarChart3, label: 'Reports' },
-        { path: '/change-requests', icon: UserCog, label: 'Change Requests' },
         { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
@@ -113,8 +114,16 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.MANAGER]: [
         ...commonItems,
-        { path: '/users', icon: Users, label: 'Users' },
-        { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
+        {
+          key: 'users',
+          icon: Users,
+          label: 'User Management',
+          children: [
+            { path: '/users', label: 'Assign Users' },
+            { path: '/users/hierarchy', label: 'User Hierarchy' },
+            { path: '/change-requests', label: 'Password Change Requests' },
+          ]
+        },
         {
           key: 'devices',
           icon: Box,
@@ -123,6 +132,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/devices', label: 'All Devices' },
             { path: '/devices/register', label: 'Register Device' },
             { path: '/devices/bulk-import', label: 'Bulk Import' },
+            { path: '/devices/edit-requests', label: 'Edit Requests' },
           ]
         },
         {
@@ -132,6 +142,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           children: [
             { path: '/distributions', label: 'All Distributions' },
             { path: '/distributions/create', label: 'Create Distribution' },
+            { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
           ]
         },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
@@ -141,7 +152,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/returns', icon: RotateCcw, label: 'Returns' },
         { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
         { path: '/reports', icon: BarChart3, label: 'Reports' },
-        { path: '/change-requests', icon: UserCog, label: 'Change Requests' },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],
@@ -164,6 +174,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           children: [
             { path: '/distributions', label: 'All Distributions' },
             { path: '/distributions/create', label: 'Create Distribution' },
+            { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
           ]
         },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },

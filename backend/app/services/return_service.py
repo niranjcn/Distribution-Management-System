@@ -99,7 +99,8 @@ async def get_returns(
                 r.*,
                 d.model AS device_model,
                 d.manufacturer AS manufacturer,
-                d.device_id AS source_device_id
+                d.device_id AS source_device_id,
+                d.nuid AS device_nuid
             FROM returns r
             LEFT JOIN devices d ON d.id = r.device_id
             WHERE {where}
@@ -125,7 +126,8 @@ async def get_return_by_id(return_id: str) -> Optional[Dict[str, Any]]:
                 r.*,
                 d.model AS device_model,
                 d.manufacturer AS manufacturer,
-                d.device_id AS source_device_id
+                d.device_id AS source_device_id,
+                d.nuid AS device_nuid
             FROM returns r
             LEFT JOIN devices d ON d.id = r.device_id
             WHERE r.id = ?

@@ -26,6 +26,7 @@ import NotFound from './pages/NotFound';
 import Unauthorized from './pages/Unauthorized';
 import ForcedCredentialUpdate from './pages/ForcedCredentialUpdate';
 import ChangeRequests from './pages/ChangeRequests';
+import EditRequests from './pages/EditRequests';
 
 
 import DeliveryConfirmations from './pages/DeliveryConfirmations';
@@ -309,6 +310,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['super_admin', 'manager']}>
               <ChangeRequests />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="devices/edit-requests"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'manager']}>
+              <EditRequests />
             </ProtectedRoute>
           }
         />

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import jsPDF from 'jspdf';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { devicesAPI, reportsAPI, changeRequestsAPI } from '../services/api';
@@ -219,10 +220,83 @@ const Reports = () => {
     return true;
   });
 
-  const handleExport = (format) => {
-    // In a real app, this would generate and download the report
-    console.log(`Exporting ${reportType} report as ${format}`);
-    alert(`Report exported as ${format.toUpperCase()}`);
+  const handleExportPdf = () => {
+    try {
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const marginX = 40;
+      const pageHeight = doc.internal.pageSize.getHeight();
+      let y = 48;
+
+      const addLine = (text = '', opts = {}) => {
+        const { size = 11, bold = false, gap = 16 } = opts;
+        if (y > pageHeight - 48) {
+          doc.addPage();
+          y = 48;
+        }
+        doc.setFont('helvetica', bold ? 'bold' : 'normal');
+        doc.setFontSize(size);
+        doc.text(String(text), marginX, y);
+        y += gap;
+      };
+
+      const generatedAt = new Date().toLocaleString();
+      addLine('Distribution Management System', { size: 10, bold: false, gap: 14 });
+      addLine(`Report: ${reportType.replace(/_/g, ' ').toUpperCase()}`, { size: 16, bold: true, gap: 18 });
+      addLine(`Generated: ${generatedAt}`, { size: 10, gap: 18 });
+
+      addLine('Overview', { size: 13, bold: true, gap: 16 });
+      addLine(`Total Devices: ${stats.totalDevices}`);
+      addLine(`Active Devices: ${stats.activeDevices}`);
+      addLine(`Distributed Devices: ${stats.distributedDevices}`);
+      addLine(`Defective Devices: ${stats.defectiveDevices}`);
+      addLine(`Total Distributions: ${stats.totalDistributions}`);
+      addLine(`Total Defects: ${stats.totalDefects}`);
+      addLine(`Total Returns: ${stats.totalReturns}`, { gap: 20 });
+
+      if (reportType === 'devices' || reportType === 'overview') {
+        addLine('Devices By Location', { size: 13, bold: true, gap: 16 });
+        if (devicesByLocation.length === 0) {
+          addLine('No location data available');
+        } else {
+          devicesByLocation.forEach((row) => {
+            addLine(`${row.location}: ${row.count} (${row.percentage}%)`);
+          });
+        }
+        y += 8;
+      }
+
+      if (reportType === 'devices' || reportType === 'overview') {
+        addLine('Devices By Condition', { size: 13, bold: true, gap: 16 });
+        if (devicesByCondition.length === 0) {
+          addLine('No condition data available');
+        } else {
+          devicesByCondition.forEach((row) => {
+            addLine(`${row.condition}: ${row.count}`);
+          });
+        }
+        y += 8;
+      }
+
+      if (reportType !== 'account_changes') {
+        addLine('Monthly Activity', { size: 13, bold: true, gap: 16 });
+        if (monthlyActivity.length === 0) {
+          addLine('No monthly activity available');
+        } else {
+          monthlyActivity.forEach((entry) => {
+            addLine(
+              `${entry.month}: Distributions ${entry.distributions}, Returns ${entry.returns}, Defects ${entry.defects}`
+            );
+          });
+        }
+      }
+
+      const fileDate = new Date().toISOString().slice(0, 10);
+      doc.save(`report-${reportType}-${fileDate}.pdf`);
+      showToast('PDF report exported successfully', 'success');
+    } catch (error) {
+      console.error('Failed to export PDF report', error);
+      showToast('Failed to export PDF report', 'error');
+    }
   };
 
   return (
@@ -233,11 +307,8 @@ const Reports = () => {
           <p className="text-gray-500 mt-1">View system statistics and generate reports</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" icon={Download} onClick={() => handleExport('pdf')}>
+          <Button variant="outline" icon={Download} onClick={handleExportPdf}>
             Export PDF
-          </Button>
-          <Button variant="outline" icon={Download} onClick={() => handleExport('csv')}>
-            Export CSV
           </Button>
         </div>
       </div>
