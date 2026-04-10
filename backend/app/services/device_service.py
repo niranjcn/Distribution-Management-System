@@ -111,6 +111,11 @@ async def create_device(device_data: DeviceCreate, created_by: str, created_by_n
         is_sb = device_data.device_type.value == "Set-top box"
         if is_sb and not (device_data.nuid and device_data.nuid.strip()):
             raise ValueError("NUID is required for SB devices")
+        if is_sb:
+            nuid_value = str(device_data.nuid or "").strip()
+            cursor = await db.execute("SELECT id FROM devices WHERE nuid = ?", (nuid_value,))
+            if await cursor.fetchone():
+                raise ValueError("NUID already exists")
 
         serial_number = (device_data.serial_number or "").strip()
         mac_address = (device_data.mac_address or "").strip()
@@ -123,8 +128,6 @@ async def create_device(device_data: DeviceCreate, created_by: str, created_by_n
         else:
             if not serial_number:
                 raise ValueError("Serial number is required for non-SB devices")
-            if not mac_address:
-                raise ValueError("MAC address is required for non-SB devices")
             # NUID is only valid for SB devices.
             device_data.nuid = None
 
@@ -244,6 +247,13 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
             normalized_box = str(next_box_type or "").strip().upper()
             if normalized_box not in {"HD", "OTT"}:
                 raise ValueError("box_type is required for SB devices and must be HD or OTT")
+            normalized_nuid = str(next_nuid or "").strip()
+            cursor = await db.execute(
+                "SELECT id FROM devices WHERE nuid = ? AND id != ?",
+                (normalized_nuid, int(device_id))
+            )
+            if await cursor.fetchone():
+                raise ValueError("NUID already exists")
 
         if next_device_type == "Set-top box":
             update_fields.append("serial_number = ?")
@@ -761,9 +771,15 @@ async def repair_device_holder_from_history(device_id: str) -> Optional[Dict[str
 
 
 async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]:
-    """Track device by serial number with full history"""
+    """Track device by serial number, NUID, or MAC with full history."""
     async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM devices WHERE serial_number = ?", (serial_number,))
+        lookup = str(serial_number or "").strip()
+        cursor = await db.execute(
+            """SELECT * FROM devices
+               WHERE serial_number = ? OR nuid = ? OR mac_address = ?
+               LIMIT 1""",
+            (lookup, lookup, lookup),
+        )
         row = await cursor.fetchone()
         if not row:
             return None
@@ -791,4 +807,76 @@ async def get_device_stats() -> Dict[str, int]:
                 cursor = await db.execute("SELECT COUNT(*) FROM devices WHERE status = ?", (key,))
             stats[key] = (await cursor.fetchone())[0]
         return stats
+
+
+async def get_management_insights() -> Dict[str, Any]:
+    """Get system-wide aggregate insights for management dashboards."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """SELECT
+                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
+                   COUNT(*) AS total
+               FROM devices
+               GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
+               ORDER BY total DESC"""
+        )
+        by_type_rows = await cursor.fetchall()
+
+        cursor = await db.execute(
+            """SELECT
+                   COALESCE(NULLIF(TRIM(manufacturer), ''), 'Unknown') AS manufacturer,
+                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
+                   COUNT(*) AS total
+               FROM devices
+               GROUP BY
+                   COALESCE(NULLIF(TRIM(manufacturer), ''), 'Unknown'),
+                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
+               ORDER BY manufacturer ASC, total DESC"""
+        )
+        by_vendor_rows = await cursor.fetchall()
+
+        by_type = [
+            {
+                "type": row.get("device_type", "Unknown"),
+                "total": int(row.get("total", 0) or 0),
+            }
+            for row in by_type_rows
+        ]
+
+        vendor_map: Dict[str, Dict[str, Any]] = {}
+        for row in by_vendor_rows:
+            manufacturer = row.get("manufacturer", "Unknown")
+            device_type = row.get("device_type", "Unknown")
+            count = int(row.get("total", 0) or 0)
+
+            if manufacturer not in vendor_map:
+                vendor_map[manufacturer] = {
+                    "manufacturer": manufacturer,
+                    "total": 0,
+                    "byType": {},
+                }
+
+            vendor_map[manufacturer]["total"] += count
+            vendor_map[manufacturer]["byType"][device_type] = (
+                vendor_map[manufacturer]["byType"].get(device_type, 0) + count
+            )
+
+        by_vendor = [
+            {
+                "manufacturer": vendor,
+                "total": payload["total"],
+                "distinctTypes": len(payload["byType"]),
+                "typeBreakdown": [
+                    {"type": t, "count": c}
+                    for t, c in sorted(payload["byType"].items(), key=lambda item: item[1], reverse=True)
+                ],
+            }
+            for vendor, payload in vendor_map.items()
+        ]
+        by_vendor.sort(key=lambda item: item["total"], reverse=True)
+
+        return {
+            "by_type": by_type,
+            "by_vendor": by_vendor,
+        }
 

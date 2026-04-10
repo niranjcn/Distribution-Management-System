@@ -25,12 +25,13 @@ const TrackDevice = () => {
   const [searchParams] = useSearchParams();
   const { user: currentUser } = useAuth();
   const { showToast } = useNotifications();
-  const initialQuery = searchParams.get('q') || searchParams.get('mac') || searchParams.get('serial') || '';
+  const initialQuery = searchParams.get('q') || searchParams.get('mac') || searchParams.get('serial') || searchParams.get('nuid') || '';
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [searchResult, setSearchResult] = useState(null);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [allDevices, setAllDevices] = useState([]);
+  const [showAllDevices, setShowAllDevices] = useState(false);
   const [hierarchyUsers, setHierarchyUsers] = useState([]);
   const [replacementMappings, setReplacementMappings] = useState([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
@@ -56,8 +57,8 @@ const TrackDevice = () => {
 
   // Fetch all devices on mount
   useEffect(() => {
-    fetchAllDevices();
-  }, []);
+    fetchAllDevices(showAllDevices);
+  }, [showAllDevices]);
 
   // Auto-search if query param is present
   useEffect(() => {
@@ -66,11 +67,15 @@ const TrackDevice = () => {
     }
   }, []);
 
-  const fetchAllDevices = async () => {
+  const fetchAllDevices = async (loadAll = false) => {
     try {
       setDevicesLoading(true);
       const [overviewResponse, replacementsResponse] = await Promise.all([
-        devicesAPI.getMyOverview(),
+        devicesAPI.getMyOverview({
+          page: 1,
+          page_size: 1000,
+          show_all: ['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role) ? loadAll : false,
+        }),
         defectsAPI.getReplacements({ page_size: 100 })
       ]);
       setAllDevices(overviewResponse.data?.all_under_me || []);
@@ -231,8 +236,9 @@ const TrackDevice = () => {
   };
 
   const handleDeviceClick = async (device) => {
-    setSearchQuery(device.serial_number);
-    await handleSearchBySerial(device.serial_number);
+    const identifier = device?.serial_number || device?.nuid || device?.mac_address || '';
+    setSearchQuery(identifier);
+    await handleSearchBySerial(identifier);
   };
 
   const getFormattedHistory = () => {
@@ -380,7 +386,7 @@ const TrackDevice = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Enter serial number to track device..."
+              placeholder="Enter serial number, NUID, or MAC to track device..."
               className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
@@ -506,6 +512,13 @@ const TrackDevice = () => {
                 </div>
               )}
               <p className="text-sm text-gray-500 mb-2">Active devices are listed first. Replaced devices are shown in a separate section below.</p>
+              {isManagement && !showAllDevices && allDevices.length >= 1000 && (
+                <div className="mb-3">
+                  <Button variant="secondary" onClick={() => setShowAllDevices(true)}>
+                    Show All Devices
+                  </Button>
+                </div>
+              )}
 
               <h3 className="text-sm font-semibold text-gray-700 mt-2">Active Devices</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -599,7 +612,8 @@ const TrackDevice = () => {
                   {searchedReplacementMapping?.replacement_device && (
                     <button
                       onClick={() => {
-                        if (!searchedReplacementMapping.replacement_device?.serial_number) {
+                        const replacementIdentifier = searchedReplacementMapping.replacement_device?.serial_number || searchedReplacementMapping.replacement_device?.nuid || searchedReplacementMapping.replacement_device?.mac_address;
+                        if (!replacementIdentifier) {
                           showToast('Replacement device serial is unavailable for quick open', 'warning');
                           return;
                         }
@@ -634,16 +648,16 @@ const TrackDevice = () => {
                       <p className="text-xs text-gray-500 uppercase tracking-wider">MAC Address</p>
                       <p className="font-mono font-medium text-gray-800">
                         {['sb', 'stb', 'settopbox', 'setupbox'].includes(String(searchResult.device_type || '').toLowerCase().replace(/[-_\s]+/g, ''))
-                          ? (searchResult.nuid || 'N/A')
-                          : searchResult.mac_address}
+                          ? 'N/A'
+                          : (searchResult.mac_address || 'N/A')}
                       </p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 uppercase tracking-wider">Serial Number</p>
                       <p className="font-medium text-gray-800">
                         {['sb', 'stb', 'settopbox', 'setupbox'].includes(String(searchResult.device_type || '').toLowerCase().replace(/[-_\s]+/g, ''))
-                          ? (searchResult.nuid || 'N/A')
-                          : searchResult.serial_number}
+                          ? 'N/A'
+                          : (searchResult.serial_number || 'N/A')}
                       </p>
                     </div>
                     <div>

@@ -72,13 +72,14 @@ def _build_distribution_mac_nuid_file(
     devices: List[Dict[str, Any]],
     file_format: str = "csv",
 ) -> Dict[str, Any]:
-    """Build export containing only mac_address and nuid for a distribution."""
+    """Build export containing serial_number, mac_address, and nuid for a distribution."""
     normalized = str(file_format or "csv").strip().lower()
     if normalized not in {"csv", "xlsx"}:
         raise ValueError("Unsupported export format. Use 'csv' or 'xlsx'")
 
     rows = [
         {
+            "serial_number": str(device.get("serial_number") or "").strip(),
             "mac_address": str(device.get("mac_address") or "").strip(),
             "nuid": str(device.get("nuid") or "").strip(),
         }
@@ -88,10 +89,10 @@ def _build_distribution_mac_nuid_file(
     if normalized == "xlsx":
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "MAC_NUID"
-        sheet.append(["mac_address", "nuid"])
+        sheet.title = "DEVICE_IDENTIFIERS"
+        sheet.append(["serial_number", "mac_address", "nuid"])
         for row in rows:
-            sheet.append([row["mac_address"], row["nuid"]])
+            sheet.append([row["serial_number"], row["mac_address"], row["nuid"]])
 
         payload = io.BytesIO()
         workbook.save(payload)
@@ -102,8 +103,8 @@ def _build_distribution_mac_nuid_file(
             "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         }
 
-    content = "mac_address,nuid\n" + "\n".join(
-        f"{row['mac_address']},{row['nuid']}" for row in rows
+    content = "serial_number,mac_address,nuid\n" + "\n".join(
+        f"{row['serial_number']},{row['mac_address']},{row['nuid']}" for row in rows
     )
     return {
         "content": content.encode("utf-8"),
@@ -269,7 +270,7 @@ async def create_distribution_from_identifiers(
     from_user: Dict[str, Any],
     notes: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create a distribution from uploaded rows containing MAC and/or NUID.
+    """Create a distribution from uploaded rows containing MAC, serial number, and/or NUID.
 
     If any row fails validation, distribution is not created and row-level errors are returned.
     """
@@ -281,17 +282,19 @@ async def create_distribution_from_identifiers(
         for row in identifier_rows:
             row_number = int(row.get("row") or 0)
             mac_address = str(row.get("mac_address") or "").strip()
+            serial_number = str(row.get("serial_number") or "").strip()
             nuid = str(row.get("nuid") or "").strip()
 
-            if not mac_address and not nuid:
+            if not mac_address and not serial_number and not nuid:
                 errors.append({
                     "row": row_number,
                     "identifier": "",
-                    "error": "Either mac_address or nuid is required",
+                    "error": "Provide at least one identifier: mac_address, serial_number, or nuid",
                 })
                 continue
 
             device_by_mac = None
+            device_by_serial = None
             device_by_nuid = None
 
             if mac_address:
@@ -312,19 +315,43 @@ async def create_distribution_from_identifiers(
                 if row_nuid:
                     device_by_nuid = row_to_dict(row_nuid)
 
-            if device_by_mac and device_by_nuid and str(device_by_mac.get("id")) != str(device_by_nuid.get("id")):
-                errors.append({
-                    "row": row_number,
-                    "identifier": f"MAC={mac_address}, NUID={nuid}",
-                    "error": "MAC and NUID map to different devices",
-                })
-                continue
+            if serial_number:
+                cursor = await db.execute(
+                    "SELECT * FROM devices WHERE lower(trim(serial_number)) = lower(trim(?))",
+                    (serial_number,),
+                )
+                row_serial = await cursor.fetchone()
+                if row_serial:
+                    device_by_serial = row_to_dict(row_serial)
 
-            resolved_device = device_by_mac or device_by_nuid
+            resolved_candidates = [d for d in [device_by_mac, device_by_serial, device_by_nuid] if d]
+            if resolved_candidates:
+                first_id = str(resolved_candidates[0].get("id"))
+                if any(str(d.get("id")) != first_id for d in resolved_candidates[1:]):
+                    parts = []
+                    if mac_address:
+                        parts.append(f"MAC={mac_address}")
+                    if serial_number:
+                        parts.append(f"SERIAL={serial_number}")
+                    if nuid:
+                        parts.append(f"NUID={nuid}")
+                    errors.append({
+                        "row": row_number,
+                        "identifier": ", ".join(parts),
+                        "error": "Provided identifiers map to different devices",
+                    })
+                    continue
+
+            resolved_device = device_by_mac or device_by_serial or device_by_nuid
 
             if not resolved_device:
-                identifier_value = mac_address or nuid
-                identifier_label = "mac_address" if mac_address else "nuid"
+                identifier_value = mac_address or serial_number or nuid
+                if mac_address:
+                    identifier_label = "mac_address"
+                elif serial_number:
+                    identifier_label = "serial_number"
+                else:
+                    identifier_label = "nuid"
                 errors.append({
                     "row": row_number,
                     "identifier": f"{identifier_label}={identifier_value}",
@@ -342,9 +369,10 @@ async def create_distribution_from_identifiers(
                 continue
 
             if resolved_id in seen_device_ids:
+                duplicate_identifier = mac_address or serial_number or nuid
                 errors.append({
                     "row": row_number,
-                    "identifier": mac_address or nuid,
+                    "identifier": duplicate_identifier,
                     "error": "Duplicate device in upload",
                 })
                 continue
@@ -893,7 +921,7 @@ async def get_distribution_mac_nuid_export(
     user: Dict[str, Any],
     file_format: str = "csv",
 ) -> Dict[str, Any]:
-    """Get a MAC/NUID export payload for distribution devices if requester is permitted."""
+    """Get an identifier export payload (serial_number, mac_address, nuid) for distribution devices if requester is permitted."""
     dist = await get_distribution_by_id(distribution_id)
     if not dist:
         raise ValueError("Distribution not found")
@@ -917,7 +945,7 @@ async def get_distribution_mac_nuid_export(
         placeholders = ",".join(["?"] * len(device_ids))
         async with get_db() as db:
             cursor = await db.execute(
-                f"SELECT id, mac_address, nuid FROM devices WHERE id IN ({placeholders})",
+                f"SELECT id, serial_number, mac_address, nuid FROM devices WHERE id IN ({placeholders})",
                 tuple(int(device_id) for device_id in device_ids)
             )
             devices = rows_to_list(await cursor.fetchall())

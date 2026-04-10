@@ -20,6 +20,11 @@ const normalizeDeviceType = (value) => {
 
 const isSbDeviceType = (value) => normalizeDeviceType(value) === 'SB';
 
+const asDisplayValue = (value) => {
+  const text = String(value ?? '').trim();
+  return text ? text : 'N/A';
+};
+
 const extractBoxType = (device) => {
   if (device?.box_type) return String(device.box_type).toUpperCase();
   if (device?.metadata && typeof device.metadata === 'object' && device.metadata.box_type) {
@@ -44,6 +49,7 @@ const Devices = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [overview, setOverview] = useState(null);
+  const [managementSummaryDevices, setManagementSummaryDevices] = useState([]);
   const [hierarchyUsers, setHierarchyUsers] = useState([]);
   const [defectsData, setDefectsData] = useState([]);
   const [replacementMap, setReplacementMap] = useState({ replacementIds: new Set(), defectiveIds: new Set(), defectByDeviceId: {} });
@@ -94,12 +100,27 @@ const Devices = () => {
   const fetchDevices = async () => {
     try {
       setLoading(true);
-      const [overviewResponse, defectsResponse] = await Promise.all([
+      const requests = [
         devicesAPI.getMyOverview({ page: 1, page_size: 100, show_all: showAllDevices }),
         defectsAPI.getDefects({ page_size: 100 })
-      ]);
+      ];
+
+      if (isManagement && !showAllDevices) {
+        requests.push(devicesAPI.getMyOverview({ page: 1, page_size: 100, show_all: true }));
+      }
+
+      const [overviewResponse, defectsResponse, summaryResponse] = await Promise.all(requests);
 
       setOverview(overviewResponse.data);
+      if (isManagement) {
+        if (showAllDevices) {
+          setManagementSummaryDevices(overviewResponse?.data?.all_under_me || []);
+        } else {
+          setManagementSummaryDevices(summaryResponse?.data?.all_under_me || overviewResponse?.data?.all_under_me || []);
+        }
+      } else {
+        setManagementSummaryDevices([]);
+      }
       setDeviceMeta(overviewResponse?.data?.meta || { loaded_count: 0, total_count: 0, has_next: false, show_all: showAllDevices });
 
       try {
@@ -192,8 +213,8 @@ const Devices = () => {
 
   const managementAllDevices = useMemo(() => {
     if (!isManagement) return [];
-    return overview?.all_under_me || [];
-  }, [isManagement, overview]);
+    return managementSummaryDevices;
+  }, [isManagement, managementSummaryDevices]);
 
   const isAllDevicesView = isManagement && activeTab === 'all';
 
@@ -240,6 +261,16 @@ const Devices = () => {
   }, [managementAllDevices]);
 
   const byTypeSummary = useMemo(() => {
+    const aggregated = overview?.insights?.by_type;
+    if (Array.isArray(aggregated) && aggregated.length > 0) {
+      return aggregated
+        .map((entry) => ({
+          type: entry.type || 'Unknown',
+          total: Number(entry.total || 0),
+        }))
+        .sort((a, b) => b.total - a.total);
+    }
+
     const grouped = {};
     for (const device of managementAllDevices) {
       const key = device.device_type || 'Unknown';
@@ -329,6 +360,20 @@ const Devices = () => {
   }, [devicesByHolder, hierarchyIndex]);
 
   const manufacturerSummary = useMemo(() => {
+    const aggregated = overview?.insights?.by_vendor;
+    if (Array.isArray(aggregated) && aggregated.length > 0) {
+      return aggregated
+        .map((item) => ({
+          manufacturer: item.manufacturer || 'Unknown',
+          total: Number(item.total || 0),
+          distinctTypes: Number(item.distinctTypes || (Array.isArray(item.typeBreakdown) ? item.typeBreakdown.length : 0)),
+          typeBreakdown: (item.typeBreakdown || [])
+            .map((entry) => ({ type: entry.type || 'Unknown', count: Number(entry.count || 0) }))
+            .sort((a, b) => b.count - a.count),
+        }))
+        .sort((a, b) => b.total - a.total);
+    }
+
     const grouped = {};
     for (const device of managementAllDevices) {
       const key = (device.manufacturer || 'Unknown').trim() || 'Unknown';
@@ -485,8 +530,21 @@ const Devices = () => {
   };
 
   const columns = [
-    { key: 'mac_address', label: 'MAC Address', render: (value, row) => (isSbDeviceType(row.device_type) ? (row.nuid || 'N/A') : value) },
-    { key: 'serial_number', label: 'Serial Number', render: (value, row) => (isSbDeviceType(row.device_type) ? (row.nuid || 'N/A') : value) },
+    {
+      key: 'nuid',
+      label: 'NUID',
+      render: (value) => asDisplayValue(value),
+    },
+    {
+      key: 'mac_address',
+      label: 'MAC Address',
+      render: (value, row) => (isSbDeviceType(row.device_type) ? 'N/A' : asDisplayValue(value)),
+    },
+    {
+      key: 'serial_number',
+      label: 'Serial Number',
+      render: (value, row) => (isSbDeviceType(row.device_type) ? 'N/A' : asDisplayValue(value)),
+    },
     { key: 'model', label: 'Model' },
     { key: 'manufacturer', label: 'Vendor' },
     {
@@ -1000,7 +1058,7 @@ const Devices = () => {
                 Edit Device
               </Button>
             )}
-            <Link to={`/track-device?serial=${selectedDevice?.serial_number}`}>
+            <Link to={`/track-device?q=${encodeURIComponent(selectedDevice?.serial_number || selectedDevice?.nuid || selectedDevice?.mac_address || '')}`}>
               <Button>Track Device</Button>
             </Link>
           </>
@@ -1048,11 +1106,11 @@ const Devices = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider">MAC Address</label>
-                <p className="font-medium text-gray-800 font-mono">{isSbDeviceType(selectedDevice.device_type) ? (selectedDevice.nuid || 'N/A') : selectedDevice.mac_address}</p>
+                <p className="font-medium text-gray-800 font-mono">{isSbDeviceType(selectedDevice.device_type) ? 'N/A' : asDisplayValue(selectedDevice.mac_address)}</p>
               </div>
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider">Serial Number</label>
-                <p className="font-medium text-gray-800">{isSbDeviceType(selectedDevice.device_type) ? (selectedDevice.nuid || 'N/A') : selectedDevice.serial_number}</p>
+                <p className="font-medium text-gray-800">{isSbDeviceType(selectedDevice.device_type) ? 'N/A' : asDisplayValue(selectedDevice.serial_number)}</p>
               </div>
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider">Device Type</label>
@@ -1070,7 +1128,7 @@ const Devices = () => {
               </div>
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider">NUID</label>
-                <p className="font-medium text-gray-800">{selectedDevice.nuid || 'N/A'}</p>
+                <p className="font-medium text-gray-800">{asDisplayValue(selectedDevice.nuid)}</p>
               </div>
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider">Device ID</label>

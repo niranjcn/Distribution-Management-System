@@ -79,7 +79,7 @@ async def bulk_upload_distribution(
     notes: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user)
 ):
-    """Create a distribution from uploaded CSV/Excel rows using mac_address and/or nuid."""
+    """Create a distribution from uploaded CSV/Excel rows using mac_address, serial_number, and/or nuid."""
     filename_lower = (file.filename or "").lower()
     _ensure_not_md_director(current_user)
     _ensure_distribution_create_access(current_user)
@@ -130,10 +130,10 @@ async def bulk_upload_distribution(
                 for row in worksheet.iter_rows(min_row=2, values_only=True):
                     yield row
 
-        if "mac_address" not in headers and "nuid" not in headers:
+        if "mac_address" not in headers and "serial_number" not in headers and "nuid" not in headers:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing required columns: add at least one of mac_address or nuid"
+                detail="Missing required columns: add at least one of mac_address, serial_number, or nuid"
             )
 
         identifier_rows = []
@@ -144,9 +144,10 @@ async def bulk_upload_distribution(
             }
 
             mac_address = row_data.get("mac_address", "")
+            serial_number = row_data.get("serial_number", "")
             nuid = row_data.get("nuid", "")
 
-            if not mac_address and not nuid:
+            if not mac_address and not serial_number and not nuid:
                 # Skip fully empty lines, otherwise keep for validation.
                 if not any(v for v in row_data.values()):
                     continue
@@ -154,6 +155,7 @@ async def bulk_upload_distribution(
             identifier_rows.append({
                 "row": row_idx,
                 "mac_address": mac_address,
+                "serial_number": serial_number,
                 "nuid": nuid,
             })
 

@@ -30,7 +30,7 @@ const ALLOWED_RECIPIENT_TYPES = {
   operator: ['operator'],
 };
 
-const TEMPLATE_HEADERS = ['mac_address', 'nuid'];
+const TEMPLATE_HEADERS = ['mac_address', 'serial_number', 'nuid'];
 
 const BulkImportDistribution = () => {
   const navigate = useNavigate();
@@ -209,9 +209,10 @@ const BulkImportDistribution = () => {
   const downloadTemplate = () => {
     const rows = [
       TEMPLATE_HEADERS.join(','),
-      'AA:BB:CC:DD:EE:01,',
-      ',NUID-00021',
-      'AA:BB:CC:DD:EE:99,NUID-00099',
+      'AA:BB:CC:DD:EE:01,,',
+      ',SN-ONT-2001,',
+      ',,NUID-00021',
+      'AA:BB:CC:DD:EE:99,SN-ONT-2999,NUID-00099',
     ];
 
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
@@ -232,7 +233,7 @@ const BulkImportDistribution = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Bulk Upload Distribution</h1>
           <p className="text-gray-500 mt-1 text-sm">
-            Upload CSV/Excel with MAC address or NUID, then send all valid registered devices in one distribution.
+            Upload CSV/Excel with MAC address, Serial Number, or NUID, then send all valid registered devices in one distribution.
           </p>
         </div>
       </div>
@@ -245,8 +246,9 @@ const BulkImportDistribution = () => {
           <div className="flex-1">
             <h3 className="font-semibold text-gray-800 mb-1">Template</h3>
             <p className="text-sm text-gray-500 mb-3">
-              Required file columns: <span className="font-medium text-gray-700">mac_address</span> or{' '}
-              <span className="font-medium text-gray-700">nuid</span>. You can provide either one per row.
+              Required file columns: <span className="font-medium text-gray-700">mac_address</span>,{' '}
+              <span className="font-medium text-gray-700">serial_number</span>, or{' '}
+              <span className="font-medium text-gray-700">nuid</span>. You can provide any one per row.
             </p>
             <Button variant="outline" icon={Download} onClick={downloadTemplate}>
               Download CSV Template

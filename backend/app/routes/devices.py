@@ -1,17 +1,74 @@
+import asyncio
 import logging
 import json
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Iterable, List
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceType
 from app.services import device_service, notification_service, defect_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager,require_management
 from app.utils.roles import normalize_role
+from app.database import get_db
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+
+def _chunks(values: List[str], chunk_size: int) -> Iterable[List[str]]:
+    for i in range(0, len(values), chunk_size):
+        yield values[i:i + chunk_size]
+
+
+def _extract_duplicate_message(error: Exception) -> str:
+    lowered = str(error).lower()
+    if "duplicate" not in lowered and "unique" not in lowered:
+        return ""
+    if "serial_number" in lowered:
+        return "Serial number already exists"
+    if "mac_address" in lowered:
+        return "MAC address already exists"
+    if "nuid" in lowered:
+        return "NUID already exists"
+    if "device_id" in lowered:
+        return "Generated device ID collision. Retry upload."
+    return "Duplicate value already exists"
+
+
+def _build_bulk_device_id(device_type: str) -> str:
+    # Avoid random 4-digit collisions during large imports.
+    prefix_map = {
+        "ONU": "ONU",
+        "ONT": "ONT",
+        "Router": "RTR",
+        "Switch": "SWT",
+        "Modem": "MDM",
+        "Access Point": "AP",
+        "Set-top box": "SB",
+        "Other": "DEV",
+    }
+    prefix = prefix_map.get(device_type, "DEV")
+    return f"{prefix}-{datetime.now().year}-{uuid.uuid4().hex[:10].upper()}"
+
+
+async def _fetch_existing_values(db, column: str, values: List[str]) -> set:
+    if not values:
+        return set()
+
+    existing = set()
+    for batch in _chunks(values, 500):
+        placeholders = ",".join(["?"] * len(batch))
+        cursor = await db.execute(
+            f"SELECT {column} FROM devices WHERE {column} IN ({placeholders})",
+            batch,
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            value = row.get(column)
+            if value:
+                existing.add(str(value).strip())
+    return existing
 
 
 def _is_likely_text(content: bytes) -> bool:
@@ -163,10 +220,11 @@ async def get_my_device_overview(
     try:
         role = current_user["role"]
         if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
-            effective_page_size = 1_000_000 if show_all else min(page_size, 100)
+            effective_page_size = 1_000_000 if show_all else min(page_size, 1000)
             result = await device_service.get_devices(page=page, page_size=effective_page_size)
             all_devices = result["data"]
             stats = await device_service.get_device_stats()
+            insights = await device_service.get_management_insights()
             pagination = result.get("pagination", {})
             total_count = int(pagination.get("total", stats.get("total", 0) or 0))
             return {
@@ -183,6 +241,7 @@ async def get_my_device_overview(
                         "total_count": total_count,
                         "has_next": bool(pagination.get("has_next", False)),
                     },
+                    "insights": insights,
                     "stats": {
                         "in_my_hand": stats.get("total", 0),
                         "under_subordinates": 0,
@@ -376,7 +435,7 @@ async def track_device_by_serial(
     serial_number: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """Track device by serial number with full history"""
+    """Track device by serial number, NUID, or MAC with full history"""
     try:
         device = await device_service.track_device_by_serial(serial_number)
 
@@ -472,7 +531,7 @@ async def bulk_upload_devices(
 
     Supported schemas (case-insensitive headers):
     - SB sheet: vendor, device_type, model, nuid, box_type
-    - Regular sheet: vendor, device_type, model, mac_address, serial_number, band_type
+    - Regular sheet: vendor, device_type, model, serial_number, mac_address, band_type
 
     Alias support: manufacturer -> vendor, SB/set-top box/set top box/stb -> Set-top box
     """
@@ -529,7 +588,7 @@ async def bulk_upload_devices(
         header_set = set(normalized_headers)
 
         sb_required = {"vendor", "device_type", "model", "nuid", "box_type"}
-        regular_required = {"vendor", "device_type", "model", "mac_address", "serial_number"}
+        regular_required = {"vendor", "device_type", "model", "serial_number"}
 
         has_sb_schema = sb_required.issubset(header_set)
         has_regular_schema = regular_required.issubset(header_set)
@@ -539,7 +598,7 @@ async def bulk_upload_devices(
                 detail=(
                     "Missing required columns. Expected either SB schema "
                     "(vendor, device_type, model, nuid, box_type) or regular schema "
-                    "(vendor, device_type, model, mac_address, serial_number)."
+                    "(vendor, device_type, model, serial_number). mac_address is optional for non-SB devices."
                 )
             )
 
@@ -558,6 +617,10 @@ async def bulk_upload_devices(
             "dual": "dual_band",
         }
         created, skipped, errors = [], [], []
+        prepared_rows = []
+        seen_serials = set()
+        seen_macs = set()
+        seen_nuids = set()
 
         for row_idx, row in enumerate(iter_data_rows(), start=2):
             if row is None:
@@ -605,12 +668,14 @@ async def bulk_upload_devices(
                     errors.append({"row": row_idx, "error": "Invalid box_type. Use HD or OTT"})
                     continue
                 band_type_val = None
+                normalized_nuid = str(nuid).strip()
+                if normalized_nuid in seen_nuids:
+                    skipped.append({"row": row_idx, "serial": normalized_nuid, "reason": "Duplicate nuid in file"})
+                    continue
+                seen_nuids.add(normalized_nuid)
             else:
                 if not serial:
                     errors.append({"row": row_idx, "error": "Missing serial_number"})
-                    continue
-                if not mac:
-                    errors.append({"row": row_idx, "serial": serial, "error": "Missing mac_address"})
                     continue
                 raw_band = row_data.get("band_type", "").lower()
                 band_type_val = valid_bands.get(raw_band) if raw_band else None
@@ -618,35 +683,230 @@ async def bulk_upload_devices(
                     errors.append({"row": row_idx, "serial": serial, "error": f"Invalid band_type '{row_data.get('band_type')}'"})
                     continue
 
-            try:
-                device_data = DeviceCreate(
-                    device_type=device_type_val,
-                    model=model,
-                    serial_number=None if is_sb_row else serial,
-                    mac_address=None if is_sb_row else mac,
-                    manufacturer=vendor,
-                    band_type=band_type_val,
-                    box_type=box_type if is_sb_row else None,
-                    nuid=nuid or None,
-                    metadata=(
-                        {"box_type": box_type}
-                        if is_sb_row and box_type
-                        else None
-                    ),
-                )
-                device = await device_service.create_device(
-                    device_data=device_data,
-                    created_by=current_user["id"],
-                    created_by_name=current_user["name"]
-                )
-                if not device:
-                    errors.append({"row": row_idx, "serial": serial or nuid, "error": "Device was not created"})
+                normalized_serial = str(serial).strip()
+                if normalized_serial in seen_serials:
+                    skipped.append({"row": row_idx, "serial": normalized_serial, "reason": "Duplicate serial_number in file"})
                     continue
-                created.append(device["device_id"])
-            except ValueError as e:
-                skipped.append({"row": row_idx, "serial": serial or nuid, "reason": str(e)})
-            except Exception as e:
-                errors.append({"row": row_idx, "serial": serial or nuid, "error": str(e)})
+                seen_serials.add(normalized_serial)
+
+                normalized_mac = str(mac).strip()
+                if normalized_mac:
+                    if normalized_mac in seen_macs:
+                        skipped.append({"row": row_idx, "serial": normalized_serial, "reason": "Duplicate mac_address in file"})
+                        continue
+                    seen_macs.add(normalized_mac)
+
+            prepared_rows.append({
+                "row": row_idx,
+                "device_type": device_type_val,
+                "model": model,
+                "manufacturer": vendor,
+                "serial_number": None if is_sb_row else str(serial).strip(),
+                "mac_address": None if is_sb_row else (str(mac).strip() or None),
+                "band_type": None if is_sb_row else (band_type_val or "single_band"),
+                "nuid": str(nuid).strip() or None,
+                "box_type": box_type if is_sb_row else None,
+                "metadata": ({"box_type": box_type} if is_sb_row and box_type else None),
+                "is_sb": is_sb_row,
+            })
+
+        if not prepared_rows:
+            return {
+                "success": True,
+                "message": f"Bulk upload complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
+                "data": {
+                    "created_count": 0,
+                    "skipped_count": len(skipped),
+                    "error_count": len(errors),
+                    "created": created,
+                    "skipped": skipped,
+                    "errors": errors,
+                }
+            }
+
+        async with get_db() as db:
+            serials = [item["serial_number"] for item in prepared_rows if item["serial_number"]]
+            macs = [item["mac_address"] for item in prepared_rows if item["mac_address"]]
+            nuids = [item["nuid"] for item in prepared_rows if item["nuid"]]
+
+            existing_serials = await _fetch_existing_values(db, "serial_number", serials)
+            existing_macs = await _fetch_existing_values(db, "mac_address", macs)
+            existing_nuids = await _fetch_existing_values(db, "nuid", nuids)
+
+            insertable_rows = []
+            for item in prepared_rows:
+                row_idx = item["row"]
+                serial = item["serial_number"]
+                mac = item["mac_address"]
+                nuid = item["nuid"]
+
+                if nuid and nuid in existing_nuids:
+                    skipped.append({"row": row_idx, "serial": nuid, "reason": "NUID already exists"})
+                    continue
+                if serial and serial in existing_serials:
+                    skipped.append({"row": row_idx, "serial": serial, "reason": "Serial number already exists"})
+                    continue
+                if mac and mac in existing_macs:
+                    skipped.append({"row": row_idx, "serial": serial or nuid or "", "reason": "MAC address already exists"})
+                    continue
+
+                insertable_rows.append(item)
+
+            if not insertable_rows:
+                return {
+                    "success": True,
+                    "message": f"Bulk upload complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
+                    "data": {
+                        "created_count": 0,
+                        "skipped_count": len(skipped),
+                        "error_count": len(errors),
+                        "created": created,
+                        "skipped": skipped,
+                        "errors": errors,
+                    }
+                }
+
+            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            created_by_name = current_user.get("name") or current_user.get("email") or "PDIC Staff"
+            insert_sql = """INSERT INTO devices (
+                device_id, device_type, model, serial_number, mac_address,
+                manufacturer, band_type, nuid, status, current_location,
+                current_holder_id, current_holder_name, current_holder_type,
+                registered_by_name, purchase_date, warranty_expiry, metadata,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+            history_sql = """INSERT INTO device_history (
+                device_id, action, from_user_id, from_user_name, to_user_id, to_user_name,
+                status_before, status_after, location, notes, performed_by, performed_by_name, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+            should_commit = True
+            for batch in _chunks(insertable_rows, 500):
+                batch_payload = []
+                batch_device_ids = []
+                for item in batch:
+                    generated_id = _build_bulk_device_id(item["device_type"])
+                    batch_device_ids.append(generated_id)
+                    batch_payload.append((
+                        generated_id,
+                        item["device_type"],
+                        item["model"],
+                        item["serial_number"],
+                        item["mac_address"],
+                        item["manufacturer"],
+                        item["band_type"],
+                        item["nuid"],
+                        "available",
+                        "PDIC",
+                        None,
+                        "PDIC (Distribution)",
+                        "noc",
+                        created_by_name,
+                        None,
+                        None,
+                        json.dumps(item["metadata"]) if item["metadata"] else None,
+                        now,
+                        now,
+                    ))
+
+                try:
+                    await db.executemany(insert_sql, batch_payload)
+
+                    placeholders = ",".join(["?"] * len(batch_device_ids))
+                    cursor = await db.execute(
+                        f"SELECT id, device_id FROM devices WHERE device_id IN ({placeholders})",
+                        batch_device_ids,
+                    )
+                    inserted_rows = await cursor.fetchall()
+                    id_map = {str(row.get("device_id")): str(row.get("id")) for row in inserted_rows}
+
+                    history_payload = []
+                    for generated_id in batch_device_ids:
+                        numeric_id = id_map.get(generated_id)
+                        if not numeric_id:
+                            continue
+                        history_payload.append((
+                            numeric_id,
+                            "registered",
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            "available",
+                            "PDIC",
+                            "Device registered in system",
+                            str(current_user["id"]),
+                            created_by_name,
+                            now,
+                        ))
+
+                    if history_payload:
+                        await db.executemany(history_sql, history_payload)
+                    created.extend(batch_device_ids)
+                except Exception as batch_error:
+                    # Continue safely row-by-row in the same transaction so one bad row does not fail all rows.
+
+                    # Retry row-by-row so one conflict does not fail the entire batch.
+                    for idx, item in enumerate(batch):
+                        generated_id = batch_device_ids[idx]
+                        row_idx = item["row"]
+                        try:
+                            cursor = await db.execute(insert_sql, batch_payload[idx])
+                            new_numeric_id = str(cursor.lastrowid)
+                            await db.execute(
+                                history_sql,
+                                (
+                                    new_numeric_id,
+                                    "registered",
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    "available",
+                                    "PDIC",
+                                    "Device registered in system",
+                                    str(current_user["id"]),
+                                    created_by_name,
+                                    now,
+                                ),
+                            )
+                            created.append(generated_id)
+                        except Exception as single_error:
+                            duplicate_reason = _extract_duplicate_message(single_error)
+                            if duplicate_reason:
+                                skipped.append({
+                                    "row": row_idx,
+                                    "serial": item.get("serial_number") or item.get("nuid") or "",
+                                    "reason": duplicate_reason,
+                                })
+                            else:
+                                errors.append({
+                                    "row": row_idx,
+                                    "serial": item.get("serial_number") or item.get("nuid") or "",
+                                    "error": str(single_error),
+                                })
+                                should_commit = False
+                                break
+
+                    if not should_commit:
+                        break
+
+                    logger.warning("Batch insert fallback triggered due to: %s", str(batch_error))
+
+                # Yield control between chunks so auth/login requests are not starved.
+                await asyncio.sleep(0)
+
+            if should_commit:
+                await db.commit()
+            else:
+                await db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."
+                )
 
         return {
             "success": True,
