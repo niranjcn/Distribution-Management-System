@@ -55,17 +55,42 @@ const Distributions = () => {
     }
   };
 
-  const fetchDistributionDevices = async (deviceIds) => {
-    if (!deviceIds || deviceIds.length === 0) {
+  const parseDeviceIds = (rawDeviceIds) => {
+    if (!rawDeviceIds) return [];
+    if (Array.isArray(rawDeviceIds)) return rawDeviceIds.map((id) => String(id)).filter(Boolean);
+    if (typeof rawDeviceIds === 'string') {
+      try {
+        const parsed = JSON.parse(rawDeviceIds);
+        if (Array.isArray(parsed)) return parsed.map((id) => String(id)).filter(Boolean);
+      } catch {
+        return rawDeviceIds.split(',').map((id) => String(id).trim()).filter(Boolean);
+      }
+    }
+    return [];
+  };
+
+  const fetchDistributionDevices = async (rawDeviceIds) => {
+    const deviceIds = parseDeviceIds(rawDeviceIds);
+    if (!deviceIds.length) {
       setDistributionDevices([]);
       return;
     }
 
     try {
       setLoadingDevices(true);
-      const devicePromises = deviceIds.map(id => devicesAPI.getDevice(id));
-      const responses = await Promise.all(devicePromises);
-      const devices = responses.map(res => res.data).filter(Boolean);
+      const devices = [];
+      const chunkSize = 100;
+
+      for (let i = 0; i < deviceIds.length; i += chunkSize) {
+        const chunk = deviceIds.slice(i, i + chunkSize);
+        const settled = await Promise.allSettled(chunk.map((id) => devicesAPI.getDevice(id)));
+        settled.forEach((result) => {
+          if (result.status === 'fulfilled' && result.value?.data) {
+            devices.push(result.value.data);
+          }
+        });
+      }
+
       setDistributionDevices(devices);
     } catch (error) {
       console.error('Failed to fetch distribution devices:', error);
@@ -114,8 +139,8 @@ const Distributions = () => {
 
   const canCreate = ['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator'].includes(user?.role);
   const canConfirmDisputedReturn = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
-  const canRecipientSubDistributorDownload =
-    user?.role === 'sub_distributor' &&
+  const canRecipientIdentifierDownload =
+    ['sub_distributor', 'cluster', 'operator'].includes(user?.role) &&
     selectedDist &&
     String(selectedDist.to_user_id) === String(user?.id);
 
@@ -394,7 +419,7 @@ const Distributions = () => {
                 <p className="text-gray-500">{getSenderDisplayName(selectedDist)} → {selectedDist.to_user_name}</p>
                 <StatusBadge status={selectedDist.status} />
               </div>
-              {canRecipientSubDistributorDownload && (
+              {canRecipientIdentifierDownload && (
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="outline"

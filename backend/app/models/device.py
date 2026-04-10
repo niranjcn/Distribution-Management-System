@@ -73,8 +73,6 @@ class DeviceBase(BaseModel):
         else:
             if not serial:
                 raise ValueError("Serial number is required for non-SB devices")
-            if not mac:
-                raise ValueError("MAC address is required for non-SB devices")
             self.box_type = None
 
         return self
@@ -135,8 +133,8 @@ class DeviceResponse(BaseModel):
     device_id: str
     device_type: DeviceType
     model: str
-    serial_number: str
-    mac_address: str
+    serial_number: Optional[str] = None
+    mac_address: Optional[str] = None
     manufacturer: str
     band_type: Optional[DeviceBand] = None
     box_type: Optional[str] = None

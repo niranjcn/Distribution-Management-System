@@ -39,12 +39,12 @@ export const getDeviceModel = (device) => {
 };
 
 export const getDeviceSerial = (device) => {
-  if (isSbDevice(device)) return getDeviceNuid(device);
+  if (isSbDevice(device)) return 'N/A';
   return device?.serial_number || device?.device_serial || device?.defective_device?.serial_number || 'N/A';
 };
 
 export const getDeviceMac = (device) => {
-  if (isSbDevice(device)) return getDeviceNuid(device);
+  if (isSbDevice(device)) return 'N/A';
   return device?.mac_address || device?.defective_device?.mac_address || 'N/A';
 };
 

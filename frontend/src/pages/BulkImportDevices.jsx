@@ -64,7 +64,7 @@ const BulkImportDevices = () => {
     // Build a regular-device CSV template users can open in Excel.
     const rows = [
       REGULAR_TEMPLATE_HEADERS.join(','),
-      'Huawei,ONT,HG8145V5,AA:BB:CC:DD:EE:01,SN-ONT-1001,single_band',
+      'Huawei,ONT,HG8145V5,,SN-ONT-1001,single_band',
     ];
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -97,7 +97,7 @@ const BulkImportDevices = () => {
             <h3 className="font-semibold text-gray-800 mb-1">Download Template</h3>
             <p className="text-sm text-gray-500 mb-3">
               Upload either of these two formats:{' '}
-              <span className="font-medium text-gray-700">Regular: Vendor, device_type, model, mac_address, serial_number (band_type optional)</span>{' '}
+              <span className="font-medium text-gray-700">Regular: Vendor, device_type, model, serial_number (mac_address optional, band_type optional)</span>{' '}
               or{' '}
               <span className="font-medium text-gray-700">SB: vendor, device_type, model, nuid, box_type</span>.
             </p>
