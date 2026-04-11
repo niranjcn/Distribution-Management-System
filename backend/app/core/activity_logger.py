@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
+import json
 import re
-from typing import Optional
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from app.database import get_db
 
@@ -9,35 +10,109 @@ MEANINGFUL_ACTIVITY_RULES = [
     ("POST", re.compile(r"^/api/auth/logout$"), "User logged out", "logout"),
     ("PUT", re.compile(r"^/api/auth/password$"), "Password updated", "password update"),
     ("POST", re.compile(r"^/api/reports/export$"), "Report exported", "report export"),
-    ("GET", re.compile(r"^/api/reports/device-backup$"), "Device backup downloaded", "device backup download"),
-    ("GET", re.compile(r"^/api/reports/returns-defects-backup$"), "Returns and defects backup downloaded", "returns/defects backup download"),
-    ("POST", re.compile(r"^/api/reports/backup-documents$"), "Backup document uploaded", "backup document upload"),
     ("GET", re.compile(r"^/api/reports/backup-documents/[^/]+$"), "Backup document downloaded", "backup document download"),
-    ("POST", re.compile(r"^/api/defects$"), "Defect reported", "defect reporting"),
-    ("PATCH", re.compile(r"^/api/defects/[^/]+/status$"), "Defect status updated", "defect status update"),
     ("PATCH", re.compile(r"^/api/defects/[^/]+/resolve$"), "Defect resolved", "defect resolution"),
     ("POST", re.compile(r"^/api/defects/[^/]+/forward-to-management$"), "Defect forwarded to management", "defect forwarding"),
     ("POST", re.compile(r"^/api/returns$"), "Return requested", "return request"),
-    ("PATCH", re.compile(r"^/api/returns/[^/]+/status$"), "Return status updated", "return status update"),
-    ("POST", re.compile(r"^/api/external-inventory/items$"), "External inventory item created", "external inventory item creation"),
-    ("POST", re.compile(r"^/api/external-inventory/items/bulk-upload$"), "External inventory imported", "external inventory import"),
-    ("PUT", re.compile(r"^/api/external-inventory/items/[^/]+$"), "External inventory item updated", "external inventory item update"),
     ("POST", re.compile(r"^/api/external-inventory/items/[^/]+/image$"), "External inventory item image uploaded", "item image upload"),
     ("POST", re.compile(r"^/api/external-inventory/adjustments$"), "External inventory adjusted", "stock adjustment"),
-    ("POST", re.compile(r"^/api/external-inventory/purchase-orders$"), "Purchase order created", "purchase order creation"),
-    ("POST", re.compile(r"^/api/external-inventory/purchase-orders/[^/]+/receive$"), "Purchase order confirmed", "purchase order confirmation"),
-    ("POST", re.compile(r"^/api/distributions$"), "Distribution created", "distribution creation"),
-    ("POST", re.compile(r"^/api/distributions/bulk-upload$"), "Distribution created from bulk upload", "bulk distribution creation"),
-    ("PATCH", re.compile(r"^/api/distributions/[^/]+/status$"), "Distribution status updated", "distribution status update"),
     ("POST", re.compile(r"^/api/distributions/[^/]+/receipt$"), "Distribution receipt confirmed", "distribution receipt confirmation"),
-    ("POST", re.compile(r"^/api/users$"), "User account created", "user creation"),
-    ("PUT", re.compile(r"^/api/users/[^/]+$"), "User account updated", "user update"),
-    ("DELETE", re.compile(r"^/api/users/[^/]+$"), "User account deleted", "user deletion"),
-    ("PATCH", re.compile(r"^/api/users/[^/]+/status$"), "User status updated", "user status update"),
     ("PATCH", re.compile(r"^/api/users/[^/]+/credentials$"), "User credentials updated", "user credential update"),
     ("GET", re.compile(r"^/api/distributions/[^/]+/manifest$"), "Distribution manifest downloaded", "distribution manifest download"),
     ("GET", re.compile(r"^/api/distributions/[^/]+/export-mac-nuid$"), "MAC/NUID export downloaded", "MAC/NUID export download"),
 ]
+
+
+def extract_actor_details(user: Optional[Dict[str, Any]]) -> Tuple[str, str, str]:
+    """Safely normalize auth payload variants to actor id/name/role strings."""
+    if not isinstance(user, dict):
+        return "", "Unknown", ""
+
+    actor_id = str(user.get("id") or user.get("_id") or user.get("user_id") or user.get("sub") or "")
+    actor_name = str(user.get("name") or user.get("email") or "Unknown")
+    actor_role = str(user.get("role") or "")
+    return actor_id, actor_name, actor_role
+
+
+def _stringify_change_value(value: Any, max_len: int = 80) -> str:
+    if value is None:
+        text = "null"
+    elif isinstance(value, bool):
+        text = "true" if value else "false"
+    elif isinstance(value, (dict, list, tuple)):
+        try:
+            text = json.dumps(value, ensure_ascii=True, sort_keys=True)
+        except Exception:
+            text = str(value)
+    else:
+        text = str(value)
+
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 3]}..."
+
+
+def build_field_change_summary(
+    before: Optional[Dict[str, Any]],
+    after: Optional[Dict[str, Any]],
+    fields: Optional[Iterable[str]] = None,
+    *,
+    exclude_fields: Optional[Iterable[str]] = None,
+    max_fields: int = 5,
+) -> str:
+    """Build a concise old->new summary for changed fields."""
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return "no field changes captured"
+
+    exclude = {str(item) for item in (exclude_fields or [])}
+    candidate_fields = list(fields) if fields else sorted(set(before.keys()) | set(after.keys()))
+
+    changed_fields = []
+    for field in candidate_fields:
+        key = str(field)
+        if key in exclude:
+            continue
+
+        old_value = before.get(key)
+        new_value = after.get(key)
+        old_text = _stringify_change_value(old_value)
+        new_text = _stringify_change_value(new_value)
+
+        if old_text == new_text:
+            continue
+
+        changed_fields.append(f"{key}: {old_text} -> {new_text}")
+
+    if not changed_fields:
+        return "no field value changes"
+
+    if len(changed_fields) > max_fields:
+        remaining = len(changed_fields) - max_fields
+        return f"{'; '.join(changed_fields[:max_fields])}; +{remaining} more"
+
+    return "; ".join(changed_fields)
+
+
+async def log_business_activity(
+    user: Optional[Dict[str, Any]],
+    description: str,
+    path: str,
+    method: str = "BUSINESS",
+    status_code: int = 200,
+    ip_address: Optional[str] = None,
+) -> None:
+    """Persist a structured business activity event for the admin activity stream."""
+    actor_id, actor_name, actor_role = extract_actor_details(user)
+    await log_api_activity(
+        method=method,
+        path=path,
+        status_code=status_code,
+        actor_id=actor_id,
+        actor_name=actor_name,
+        actor_role=actor_role,
+        ip_address=ip_address,
+        description=description,
+    )
 
 
 def build_meaningful_activity_description(method: str, path: str, status_code: int) -> Optional[str]:

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { distributionsAPI, usersAPI } from '../services/api';
+import { dashboardAPI, distributionsAPI, usersAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import {
@@ -206,7 +206,17 @@ const BulkImportDistribution = () => {
     }
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
+    try {
+      await dashboardAPI.trackActivity({
+        action: 'template_export',
+        description: 'Exported distribution bulk upload template',
+        context: 'distributions_bulk_upload_template',
+      });
+    } catch {
+      // Continue template export even if activity tracking fails.
+    }
+
     const rows = [
       TEMPLATE_HEADERS.join(','),
       'AA:BB:CC:DD:EE:01,,',

@@ -18,6 +18,7 @@ from app.models.defect import (
 )
 from app.services import defect_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager, require_management, require_any_role
+from app.core.activity_logger import build_field_change_summary, log_business_activity
 
 router = APIRouter()
 
@@ -318,6 +319,16 @@ async def create_defect(
             reporter=current_user
         )
 
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/defects/create",
+            description=(
+                f"{actor_name} reported defect {defect.get('report_id') or defect.get('id')} "
+                f"for device {defect.get('device_serial') or defect.get('device_id')}"
+            ),
+        )
+
         return {
             "success": True,
             "message": "Defect report created successfully",
@@ -417,6 +428,7 @@ async def update_defect_status(
     _ensure_not_md_director(current_user)
 
     try:
+        before = await defect_service.get_defect_by_id(defect_id)
         defect = await defect_service.update_defect_status(
             defect_id=defect_id,
             status=status_update.status.value,
@@ -431,6 +443,30 @@ async def update_defect_status(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Defect report not found"
             )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        edited_fields = ["status"]
+        if status_update.notes is not None:
+            edited_fields.append("notes")
+        if status_update.return_amount is not None:
+            edited_fields.append("return_amount")
+        if status_update.payment_bill_url is not None:
+            edited_fields.append("payment_bill_url")
+
+        change_summary = build_field_change_summary(
+            before=before or {},
+            after=defect or {},
+            fields=edited_fields,
+            exclude_fields={"updated_at"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/defects/status-update",
+            description=(
+                f"{actor_name} updated defect status for "
+                f"{defect.get('report_id') or defect_id}; changes: {change_summary}"
+            ),
+        )
 
         return {
             "success": True,
@@ -528,6 +564,17 @@ async def confirm_defect_payment(
         if not defect:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Defect report not found")
 
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        amount = float(defect.get("return_amount") or 0)
+        await log_business_activity(
+            user=current_user,
+            path="/activity/pending-dues/payment-confirmed",
+            description=(
+                f"{actor_name} confirmed pending due payment for defect "
+                f"{defect.get('report_id') or defect_id} ({amount:.2f})"
+            ),
+        )
+
         return {
             "success": True,
             "message": "Defect payment confirmed successfully",
@@ -618,6 +665,23 @@ async def replace_defect_device(
             payment_bill_url=replace_data.payment_bill_url,
             resolver=current_user
         )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        defective_device = defect.get("defective_device") or {}
+        replacement_device = defect.get("replacement_device") or {}
+        old_ref = defective_device.get("device_id") or defective_device.get("serial_number") or defect.get("device_serial") or "unknown"
+        new_ref = replacement_device.get("device_id") or replacement_device.get("serial_number") or defect.get("replacement_device_id") or "unknown"
+        amount = float(defect.get("return_amount") or 0)
+        amount_note = f"; bill amount {amount:.2f}" if amount > 0 else ""
+        await log_business_activity(
+            user=current_user,
+            path="/activity/defects/replacement-assigned",
+            description=(
+                f"{actor_name} assigned replacement device {new_ref} for defective device {old_ref}"
+                f" on defect {defect.get('report_id') or defect_id}{amount_note}"
+            ),
+        )
+
         return {
             "success": True,
             "message": "Device replaced successfully and assigned to the original operator",

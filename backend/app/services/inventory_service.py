@@ -22,6 +22,11 @@ from app.utils.helpers import (
 )
 
 
+def _uses_mac_id(device_type: Optional[str]) -> bool:
+    normalized = str(device_type or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    return normalized in {"olt", "adapter"}
+
+
 def _resolve_actor(user: Dict[str, Any]) -> Dict[str, str]:
     """Normalize authenticated user payload to stable actor id/name values."""
     actor_id = user.get("id") or user.get("_id") or user.get("user_id") or user.get("sub")
@@ -153,24 +158,46 @@ async def create_item(item_data: InventoryItemCreate, user: Dict[str, Any]) -> D
         else str(item_data.device_type or "").strip()
     ) or str(item_data.device_type or "").strip()
 
+    mac_id = str(item_data.mac_id or "").strip()
+    identifier_type = str(item_data.identifier_type or "").strip()
+    identifier = str(item_data.identifier or "").strip()
+
+    if _uses_mac_id(effective_device_type):
+        if not mac_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="MAC ID is required for OLT and Adapter",
+            )
+        identifier_type = ""
+        identifier = ""
+    else:
+        if not identifier_type or not identifier:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Identifier type and identifier are required for non-OLT/Adapter types",
+            )
+        mac_id = ""
+
     async with get_db() as db:
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         inventory_id = generate_inventory_item_id()
 
         cursor = await db.execute(
             """INSERT INTO external_inventory_items (
-                   inventory_id, item_id, name, serial_number, mac_id, device_type, price,
+                                     inventory_id, item_id, name, serial_number, mac_id, identifier_type, identifier, device_type, price,
                      sku, category, unit, quantity_on_hand, reorder_level,
                    unit_cost, supplier_name, location, status,
                    notes, image_url, created_by, created_at, updated_at
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)""",
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)""",
             (
                 inventory_id,
                 item_data.item_id,
                 item_data.name,
                 item_data.serial_number,
-                item_data.mac_id,
+                                mac_id,
+                                identifier_type,
+                                identifier,
                 effective_device_type,
                 item_data.price,
                 item_data.item_id,
@@ -230,6 +257,27 @@ async def update_item(
         if "price" in update_dict:
             update_dict["unit_cost"] = update_dict["price"]
 
+        final_device_type = str(update_dict.get("device_type", existing.get("device_type")) or "").strip()
+        final_mac_id = str(update_dict.get("mac_id", existing.get("mac_id")) or "").strip()
+        final_identifier_type = str(update_dict.get("identifier_type", existing.get("identifier_type")) or "").strip()
+        final_identifier = str(update_dict.get("identifier", existing.get("identifier")) or "").strip()
+
+        if _uses_mac_id(final_device_type):
+            if not final_mac_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="MAC ID is required for OLT and Adapter",
+                )
+            update_dict["identifier_type"] = None
+            update_dict["identifier"] = None
+        else:
+            if not final_identifier_type or not final_identifier:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Identifier type and identifier are required for non-OLT/Adapter types",
+                )
+            update_dict["mac_id"] = ""
+
         update_dict["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         set_clause = ", ".join([f"{k} = ?" for k in update_dict.keys()])
 
@@ -260,6 +308,39 @@ async def update_item_image(inventory_id: str, image_url: str) -> Optional[Dict[
         await db.commit()
 
     return await get_item_by_inventory_id(inventory_id)
+
+
+async def delete_item(inventory_id: str) -> Optional[Dict[str, Any]]:
+    async with get_db() as db:
+        existing_cursor = await db.execute(
+            "SELECT * FROM external_inventory_items WHERE inventory_id = ?",
+            (inventory_id,),
+        )
+        existing = await existing_cursor.fetchone()
+        if not existing:
+            return None
+
+        for table_name in ["inventory_po_lines", "inventory_receipt_lines", "inventory_stock_movements"]:
+            ref_cursor = await db.execute(
+                f"SELECT COUNT(*) FROM {table_name} WHERE item_inventory_id = ?",
+                (inventory_id,),
+            )
+            ref_count = int((await ref_cursor.fetchone())[0] or 0)
+            if ref_count > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Cannot delete item because it is already used in inventory transactions"
+                    ),
+                )
+
+        await db.execute(
+            "DELETE FROM external_inventory_items WHERE inventory_id = ?",
+            (inventory_id,),
+        )
+        await db.commit()
+
+    return row_to_dict(existing)
 
 
 async def get_purchase_orders(

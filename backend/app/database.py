@@ -1,8 +1,10 @@
 import re
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Iterable, Optional
 
 import aiomysql
+import pymysql
 
 from app.config import settings
 from app.utils.security import get_password_hash
@@ -93,11 +95,37 @@ class MySQLDB:
     def __init__(self, conn: aiomysql.Connection):
         self._conn = conn
 
+    @staticmethod
+    def _is_retryable_read_query(sql: str) -> bool:
+        prefix = sql.lstrip().upper()
+        return (
+            prefix.startswith("SELECT")
+            or prefix.startswith("SHOW")
+            or prefix.startswith("DESCRIBE")
+            or prefix.startswith("EXPLAIN")
+        )
+
     async def execute(self, query: str, params: Optional[Iterable[Any]] = None) -> CursorWrapper:
-        cur = await self._conn.cursor(aiomysql.DictCursor)
         sql = _translate_sql(query)
-        await cur.execute(sql, tuple(params or ()))
-        return CursorWrapper(cur)
+        args = tuple(params or ())
+        max_attempts = 3 if self._is_retryable_read_query(sql) else 1
+
+        for attempt in range(1, max_attempts + 1):
+            cur = await self._conn.cursor(aiomysql.DictCursor)
+            try:
+                await cur.execute(sql, args)
+                return CursorWrapper(cur)
+            except pymysql.err.OperationalError as exc:
+                # MySQL error 1412 appears transiently after DDL/TRUNCATE metadata changes.
+                if exc.args and exc.args[0] == 1412 and attempt < max_attempts:
+                    await cur.close()
+                    await asyncio.sleep(0.05)
+                    continue
+                await cur.close()
+                raise
+            except Exception:
+                await cur.close()
+                raise
 
     async def executemany(self, query: str, params: Iterable[Iterable[Any]]) -> CursorWrapper:
         cur = await self._conn.cursor(aiomysql.DictCursor)
@@ -401,6 +429,8 @@ CREATE_TABLE_STATEMENTS = [
         name VARCHAR(255) NOT NULL,
         serial_number VARCHAR(255),
         mac_id VARCHAR(255),
+        identifier_type VARCHAR(128),
+        identifier VARCHAR(255),
         device_type VARCHAR(128) NOT NULL,
         price DOUBLE DEFAULT 0,
         sku VARCHAR(128),
@@ -586,6 +616,8 @@ async def init_db():
             "ALTER TABLE external_inventory_items ADD COLUMN item_id VARCHAR(128)",
             "ALTER TABLE external_inventory_items ADD COLUMN serial_number VARCHAR(255)",
             "ALTER TABLE external_inventory_items ADD COLUMN mac_id VARCHAR(255)",
+            "ALTER TABLE external_inventory_items ADD COLUMN identifier_type VARCHAR(128)",
+            "ALTER TABLE external_inventory_items ADD COLUMN identifier VARCHAR(255)",
             "ALTER TABLE external_inventory_items ADD COLUMN device_type VARCHAR(128)",
             "ALTER TABLE external_inventory_items ADD COLUMN price DOUBLE DEFAULT 0",
             "ALTER TABLE external_inventory_items ADD COLUMN image_url VARCHAR(255)",
@@ -606,11 +638,15 @@ async def init_db():
             "UPDATE external_inventory_items SET item_id = inventory_id WHERE item_id IS NULL OR item_id = ''",
             "UPDATE external_inventory_items SET serial_number = '' WHERE serial_number IS NULL",
             "UPDATE external_inventory_items SET mac_id = '' WHERE mac_id IS NULL",
+            "UPDATE external_inventory_items SET identifier_type = COALESCE(identifier_type, '')",
+            "UPDATE external_inventory_items SET identifier = COALESCE(identifier, '')",
             "UPDATE external_inventory_items SET device_type = COALESCE(category, 'device') WHERE device_type IS NULL OR device_type = ''",
             "UPDATE external_inventory_items SET price = COALESCE(price, unit_cost, 0)",
             "UPDATE external_inventory_items SET sku = COALESCE(NULLIF(item_id, ''), sku)",
             "UPDATE external_inventory_items SET category = COALESCE(NULLIF(device_type, ''), category)",
             "UPDATE external_inventory_items SET unit_cost = COALESCE(price, unit_cost, 0)",
+            "UPDATE external_inventory_items SET identifier_type = 'MAC ID', identifier = mac_id WHERE (identifier_type IS NULL OR identifier_type = '') AND (identifier IS NULL OR identifier = '') AND COALESCE(mac_id, '') != '' AND LOWER(REPLACE(REPLACE(REPLACE(device_type, '-', ''), '_', ''), ' ', '')) NOT IN ('olt', 'adapter')",
+            "UPDATE external_inventory_items SET identifier_type = NULL, identifier = NULL WHERE LOWER(REPLACE(REPLACE(REPLACE(device_type, '-', ''), '_', ''), ' ', '')) IN ('olt', 'adapter')",
             "UPDATE approval_role_routing SET staff_enabled = COALESCE(staff_enabled, 1)",
             "UPDATE devices SET serial_number = NULL WHERE device_type = 'Set-top box'",
             "UPDATE devices SET mac_address = NULL WHERE device_type = 'Set-top box'",

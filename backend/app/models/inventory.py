@@ -29,6 +29,8 @@ class InventoryItemBase(BaseModel):
     name: str
     serial_number: str
     mac_id: str
+    identifier_type: Optional[str] = None
+    identifier: Optional[str] = None
     device_type: str
     custom_device_type: Optional[str] = None
     price: float = Field(default=0, ge=0)
@@ -41,10 +43,17 @@ class InventoryItemBase(BaseModel):
     @model_validator(mode="after")
     def validate_identifier_rules(self):
         device_type = str(self.device_type or "").strip().lower()
-        mac_or_nu_id = str(self.mac_id or "").strip()
+        normalized = device_type.replace("-", "").replace("_", "").replace(" ", "")
+        mac_id = str(self.mac_id or "").strip()
+        identifier_type = str(self.identifier_type or "").strip()
+        identifier = str(self.identifier or "").strip()
 
-        if device_type != "others" and not mac_or_nu_id:
-            raise ValueError("MAC ID/NU ID is required for all types except Others")
+        if normalized in {"olt", "adapter"}:
+            if not mac_id:
+                raise ValueError("MAC ID is required for OLT and Adapter")
+        else:
+            if not identifier_type or not identifier:
+                raise ValueError("Identifier type and identifier are required for non-OLT/Adapter types")
 
         return self
 
@@ -58,6 +67,8 @@ class InventoryItemUpdate(BaseModel):
     name: Optional[str] = None
     serial_number: Optional[str] = None
     mac_id: Optional[str] = None
+    identifier_type: Optional[str] = None
+    identifier: Optional[str] = None
     device_type: Optional[str] = None
     custom_device_type: Optional[str] = None
     price: Optional[float] = Field(default=None, ge=0)
@@ -74,10 +85,18 @@ class InventoryItemUpdate(BaseModel):
             return self
 
         device_type = str(self.device_type or "").strip().lower()
-        mac_or_nu_id = str(self.mac_id or "").strip() if self.mac_id is not None else ""
+        normalized = device_type.replace("-", "").replace("_", "").replace(" ", "")
+        mac_id = str(self.mac_id or "").strip() if self.mac_id is not None else ""
+        identifier_type = str(self.identifier_type or "").strip() if self.identifier_type is not None else ""
+        identifier = str(self.identifier or "").strip() if self.identifier is not None else ""
 
-        if device_type != "others" and not mac_or_nu_id:
-            raise ValueError("MAC ID/NU ID is required for all types except Others")
+        if normalized in {"olt", "adapter"}:
+            if self.mac_id is not None and not mac_id:
+                raise ValueError("MAC ID is required for OLT and Adapter")
+        else:
+            has_identifier_fields = self.identifier_type is not None or self.identifier is not None
+            if has_identifier_fields and (not identifier_type or not identifier):
+                raise ValueError("Identifier type and identifier are required for non-OLT/Adapter types")
 
         return self
 

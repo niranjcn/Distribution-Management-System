@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Filter, RefreshCw } from 'lucide-react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -7,6 +8,7 @@ import { dashboardAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 
 const Activities = () => {
+  const navigate = useNavigate();
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(true);
   const [activities, setActivities] = useState([]);
@@ -143,6 +145,11 @@ const Activities = () => {
         <DataTable
           columns={columns}
           data={activities}
+          onRowClick={(row) => {
+            if (row?.link) {
+              navigate(row.link);
+            }
+          }}
           exportTableName="activity log"
           searchable={false}
           exportable={true}

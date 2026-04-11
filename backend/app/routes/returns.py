@@ -4,6 +4,7 @@ from typing import Optional
 from app.models.return_device import ReturnCreate, ReturnStatusUpdate
 from app.services import return_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager
+from app.core.activity_logger import build_field_change_summary, log_business_activity
 
 router = APIRouter()
 
@@ -129,6 +130,7 @@ async def update_return_status(
     _ensure_not_md_director(current_user)
 
     try:
+        before = await return_service.get_return_by_id(return_id)
         return_req = await return_service.update_return_status(
             return_id=return_id,
             status=status_update.status.value,
@@ -143,6 +145,30 @@ async def update_return_status(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Return request not found"
             )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        edited_fields = ["status"]
+        if status_update.notes is not None:
+            edited_fields.append("notes")
+        if status_update.return_amount is not None:
+            edited_fields.append("return_amount")
+        if status_update.payment_bill_url is not None:
+            edited_fields.append("payment_bill_url")
+
+        change_summary = build_field_change_summary(
+            before=before or {},
+            after=return_req or {},
+            fields=edited_fields,
+            exclude_fields={"updated_at"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/returns/status-update",
+            description=(
+                f"{actor_name} updated return status for "
+                f"{return_req.get('return_id') or return_id}; changes: {change_summary}"
+            ),
+        )
 
         return {
             "success": True,

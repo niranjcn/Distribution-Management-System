@@ -340,6 +340,10 @@ async def get_admin_activities(
             conditions = ["1=1"]
             params: List[Any] = []
 
+            # Keep bulk device uploads as one summary entry in API activity logs.
+            conditions.append("action != ?")
+            params.append("bulk_registered")
+
             if actor:
                 conditions.append("performed_by_name LIKE ?")
                 params.append(f"%{actor}%")
@@ -381,6 +385,7 @@ async def get_admin_activities(
                         "actor": actor_name,
                         "description": description,
                         "date": item.get("timestamp"),
+                        "link": None,
                     }
                 )
 
@@ -429,6 +434,7 @@ async def get_admin_activities(
                         "actor": actor_name,
                         "description": description,
                         "date": item.get("created_at"),
+                        "link": None,
                     }
                 )
 
@@ -468,6 +474,26 @@ async def get_admin_activities(
             rows = await cursor.fetchall()
             for row in rows:
                 item = dict(row)
+                path_value = str(item.get("path") or "")
+
+                link = None
+                if path_value.startswith("/activity/devices"):
+                    link = "/devices"
+                elif path_value.startswith("/activity/distributions"):
+                    link = "/distributions"
+                elif path_value.startswith("/activity/users"):
+                    link = "/users"
+                elif path_value.startswith("/activity/defects"):
+                    link = "/defects"
+                elif path_value.startswith("/activity/returns"):
+                    link = "/returns"
+                elif path_value.startswith("/activity/pending-dues"):
+                    link = "/defects"
+                elif path_value.startswith("/activity/reports"):
+                    link = "/backup"
+                elif path_value.startswith("/activity/external-inventory"):
+                    link = "/external-inventory"
+
                 activities.append(
                     {
                         "id": f"api-{item.get('id')}",
@@ -476,6 +502,7 @@ async def get_admin_activities(
                         "actor": item.get("actor_name") or "Anonymous",
                         "description": item.get("description") or "API activity",
                         "date": item.get("created_at"),
+                        "link": link,
                     }
                 )
 

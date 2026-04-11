@@ -7,6 +7,7 @@ from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from app.core.activity_logger import build_field_change_summary, log_business_activity
 
 from app.middleware.auth_middleware import require_any_role, require_management
 from app.models.inventory import (
@@ -89,6 +90,15 @@ async def create_external_inventory_item(
 ):
     try:
         item = await inventory_service.create_item(item_data=item_data, user=current_user)
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/external-inventory/item-create",
+            description=(
+                f"{actor_name} created external inventory item "
+                f"{item.get('serial_number') or item.get('inventory_id') or item.get('name') or 'unknown'}"
+            ),
+        )
         return {
             "success": True,
             "message": "External inventory item created successfully",
@@ -112,8 +122,10 @@ async def bulk_upload_external_inventory_items(
     """Bulk upload external inventory items from CSV.
 
     Required columns: item_id, name, serial_number, device_type
-    Conditional column: mac_id (required for all types except Others)
-    Optional columns: custom_device_type, price, unit, supplier_name, location, notes
+    Conditional columns:
+    - mac_id (required only for OLT and Adapter)
+    - identifier_type + identifier (required for all non-OLT/Adapter types)
+    Optional columns: custom_device_type, price, supplier_name, location, notes
     """
     filename_lower = (file.filename or "").lower()
     if not filename_lower.endswith(".csv"):
@@ -160,16 +172,29 @@ async def bulk_upload_external_inventory_items(
             try:
                 device_type_value = row_data.get("device_type", "")
                 custom_device_type = row_data.get("custom_device_type", "")
+                normalized_type = str(device_type_value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+                mac_id_value = str(row_data.get("mac_id", "")).strip()
+                identifier_type_value = str(row_data.get("identifier_type", "")).strip()
+                identifier_value = str(row_data.get("identifier", "")).strip()
+
+                if normalized_type in {"olt", "adapter"} and not mac_id_value:
+                    raise ValueError("mac_id is required when device_type is OLT or Adapter")
+
+                if normalized_type not in {"olt", "adapter"} and (not identifier_type_value or not identifier_value):
+                    raise ValueError(
+                        "identifier_type and identifier are required for non-OLT/Adapter device_type"
+                    )
 
                 item_payload = InventoryItemCreate(
                     item_id=row_data.get("item_id", ""),
                     name=row_data.get("name", ""),
                     serial_number=row_data.get("serial_number", ""),
-                    mac_id=row_data.get("mac_id", ""),
+                    mac_id=mac_id_value,
+                    identifier_type=identifier_type_value or None,
+                    identifier=identifier_value or None,
                     device_type=device_type_value,
                     custom_device_type=custom_device_type or None,
                     price=float(row_data.get("price", "0") or 0),
-                    unit=row_data.get("unit", "pcs") or "pcs",
                     supplier_name=row_data.get("supplier_name") or None,
                     location=row_data.get("location") or None,
                     notes=row_data.get("notes") or None,
@@ -184,6 +209,16 @@ async def bulk_upload_external_inventory_items(
                         "error": str(e),
                     }
                 )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/external-inventory/item-bulk-import",
+            description=(
+                f"{actor_name} imported external inventory items: "
+                f"{len(created)} created, {len(errors)} errors"
+            ),
+        )
 
         return {
             "success": True,
@@ -212,6 +247,7 @@ async def update_external_inventory_item(
     current_user: dict = Depends(require_management),
 ):
     try:
+        before = await inventory_service.get_item_by_inventory_id(inventory_id)
         updated = await inventory_service.update_item(
             inventory_id=inventory_id,
             item_data=item_data,
@@ -223,10 +259,63 @@ async def update_external_inventory_item(
                 detail="External inventory item not found",
             )
 
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        edited_fields = list(item_data.model_dump(exclude_unset=True).keys())
+        change_summary = build_field_change_summary(
+            before=before or {},
+            after=updated or {},
+            fields=edited_fields,
+            exclude_fields={"updated_at"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/external-inventory/item-update",
+            description=(
+                f"{actor_name} updated external inventory item "
+                f"{updated.get('serial_number') or (before or {}).get('serial_number') or inventory_id}; "
+                f"changes: {change_summary}"
+            ),
+        )
+
         return {
             "success": True,
             "message": "External inventory item updated successfully",
             "data": updated,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
+@router.delete("/items/{inventory_id}")
+async def delete_external_inventory_item(
+    inventory_id: str,
+    current_user: dict = Depends(require_management),
+):
+    try:
+        deleted = await inventory_service.delete_item(inventory_id=inventory_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="External inventory item not found",
+            )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        serial_ref = deleted.get("serial_number") or inventory_id
+        await log_business_activity(
+            user=current_user,
+            path="/activity/external-inventory/item-delete",
+            description=f"{actor_name} deleted external inventory item {serial_ref}",
+        )
+
+        return {
+            "success": True,
+            "message": "External inventory item deleted successfully",
         }
     except HTTPException:
         raise
@@ -364,6 +453,15 @@ async def create_external_inventory_purchase_order(
 ):
     try:
         po = await inventory_service.create_purchase_order(po_data=po_data, user=current_user)
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/external-inventory/purchase-order-create",
+            description=(
+                f"{actor_name} created purchase order {po.get('po_id')} "
+                f"for {po.get('supplier_name') or 'unknown supplier'}"
+            ),
+        )
         return {
             "success": True,
             "message": "Purchase order created successfully",
@@ -390,6 +488,14 @@ async def receive_external_inventory_purchase_order(
             po_id=po_id,
             receipt_data=receipt_data,
             user=current_user,
+        )
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/external-inventory/purchase-order-confirm",
+            description=(
+                f"{actor_name} confirmed purchase order {po.get('po_id') or po_id}"
+            ),
         )
         return {
             "success": True,

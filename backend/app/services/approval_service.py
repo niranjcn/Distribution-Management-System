@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 
 from app.database import get_db, row_to_dict, rows_to_list
 from app.models.approval import ApprovalStatus, ApprovalType
+from app.core.activity_logger import log_business_activity
 from app.services import notification_service
 from app.utils.helpers import get_pagination
 
@@ -358,6 +359,30 @@ async def approve_request(
         notification_type="success",
         category="approval"
     )
+
+    try:
+        approval_record = await get_approval_by_id(approval_id)
+        entity_details = (approval_record or {}).get("entity_details") or {}
+        approver_name = approver.get("name") or approver.get("email") or "User"
+
+        if approval.get("approval_type") == "defect":
+            report_ref = entity_details.get("report_id") or approval.get("entity_id")
+            await log_business_activity(
+                user=approver,
+                path="/activity/defects/approve",
+                description=f"{approver_name} approved defect {report_ref}",
+            )
+        elif approval.get("approval_type") == "return":
+            return_ref = entity_details.get("return_id") or approval.get("entity_id")
+            requester = entity_details.get("requested_by_name") or approval.get("requested_by_name") or "unknown user"
+            await log_business_activity(
+                user=approver,
+                path="/activity/returns/approve",
+                description=f"{approver_name} approved return request {return_ref} from {requester}",
+            )
+    except Exception:
+        # Approval should still succeed even if activity logging fails.
+        pass
 
     return await get_approval_by_id(approval_id)
 

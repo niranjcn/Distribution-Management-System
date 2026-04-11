@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { devicesAPI } from '../services/api';
+import { dashboardAPI, devicesAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertCircle, Download, ArrowLeft } from 'lucide-react';
 
@@ -60,7 +60,17 @@ const BulkImportDevices = () => {
     }
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
+    try {
+      await dashboardAPI.trackActivity({
+        action: 'template_export',
+        description: 'Exported device bulk upload template',
+        context: 'devices_bulk_upload_template',
+      });
+    } catch {
+      // Continue template export even if activity tracking fails.
+    }
+
     // Build a regular-device CSV template users can open in Excel.
     const rows = [
       REGULAR_TEMPLATE_HEADERS.join(','),
