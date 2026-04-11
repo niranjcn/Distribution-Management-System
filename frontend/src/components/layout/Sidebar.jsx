@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { returnsAPI } from '../../services/api';
 import {
   LayoutDashboard,
   Box,
@@ -31,6 +32,43 @@ const Sidebar = ({ isOpen, onClose }) => {
   const { user } = useAuth();
   const location = useLocation();
   const [expandedMenus, setExpandedMenus] = useState({});
+  const [canShowReplacementOptions, setCanShowReplacementOptions] = useState(true);
+
+  useEffect(() => {
+    const role = normalizeRole(user?.role);
+    const rolesNeedingReceivedReturn = [
+      ROLES.SUB_DISTRIBUTION_MANAGER,
+      ROLES.SUB_DISTRIBUTOR,
+      ROLES.CLUSTER,
+      ROLES.OPERATOR,
+    ];
+
+    if (!rolesNeedingReceivedReturn.includes(role)) {
+      setCanShowReplacementOptions(true);
+      return;
+    }
+
+    let isMounted = true;
+    const checkReceivedAtPdic = async () => {
+      try {
+        const response = await returnsAPI.getReturns({ status: 'received', page_size: 1 });
+        const rows = Array.isArray(response?.data) ? response.data : [];
+        const total = Number(response?.pagination?.total ?? rows.length ?? 0);
+        if (isMounted) {
+          setCanShowReplacementOptions(total > 0);
+        }
+      } catch {
+        if (isMounted) {
+          setCanShowReplacementOptions(false);
+        }
+      }
+    };
+
+    checkReceivedAtPdic();
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.role, user?.id]);
 
   const toggleMenu = (menuKey) => {
     setExpandedMenus(prev => ({
@@ -194,8 +232,10 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
         { path: '/distributions', icon: Truck, label: 'Scoped Distributions' },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ...(canShowReplacementOptions ? [
+          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
       ],
       [ROLES.SUB_DISTRIBUTOR]: [
@@ -205,12 +245,22 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/devices', icon: Box, label: 'My Devices' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
-        { path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' },
-        { path: '/distributions', icon: Truck, label: 'My Distributions' },
-        { path: '/distributions/create', icon: Truck, label: 'Distribute Devices' },
+        ...(canShowReplacementOptions ? [{ path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' }] : []),
+        {
+          key: 'distribution',
+          icon: Truck,
+          label: 'Distribution',
+          children: [
+            { path: '/distributions', label: 'My Distributions' },
+            { path: '/distributions/create', label: 'Create Distribution' },
+            { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ...(canShowReplacementOptions ? [
+          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
       ],
@@ -221,12 +271,22 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/devices', icon: Box, label: 'My Devices' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
-        { path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' },
-        { path: '/distributions', icon: Truck, label: 'My Distributions' },
-        { path: '/distributions/create', icon: Truck, label: 'Distribute Devices' },
+        ...(canShowReplacementOptions ? [{ path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' }] : []),
+        {
+          key: 'distribution',
+          icon: Truck,
+          label: 'Distribution',
+          children: [
+            { path: '/distributions', label: 'My Distributions' },
+            { path: '/distributions/create', label: 'Create Distribution' },
+            { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ...(canShowReplacementOptions ? [
+          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
       ],
@@ -235,13 +295,23 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/devices', icon: Box, label: 'My Devices' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
-        { path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' },
-        { path: '/distributions', icon: Truck, label: 'My Distributions' },
-        { path: '/distributions/create', icon: Truck, label: 'Transfer Device' },
+        ...(canShowReplacementOptions ? [{ path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' }] : []),
+        {
+          key: 'distribution',
+          icon: Truck,
+          label: 'Distribution',
+          children: [
+            { path: '/distributions', label: 'My Distributions' },
+            { path: '/distributions/create', label: 'Create Distribution' },
+            { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
         { path: '/defects/create', icon: AlertTriangle, label: 'Report Defect' },
         { path: '/defects', icon: ClipboardList, label: 'My Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ...(canShowReplacementOptions ? [
+          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'My Returns' },
       ],

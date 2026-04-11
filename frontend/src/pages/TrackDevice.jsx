@@ -398,7 +398,7 @@ const TrackDevice = () => {
 
       {/* All Devices List */}
       {!searched && (
-        <Card title={['super_admin','manager','pdic_staff'].includes(currentUser?.role) ? 'All Devices' : 'Devices In My Chain'} icon={Box}>
+        <Card title={['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role) ? 'All Devices' : 'Devices In My Chain'} icon={Box}>
           {devicesLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
@@ -532,7 +532,7 @@ const TrackDevice = () => {
                       <Box className="w-5 h-5 text-blue-600" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <DeviceIdentity device={device} />
+                      <DeviceIdentity device={device} />
                     </div>
                     <div className="flex flex-col items-end gap-1">
                       <StatusBadge status={device.status} size="sm" />
@@ -755,7 +755,7 @@ const TrackDevice = () => {
                     <Clock className="w-5 h-5 text-gray-500" />
                     Device Journey
                   </h3>
-                  
+
                   {deviceHistory.length > 0 ? (
                     <Timeline items={getFormattedHistory()} />
                   ) : (

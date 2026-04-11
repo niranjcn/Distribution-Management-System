@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
-import { changeRequestsAPI, defectsAPI } from '../services/api';
+import { defectsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { Loader2, PackageCheck, RefreshCw } from 'lucide-react';
 
@@ -11,13 +11,6 @@ const ReplacementConfirmation = () => {
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(true);
   const [confirmingId, setConfirmingId] = useState(null);
-  const [enquiringId, setEnquiringId] = useState(null);
-  const [requestingTransferId, setRequestingTransferId] = useState(null);
-  const [activeEnquiryId, setActiveEnquiryId] = useState(null);
-  const [activeTransferId, setActiveTransferId] = useState(null);
-  const [enquiryDrafts, setEnquiryDrafts] = useState({});
-  const [transferDrafts, setTransferDrafts] = useState({});
-  const [submittedTransferIds, setSubmittedTransferIds] = useState(new Set());
   const [items, setItems] = useState([]);
 
   const fetchPending = async () => {
@@ -56,50 +49,6 @@ const ReplacementConfirmation = () => {
       }
     } finally {
       setConfirmingId(null);
-    }
-  };
-
-  const handleEnquirySubmit = async (defectId) => {
-    const message = (enquiryDrafts[defectId] || '').trim();
-    if (!message) {
-      showToast('Please enter an enquiry message first', 'error');
-      return;
-    }
-
-    try {
-      setEnquiringId(defectId);
-      await defectsAPI.enquireReplacement(defectId, message);
-      showToast('Enquiry sent to management successfully', 'success');
-      setEnquiryDrafts((prev) => ({ ...prev, [defectId]: '' }));
-      setActiveEnquiryId(null);
-    } catch (error) {
-      showToast(error.message || 'Failed to send enquiry', 'error');
-    } finally {
-      setEnquiringId(null);
-    }
-  };
-
-  const handleTransferFixSubmit = async (defectId) => {
-    const notes = (transferDrafts[defectId] || '').trim();
-    try {
-      setRequestingTransferId(defectId);
-      await changeRequestsAPI.requestReplacementTransferFix(defectId, notes);
-      showToast('Transfer-fix request submitted to management successfully', 'success');
-      setTransferDrafts((prev) => ({ ...prev, [defectId]: '' }));
-      setActiveTransferId(null);
-      setSubmittedTransferIds((prev) => new Set([...prev, String(defectId)]));
-    } catch (error) {
-      const msg = String(error?.message || '');
-      if (msg.toLowerCase().includes('already pending')) {
-        // Keep UI consistent with backend state even if user retried.
-        setSubmittedTransferIds((prev) => new Set([...prev, String(defectId)]));
-        setActiveTransferId(null);
-        showToast('A transfer-fix request is already pending for this defect.', 'info');
-      } else {
-        showToast(error.message || 'Failed to request transfer fix', 'error');
-      }
-    } finally {
-      setRequestingTransferId(null);
     }
   };
 
@@ -166,81 +115,12 @@ const ReplacementConfirmation = () => {
                   <div className="space-y-2">
                     <div className="flex flex-wrap justify-end gap-2">
                       <Button
-                        variant="secondary"
-                        onClick={() => setActiveEnquiryId((prev) => (prev === id ? null : id))}
-                      >
-                        Enquire
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => setActiveTransferId((prev) => (prev === id ? null : id))}
-                        disabled={requestingTransferId === id || submittedTransferIds.has(String(id))}
-                      >
-                        {submittedTransferIds.has(String(id)) ? 'Transfer Requested' : 'Request Transfer Fix'}
-                      </Button>
-                      <Button
                         onClick={() => handleConfirm(id)}
                         disabled={confirmingId === id}
                       >
                         {confirmingId === id ? 'Confirming...' : 'Confirm Receipt'}
                       </Button>
                     </div>
-
-                    {activeEnquiryId === id && (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
-                        <textarea
-                          value={enquiryDrafts[id] || ''}
-                          onChange={(e) =>
-                            setEnquiryDrafts((prev) => ({
-                              ...prev,
-                              [id]: e.target.value,
-                            }))
-                          }
-                          rows={3}
-                          placeholder="Ask management for the latest replacement shipment status..."
-                          className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500"
-                        />
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" onClick={() => setActiveEnquiryId(null)}>
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={() => handleEnquirySubmit(id)}
-                            disabled={enquiringId === id}
-                          >
-                            {enquiringId === id ? 'Sending...' : 'Send Enquiry'}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {activeTransferId === id && !submittedTransferIds.has(String(id)) && (
-                      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
-                        <textarea
-                          value={transferDrafts[id] || ''}
-                          onChange={(e) =>
-                            setTransferDrafts((prev) => ({
-                              ...prev,
-                              [id]: e.target.value,
-                            }))
-                          }
-                          rows={3}
-                          placeholder="Optional notes: replacement still not visible, wrong holder, shipment mismatch, etc."
-                          className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        />
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" onClick={() => setActiveTransferId(null)}>
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={() => handleTransferFixSubmit(id)}
-                            disabled={requestingTransferId === id}
-                          >
-                            {requestingTransferId === id ? 'Submitting...' : 'Submit Transfer Fix'}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </Card>

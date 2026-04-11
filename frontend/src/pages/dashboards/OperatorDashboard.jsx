@@ -12,7 +12,8 @@ import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import DeviceIdentity from '../../components/ui/DeviceIdentity';
 import Button from '../../components/ui/Button';
-import { dashboardAPI, devicesAPI, defectsAPI, returnsAPI } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
+import { dashboardAPI, devicesAPI, defectsAPI, returnsAPI, distributionsAPI } from '../../services/api';
 import {
   Box,
   AlertTriangle,
@@ -21,6 +22,7 @@ import {
   ArrowRight,
   Plus,
   Eye,
+  Package,
   Loader2
 } from 'lucide-react';
 
@@ -35,29 +37,33 @@ const doughnutOptions = {
 };
 
 const OperatorDashboard = () => {
+  const { user } = useAuth();
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
   const [myDevices, setMyDevices] = useState([]);
   const [myDefects, setMyDefects] = useState([]);
   const [myReturns, setMyReturns] = useState([]);
+  const [distributions, setDistributions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [statsRes, advancedRes, devRes, defRes, retRes] = await Promise.all([
+        const [statsRes, advancedRes, devRes, defRes, retRes, distRes] = await Promise.all([
           dashboardAPI.getStats().catch(() => ({ data: {} })),
           dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
           devicesAPI.getDevices().catch(() => ({ data: [] })),
           defectsAPI.getDefects().catch(() => ({ data: [] })),
-          returnsAPI.getReturns().catch(() => ({ data: [] }))
+          returnsAPI.getReturns().catch(() => ({ data: [] })),
+          distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(() => ({ data: [] }))
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
         setMyDevices(devRes.data || []);
         setMyDefects(defRes.data || []);
         setMyReturns(retRes.data || []);
+        setDistributions(distRes.data || []);
       } catch (error) {
         console.error('Failed to load dashboard data:', error);
       } finally {
@@ -66,6 +72,10 @@ const OperatorDashboard = () => {
     };
     fetchData();
   }, []);
+
+  const pendingReceipts = distributions.filter(
+    d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)
+  );
 
   const charts = advanced.charts || {};
   const myDeviceSplitData = {
@@ -105,6 +115,27 @@ const OperatorDashboard = () => {
       <Card title="My Device Active vs Inactive" icon={Cpu} padding={false}>
         <div className="h-72 p-4"><Doughnut data={myDeviceSplitData} options={doughnutOptions} /></div>
       </Card>
+
+      {pendingReceipts.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+                <Package className="w-5 h-5 text-orange-600" />
+              </div>
+              <div>
+                <p className="font-medium text-orange-800">
+                  You have {pendingReceipts.length} delivery(ies) to confirm
+                </p>
+                <p className="text-sm text-orange-600">Confirm that you have received the devices before you can redistribute them</p>
+              </div>
+            </div>
+            <Link to="/delivery-confirmations">
+              <Button variant="warning" size="sm">Confirm Now</Button>
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* My Devices */}
       <Card
