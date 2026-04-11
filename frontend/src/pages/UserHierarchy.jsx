@@ -23,14 +23,14 @@ import {
 
 // ─── colour palette per role ─────────────────────────────────────────────────
 const ROLE_STYLES = {
-  super_admin:           { ring: 'ring-red-400',    bg: 'bg-red-50',    text: 'text-red-700',    badge: 'bg-red-100 text-red-800'    },
-  md_director:           { ring: 'ring-orange-400', bg: 'bg-orange-50', text: 'text-orange-700', badge: 'bg-orange-100 text-orange-800'},
-  manager:               { ring: 'ring-purple-400', bg: 'bg-purple-50', text: 'text-purple-700', badge: 'bg-purple-100 text-purple-800'},
-  pdic_staff:            { ring: 'ring-sky-400',    bg: 'bg-sky-50',    text: 'text-sky-700',    badge: 'bg-sky-100 text-sky-800'    },
-  sub_distribution_manager:{ ring: 'ring-cyan-400', bg: 'bg-cyan-50', text: 'text-cyan-700', badge: 'bg-cyan-100 text-cyan-800' },
-  sub_distributor: { ring: 'ring-indigo-400', bg: 'bg-indigo-50', text: 'text-indigo-700', badge: 'bg-indigo-100 text-indigo-800'},
-  cluster:         { ring: 'ring-teal-400',   bg: 'bg-teal-50',   text: 'text-teal-700',   badge: 'bg-teal-100 text-teal-800'  },
-  operator:        { ring: 'ring-green-400',  bg: 'bg-green-50',  text: 'text-green-700',  badge: 'bg-green-100 text-green-800' },
+  super_admin: { ring: 'ring-red-400', bg: 'bg-red-50', text: 'text-red-700', badge: 'bg-red-100 text-red-800' },
+  md_director: { ring: 'ring-orange-400', bg: 'bg-orange-50', text: 'text-orange-700', badge: 'bg-orange-100 text-orange-800' },
+  manager: { ring: 'ring-purple-400', bg: 'bg-purple-50', text: 'text-purple-700', badge: 'bg-purple-100 text-purple-800' },
+  pdic_staff: { ring: 'ring-sky-400', bg: 'bg-sky-50', text: 'text-sky-700', badge: 'bg-sky-100 text-sky-800' },
+  sub_distribution_manager: { ring: 'ring-cyan-400', bg: 'bg-cyan-50', text: 'text-cyan-700', badge: 'bg-cyan-100 text-cyan-800' },
+  sub_distributor: { ring: 'ring-indigo-400', bg: 'bg-indigo-50', text: 'text-indigo-700', badge: 'bg-indigo-100 text-indigo-800' },
+  cluster: { ring: 'ring-teal-400', bg: 'bg-teal-50', text: 'text-teal-700', badge: 'bg-teal-100 text-teal-800' },
+  operator: { ring: 'ring-green-400', bg: 'bg-green-50', text: 'text-green-700', badge: 'bg-green-100 text-green-800' },
 };
 
 const ROLE_LABELS = {
@@ -45,11 +45,11 @@ const ROLE_ICON = {
 };
 
 const ALLOWED_ROLES_BY_CREATOR = {
-  super_admin:     ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
-  manager:         ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
+  super_admin: ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
+  manager: ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
   sub_distribution_manager: ['cluster', 'operator'],
   sub_distributor: [],
-  cluster:         ['operator'],
+  cluster: ['operator'],
 };
 
 const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', department: '', location: '', parentId: '' };
@@ -129,15 +129,15 @@ const UserHierarchy = () => {
   const { showToast } = useNotifications();
   const navigate = useNavigate();
 
-  const [allUsers, setAllUsers]     = useState([]);
-  const [loading, setLoading]       = useState(true);
-  const [search, setSearch]         = useState('');
+  const [allUsers, setAllUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
 
   // ─ Add user modal ─
-  const [showAdd, setShowAdd]           = useState(false);
-  const [formData, setFormData]         = useState(emptyForm);
-  const [submitting, setSubmitting]     = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [formData, setFormData] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
   const [parentOptions, setParentOptions] = useState([]);
   const [loadingParents, setLoadingParents] = useState(false);
 
@@ -167,7 +167,7 @@ const UserHierarchy = () => {
           usersAPI.getUsers({ page_size: 100 }),
           usersAPI.getUsers({ role: 'operator', page_size: 100 }),
         ]);
-        const clusters  = (clusterRes.data  || []);
+        const clusters = (clusterRes.data || []);
         const operators = (opRes.data || []);
         setAllUsers([...clusters, ...operators]);
       } else {
@@ -189,10 +189,10 @@ const UserHierarchy = () => {
     const query = search.toLowerCase();
     const list = query
       ? visibleUsers.filter(u =>
-          u.name?.toLowerCase().includes(query) ||
-          u.email?.toLowerCase().includes(query) ||
-          (ROLE_LABELS[u.role] || u.role).toLowerCase().includes(query),
-        )
+        u.name?.toLowerCase().includes(query) ||
+        u.email?.toLowerCase().includes(query) ||
+        (ROLE_LABELS[u.role] || u.role).toLowerCase().includes(query),
+      )
       : visibleUsers;
 
     // index by id for quick lookup
@@ -309,10 +309,10 @@ const UserHierarchy = () => {
         password: formData.password,
         role: formData.role,
       };
-      if (formData.phone)      payload.phone = formData.phone;
+      if (formData.phone) payload.phone = formData.phone;
       if (formData.department) payload.department = formData.department;
-      if (formData.location)   payload.location = formData.location;
-      if (formData.parentId)   payload.parent_id = formData.parentId;
+      if (formData.location) payload.location = formData.location;
+      if (formData.parentId) payload.parent_id = formData.parentId;
       await usersAPI.createUser(payload);
       showToast('User created successfully', 'success');
       setShowAdd(false);
@@ -330,13 +330,13 @@ const UserHierarchy = () => {
   // ─── page title per role ───────────────────────────────────────────────────
   const pageTitle =
     currentUser?.role === 'sub_distributor' ? 'My User Hierarchy' :
-    currentUser?.role === 'cluster'         ? 'My Operators'       :
-    'User Hierarchy';
+      currentUser?.role === 'cluster' ? 'My Operators' :
+        'User Hierarchy';
 
   const pageDesc =
     currentUser?.role === 'sub_distributor' ? 'Clusters and operators under your sub-distribution' :
-    currentUser?.role === 'cluster'         ? 'Operators in your cluster' :
-    'Visual tree of every user — Sub Distributors → Clusters → Operators';
+      currentUser?.role === 'cluster' ? 'Operators in your cluster' :
+        'Visual tree of every user — Sub Distributors → Clusters → Operators';
 
   return (
     <div className="space-y-5">
@@ -453,16 +453,16 @@ const UserHierarchy = () => {
 
             {/* body */}
             <div className="p-5 space-y-3 text-sm">
-              <Row label="Email"      value={selectedUser.email} />
-              <Row label="Phone"      value={selectedUser.phone} />
+              <Row label="Email" value={selectedUser.email} />
+              <Row label="Phone" value={selectedUser.phone} />
               <Row label="Department" value={selectedUser.department} />
-              <Row label="Location"   value={selectedUser.location} />
-              <Row label="Status"     value={<StatusBadge status={selectedUser.status} size="sm" />} />
-              <Row label="Joined"     value={selectedUser.created_at ? new Date(selectedUser.created_at).toLocaleDateString() : '—'} />
+              <Row label="Location" value={selectedUser.location} />
+              <Row label="Status" value={<StatusBadge status={selectedUser.status} size="sm" />} />
+              <Row label="Joined" value={selectedUser.created_at ? new Date(selectedUser.created_at).toLocaleDateString() : '—'} />
               {selectedUser.parent_id && (
                 <Row
                   label="Parent"
-                    value={visibleUsers.find(u => String(u.id) === String(selectedUser.parent_id))?.name || `ID ${selectedUser.parent_id}`}
+                  value={visibleUsers.find(u => String(u.id) === String(selectedUser.parent_id))?.name || `ID ${selectedUser.parent_id}`}
                 />
               )}
             </div>

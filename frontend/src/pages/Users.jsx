@@ -7,16 +7,16 @@ import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { usersAPI, adminUpdateCredentials } from '../services/api';
-import { 
-  UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
+import {
+  UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone,
   Building, MapPin, Calendar, Users as UsersIcon, Loader2, Lock,
   Network, ChevronDown, ChevronRight, Filter, X, EyeOff
 } from 'lucide-react';
 
 // Roles each creator can assign
 const ALLOWED_ROLES_BY_CREATOR = {
-  super_admin:     ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
-  manager:         ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
+  super_admin: ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
+  manager: ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
   sub_distribution_manager: ['cluster', 'operator'],
 };
 
@@ -33,15 +33,15 @@ const ROLE_LABELS = {
 
 const getRoleColor = (role) => {
   switch (role) {
-    case 'super_admin':           return 'bg-red-100 text-red-800';
-    case 'md_director':           return 'bg-orange-100 text-orange-800';
-    case 'manager':         return 'bg-purple-100 text-purple-800';
-    case 'pdic_staff':           return 'bg-blue-100 text-blue-800';
+    case 'super_admin': return 'bg-red-100 text-red-800';
+    case 'md_director': return 'bg-orange-100 text-orange-800';
+    case 'manager': return 'bg-purple-100 text-purple-800';
+    case 'pdic_staff': return 'bg-blue-100 text-blue-800';
     case 'sub_distribution_manager': return 'bg-cyan-100 text-cyan-800';
     case 'sub_distributor': return 'bg-indigo-100 text-indigo-800';
-    case 'cluster':         return 'bg-teal-100 text-teal-800';
-    case 'operator':        return 'bg-green-100 text-green-800';
-    default:                return 'bg-gray-100 text-gray-800';
+    case 'cluster': return 'bg-teal-100 text-teal-800';
+    case 'operator': return 'bg-green-100 text-green-800';
+    default: return 'bg-gray-100 text-gray-800';
   }
 };
 
@@ -324,10 +324,10 @@ const Users = () => {
         payload.digital_id = formData.digitalId || null;
         payload.broadband_id = formData.broadbandId || null;
       }
-      if (formData.phone)      payload.phone = formData.phone;
+      if (formData.phone) payload.phone = formData.phone;
       if (formData.department) payload.department = formData.department;
-      if (formData.location)   payload.location = formData.location;
-      if (formData.parentId)   payload.parent_id = formData.parentId;
+      if (formData.location) payload.location = formData.location;
+      if (formData.parentId) payload.parent_id = formData.parentId;
 
       await usersAPI.createUser(payload);
       showToast('User created successfully', 'success');
@@ -351,10 +351,10 @@ const Users = () => {
     setSubmitting(true);
     try {
       const payload = {};
-      if (formData.name)       payload.name = formData.name;
-      if (formData.phone)      payload.phone = formData.phone;
+      if (formData.name) payload.name = formData.name;
+      if (formData.phone) payload.phone = formData.phone;
       if (formData.department) payload.department = formData.department;
-      if (formData.location)   payload.location = formData.location;
+      if (formData.location) payload.location = formData.location;
 
       await usersAPI.updateUser(selectedUser._id || selectedUser.id, payload);
       showToast('User updated successfully', 'success');
@@ -381,11 +381,11 @@ const Users = () => {
   };
 
   // Role flags — declared here so filteredUsers memo and stats can both use them
-  const isSubDist  = currentUser?.role === 'sub_distributor';
-  const isCluster  = currentUser?.role === 'cluster';
-  const isAdmin    = currentUser?.role === 'super_admin';
+  const isSubDist = currentUser?.role === 'sub_distributor';
+  const isCluster = currentUser?.role === 'cluster';
+  const isAdmin = currentUser?.role === 'super_admin';
   const isMdDirector = currentUser?.role === 'md_director';
-  const isManager  = currentUser?.role === 'manager';
+  const isManager = currentUser?.role === 'manager';
   const isAdminOrManager = ['super_admin', 'manager'].includes(currentUser?.role);
 
   const visibleUsers = useMemo(() => {
@@ -461,41 +461,41 @@ const Users = () => {
 
   const stats = isSubDist
     ? [
-        { label: 'Total Clusters',    value: users.length,                                                            icon: Network,    color: 'teal'   },
-        { label: 'Active Clusters',   value: users.filter(u => u.status === 'active').length,                        icon: UsersIcon,  color: 'green'  },
-        { label: 'Total Operators',   value: subDistOperators.length,                                                  icon: UsersIcon,  color: 'blue'   },
-        { label: 'Active Operators',  value: subDistOperators.filter(u => u.status === 'active').length,              icon: UsersIcon,  color: 'indigo' },
-      ]
+      { label: 'Total Clusters', value: users.length, icon: Network, color: 'teal' },
+      { label: 'Active Clusters', value: users.filter(u => u.status === 'active').length, icon: UsersIcon, color: 'green' },
+      { label: 'Total Operators', value: subDistOperators.length, icon: UsersIcon, color: 'blue' },
+      { label: 'Active Operators', value: subDistOperators.filter(u => u.status === 'active').length, icon: UsersIcon, color: 'indigo' },
+    ]
     : isCluster
-    ? [
-        { label: 'Total Operators',   value: users.length,                                                            icon: UsersIcon,  color: 'blue'   },
-        { label: 'Active Operators',  value: users.filter(u => u.status === 'active').length,                         icon: UsersIcon,  color: 'green'  },
+      ? [
+        { label: 'Total Operators', value: users.length, icon: UsersIcon, color: 'blue' },
+        { label: 'Active Operators', value: users.filter(u => u.status === 'active').length, icon: UsersIcon, color: 'green' },
       ]
-    : isAdmin
-    ? [
-        { label: 'Total Users',       value: users.length,                                                            icon: UsersIcon,  color: 'blue'   },
-        { label: 'Super Admins',      value: users.filter(u => u.role === 'super_admin').length,                     icon: Shield,     color: 'red'    },
-        { label: 'MD/Director',       value: users.filter(u => u.role === 'md_director').length,                     icon: Shield,     color: 'orange' },
-        { label: 'Managers',          value: users.filter(u => u.role === 'manager').length,                          icon: Shield,     color: 'purple' },
-        { label: 'PDIC Staff',        value: users.filter(u => u.role === 'pdic_staff').length,                      icon: UsersIcon,  color: 'blue'   },
-        { label: 'Sub Dist. Manager', value: users.filter(u => u.role === 'sub_distribution_manager').length,        icon: Building,   color: 'cyan'   },
-        { label: 'Sub Distributors',  value: users.filter(u => u.role === 'sub_distributor').length,                  icon: Building,   color: 'indigo' },
-        { label: 'Clusters',          value: users.filter(u => u.role === 'cluster').length,                          icon: Network,    color: 'teal'   },
-        { label: 'Operators',         value: users.filter(u => u.role === 'operator').length,                         icon: UsersIcon,  color: 'green'  },
-      ]
-    : isManager
-    ? [
-        { label: 'Total Users',       value: visibleUsers.length,                                                     icon: UsersIcon,  color: 'blue'   },
-      { label: 'PDIC Staff',        value: visibleUsers.filter(u => u.role === 'pdic_staff').length,               icon: UsersIcon,  color: 'blue'   },
-      { label: 'Sub Dist. Manager', value: visibleUsers.filter(u => u.role === 'sub_distribution_manager').length, icon: Building,   color: 'cyan'   },
-        { label: 'Sub Distributors',  value: visibleUsers.filter(u => u.role === 'sub_distributor').length,           icon: Building,   color: 'indigo' },
-        { label: 'Clusters',          value: visibleUsers.filter(u => u.role === 'cluster').length,                   icon: Network,    color: 'teal'   },
-        { label: 'Operators',         value: visibleUsers.filter(u => u.role === 'operator').length,                  icon: UsersIcon,  color: 'green'  },
-      ]
-    : [
-        { label: 'Total Users',       value: users.length,                                                            icon: UsersIcon,  color: 'blue'   },
-        { label: 'Operators',         value: users.filter(u => u.role === 'operator').length,                         icon: UsersIcon,  color: 'green'  },
-      ];
+      : isAdmin
+        ? [
+          { label: 'Total Users', value: users.length, icon: UsersIcon, color: 'blue' },
+          { label: 'Super Admins', value: users.filter(u => u.role === 'super_admin').length, icon: Shield, color: 'red' },
+          { label: 'MD/Director', value: users.filter(u => u.role === 'md_director').length, icon: Shield, color: 'orange' },
+          { label: 'Managers', value: users.filter(u => u.role === 'manager').length, icon: Shield, color: 'purple' },
+          { label: 'PDIC Staff', value: users.filter(u => u.role === 'pdic_staff').length, icon: UsersIcon, color: 'blue' },
+          { label: 'Sub Dist. Manager', value: users.filter(u => u.role === 'sub_distribution_manager').length, icon: Building, color: 'cyan' },
+          { label: 'Sub Distributors', value: users.filter(u => u.role === 'sub_distributor').length, icon: Building, color: 'indigo' },
+          { label: 'Clusters', value: users.filter(u => u.role === 'cluster').length, icon: Network, color: 'teal' },
+          { label: 'Operators', value: users.filter(u => u.role === 'operator').length, icon: UsersIcon, color: 'green' },
+        ]
+        : isManager
+          ? [
+            { label: 'Total Users', value: visibleUsers.length, icon: UsersIcon, color: 'blue' },
+            { label: 'PDIC Staff', value: visibleUsers.filter(u => u.role === 'pdic_staff').length, icon: UsersIcon, color: 'blue' },
+            { label: 'Sub Dist. Manager', value: visibleUsers.filter(u => u.role === 'sub_distribution_manager').length, icon: Building, color: 'cyan' },
+            { label: 'Sub Distributors', value: visibleUsers.filter(u => u.role === 'sub_distributor').length, icon: Building, color: 'indigo' },
+            { label: 'Clusters', value: visibleUsers.filter(u => u.role === 'cluster').length, icon: Network, color: 'teal' },
+            { label: 'Operators', value: visibleUsers.filter(u => u.role === 'operator').length, icon: UsersIcon, color: 'green' },
+          ]
+          : [
+            { label: 'Total Users', value: users.length, icon: UsersIcon, color: 'blue' },
+            { label: 'Operators', value: users.filter(u => u.role === 'operator').length, icon: UsersIcon, color: 'green' },
+          ];
 
   return (
     <div className="space-y-6">
@@ -522,12 +522,11 @@ const Users = () => {
       </div>
 
       {/* Stats */}
-      <div className={`grid ${
-        isAdmin ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7' :
-        isManager ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' :
-        isSubDist ? 'grid-cols-2 sm:grid-cols-4' :
-        'grid-cols-2'
-      } gap-4`}>
+      <div className={`grid ${isAdmin ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7' :
+          isManager ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' :
+            isSubDist ? 'grid-cols-2 sm:grid-cols-4' :
+              'grid-cols-2'
+        } gap-4`}>
         {stats.map((stat, index) => (
           <Card key={index} className="text-center">
             <div className={`inline-flex p-3 rounded-lg bg-${stat.color}-100 mb-2`}>
@@ -702,8 +701,8 @@ const Users = () => {
                       {visibleUsers
                         .filter(u => u.role === 'sub_distribution_manager' && (!filters.subDistId || String(u.parent_id) === filters.subDistId))
                         .map(sdm => (
-                        <option key={sdm.id} value={String(sdm.id)}>{sdm.name}</option>
-                      ))}
+                          <option key={sdm.id} value={String(sdm.id)}>{sdm.name}</option>
+                        ))}
                     </select>
                   </div>
                 )}
@@ -891,7 +890,7 @@ const Users = () => {
                   || (String(currentUser?.id) === String(selectedUser.parent_id) ? currentUser : null);
                 const grandParent = parent?.parent_id
                   ? allAvailable.find(u => String(u.id) === String(parent.parent_id))
-                    || (String(currentUser?.id) === String(parent.parent_id) ? currentUser : null)
+                  || (String(currentUser?.id) === String(parent.parent_id) ? currentUser : null)
                   : null;
                 if (!parent) return null;
                 return (
@@ -936,8 +935,8 @@ const Users = () => {
         }}
         title={
           isSubDist ? (formData.role === 'operator' ? 'Add New Operator' : 'Add New Cluster')
-          : isCluster ? 'Add New Operator'
-          : 'Add New User'
+            : isCluster ? 'Add New Operator'
+              : 'Add New User'
         }
         size="md"
       >
@@ -1044,7 +1043,7 @@ const Users = () => {
             {/* Parent selector — shown when admin/manager creates sub-distributor/cluster/operator,
                 OR when sub_distributor creates an operator (must select a cluster) */}
             {((isAdminOrManager) && (formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator')) ||
-             (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ? (
+              (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ? (
               <div>
                 {isAdminOrManager && formData.role === 'operator' ? (
                   <div className="space-y-3">
@@ -1328,11 +1327,10 @@ const Users = () => {
                       showToast(err.message || 'Failed to update status', 'error');
                     }
                   }}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    detailForm.status === 'active'
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${detailForm.status === 'active'
                       ? 'bg-red-100 text-red-700 hover:bg-red-200'
                       : 'bg-green-100 text-green-700 hover:bg-green-200'
-                  }`}
+                    }`}
                 >
                   {detailForm.status === 'active' ? 'Deactivate' : 'Activate'}
                 </button>

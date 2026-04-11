@@ -112,13 +112,17 @@ const CreateDistribution = () => {
 
   // Operators shown in the final recipient list when type = 'operator'
   const visibleOperators = useMemo(() => {
-    if (filterClusterId) return allOperators.filter(o => String(o.parent_id) === filterClusterId);
+    const operatorPool = role === 'operator'
+      ? allOperators.filter(o => String(o.id) !== String(user?.id))
+      : allOperators;
+
+    if (filterClusterId) return operatorPool.filter(o => String(o.parent_id) === filterClusterId);
     if (isManagement && filterSubDistId) {
       const clusterIds = new Set(allClusters.filter(c => String(c.parent_id) === filterSubDistId).map(c => String(c.id)));
-      return allOperators.filter(o => clusterIds.has(String(o.parent_id)));
+      return operatorPool.filter(o => clusterIds.has(String(o.parent_id)));
     }
-    return allOperators;
-  }, [allOperators, allClusters, filterSubDistId, filterClusterId, isManagement]);
+    return operatorPool;
+  }, [allOperators, allClusters, filterSubDistId, filterClusterId, isManagement, role, user?.id]);
 
   const finalRecipients = useMemo(() => {
     if (recipientType === 'sub_distributor') return subDists;
