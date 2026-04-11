@@ -292,9 +292,14 @@ const Distributions = () => {
   const canCreate = ['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator'].includes(user?.role);
   const canConfirmDisputedReturn = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canRecipientIdentifierDownload =
-    ['sub_distributor', 'cluster', 'operator'].includes(user?.role) &&
-    selectedDist &&
-    String(selectedDist.to_user_id) === String(user?.id);
+    (
+      ['super_admin', 'manager', 'pdic_staff'].includes(user?.role) ||
+      (
+        ['sub_distributor', 'cluster', 'operator'].includes(user?.role) &&
+        selectedDist &&
+        String(selectedDist.to_user_id) === String(user?.id)
+      )
+    );
 
   const handleDownloadMacNuidExport = async (format = 'csv') => {
     if (!selectedDist) return;
@@ -320,9 +325,9 @@ const Distributions = () => {
       anchor.remove();
       window.URL.revokeObjectURL(url);
 
-      showToast(`Downloaded ${format.toUpperCase()} MAC/NUID export`, 'success');
+      showToast(`Downloaded ${format.toUpperCase()} distribution details export`, 'success');
     } catch (error) {
-      showToast(error.message || 'Failed to download MAC/NUID export', 'error');
+      showToast(error.message || 'Failed to download distribution details export', 'error');
     }
   };
 

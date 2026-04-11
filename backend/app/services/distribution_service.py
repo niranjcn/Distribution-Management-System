@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Set
 import json
 import io
+import csv
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -68,17 +69,37 @@ def _build_distribution_manifest(
 
 
 def _build_distribution_mac_nuid_file(
-    distribution_code: str,
+    distribution: Dict[str, Any],
     devices: List[Dict[str, Any]],
     file_format: str = "csv",
 ) -> Dict[str, Any]:
-    """Build export containing serial_number, mac_address, and nuid for a distribution."""
+    """Build export containing distribution context and device identifiers/details."""
     normalized = str(file_format or "csv").strip().lower()
     if normalized not in {"csv", "xlsx"}:
         raise ValueError("Unsupported export format. Use 'csv' or 'xlsx'")
 
+    distribution_code = str(distribution.get("distribution_id") or "")
+    from_user = str(distribution.get("from_user_name") or "")
+    to_user = str(distribution.get("to_user_name") or "")
+
+    headers = [
+        "from_user_name",
+        "to_user_name",
+        "device_type",
+        "manufacturer",
+        "model",
+        "serial_number",
+        "mac_address",
+        "nuid",
+    ]
+
     rows = [
         {
+            "from_user_name": from_user,
+            "to_user_name": to_user,
+            "device_type": str(device.get("device_type") or "").strip(),
+            "manufacturer": str(device.get("manufacturer") or "").strip(),
+            "model": str(device.get("model") or "").strip(),
             "serial_number": str(device.get("serial_number") or "").strip(),
             "mac_address": str(device.get("mac_address") or "").strip(),
             "nuid": str(device.get("nuid") or "").strip(),
@@ -89,26 +110,29 @@ def _build_distribution_mac_nuid_file(
     if normalized == "xlsx":
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "DEVICE_IDENTIFIERS"
-        sheet.append(["serial_number", "mac_address", "nuid"])
+        sheet.title = "DISTRIBUTION_EXPORT"
+        sheet.append(headers)
         for row in rows:
-            sheet.append([row["serial_number"], row["mac_address"], row["nuid"]])
+            sheet.append([row[header] for header in headers])
 
         payload = io.BytesIO()
         workbook.save(payload)
         payload.seek(0)
         return {
             "content": payload.getvalue(),
-            "filename": f"{distribution_code}-mac-nuid.xlsx",
+            "filename": f"{distribution_code}-distribution-details.xlsx",
             "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         }
 
-    content = "serial_number,mac_address,nuid\n" + "\n".join(
-        f"{row['serial_number']},{row['mac_address']},{row['nuid']}" for row in rows
-    )
+    csv_buffer = io.StringIO()
+    writer = csv.DictWriter(csv_buffer, fieldnames=headers)
+    writer.writeheader()
+    writer.writerows(rows)
+
+    content = csv_buffer.getvalue()
     return {
         "content": content.encode("utf-8"),
-        "filename": f"{distribution_code}-mac-nuid.csv",
+        "filename": f"{distribution_code}-distribution-details.csv",
         "media_type": "text/csv",
     }
 
@@ -959,14 +983,13 @@ async def get_distribution_mac_nuid_export(
         placeholders = ",".join(["?"] * len(device_ids))
         async with get_db() as db:
             cursor = await db.execute(
-                f"SELECT id, serial_number, mac_address, nuid FROM devices WHERE id IN ({placeholders})",
+                f"SELECT id, device_id, device_type, manufacturer, model, serial_number, mac_address, nuid FROM devices WHERE id IN ({placeholders})",
                 tuple(int(device_id) for device_id in device_ids)
             )
             devices = rows_to_list(await cursor.fetchall())
 
-    distribution_code = str(dist.get("distribution_id") or f"distribution-{distribution_id}")
     return _build_distribution_mac_nuid_file(
-        distribution_code=distribution_code,
+        distribution=dist,
         devices=devices,
         file_format=file_format,
     )

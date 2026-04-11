@@ -980,6 +980,7 @@ async def replace_defect_device(
     register_device: Optional[Dict[str, Any]],
     notes: Optional[str],
     return_amount: Optional[float],
+    service_charge: Optional[float],
     payment_bill_url: Optional[str],
     resolver: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -1058,10 +1059,14 @@ async def replace_defect_device(
         if not isinstance(new_device, dict):
             new_device = dict(new_device)
 
-        if str(new_device["id"]) == str(old_device["id"]):
-            raise ValueError("Replacement device cannot be the same as the defective device")
+        is_same_device_reassignment = str(new_device["id"]) == str(old_device["id"])
 
-        if new_device.get("status") not in [DeviceStatus.AVAILABLE.value, DeviceStatus.RETURNED.value]:
+        effective_return_amount = return_amount
+        if is_same_device_reassignment and service_charge is not None:
+            base_due = float(return_amount) if return_amount is not None else 0.0
+            effective_return_amount = base_due + float(service_charge)
+
+        if (not is_same_device_reassignment) and new_device.get("status") not in [DeviceStatus.AVAILABLE.value, DeviceStatus.RETURNED.value]:
             raise ValueError(
                 f"Replacement device must be available. Current status: {new_device.get('status')}"
             )
@@ -1072,8 +1077,15 @@ async def replace_defect_device(
         original_location = old_device.get("current_location") or "Field"
 
         resolution_note = notes or (
-            f"Replaced with device {new_device.get('device_id')} "
-            f"(Serial: {new_device.get('serial_number')}, MAC: {new_device.get('mac_address')})"
+            (
+                f"Serviced and reassigned same device {new_device.get('device_id')} "
+                f"(Serial: {new_device.get('serial_number')}, MAC: {new_device.get('mac_address')})"
+            )
+            if is_same_device_reassignment else
+            (
+                f"Replaced with device {new_device.get('device_id')} "
+                f"(Serial: {new_device.get('serial_number')}, MAC: {new_device.get('mac_address')})"
+            )
         )
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
@@ -1092,13 +1104,17 @@ async def replace_defect_device(
             now,
         ]
 
-        if return_amount is not None:
+        if effective_return_amount is not None:
             update_sql += ", return_amount = ?, payment_due_user_id = ?, payment_due_user_name = ?, payment_confirmed = 0"
             update_params.extend([
-                float(return_amount),
+                float(effective_return_amount),
                 str(defect.get("reported_by") or ""),
                 str(defect.get("reported_by_name") or "Unknown"),
             ])
+
+        if service_charge is not None:
+            update_sql += ", service_charge = ?"
+            update_params.append(float(service_charge))
 
         if payment_bill_url:
             update_sql += ", payment_bill_url = ?"
@@ -1110,31 +1126,36 @@ async def replace_defect_device(
         await db.execute(update_sql, update_params)
         await db.commit()
 
-    old_device_metadata = _parse_json_metadata(old_device.get("metadata"))
-    old_device_metadata["replaced_by"] = {
-        "device_id": str(new_device.get("id")),
-        "device_code": new_device.get("device_id"),
-        "serial_number": new_device.get("serial_number"),
-        "defect_id": str(defect_id),
-        "defect_report_id": defect.get("report_id"),
-        "replaced_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
-        "replaced_by_user_id": resolver_id,
-        "replaced_by_user_name": resolver_name
-    }
-    async with get_db() as db:
-        await db.execute(
-            "UPDATE devices SET metadata = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(old_device_metadata), datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), int(old_device["id"]))
-        )
-        await db.commit()
+    if not is_same_device_reassignment:
+        old_device_metadata = _parse_json_metadata(old_device.get("metadata"))
+        old_device_metadata["replaced_by"] = {
+            "device_id": str(new_device.get("id")),
+            "device_code": new_device.get("device_id"),
+            "serial_number": new_device.get("serial_number"),
+            "defect_id": str(defect_id),
+            "defect_report_id": defect.get("report_id"),
+            "replaced_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+            "replaced_by_user_id": resolver_id,
+            "replaced_by_user_name": resolver_name
+        }
+        async with get_db() as db:
+            await db.execute(
+                "UPDATE devices SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(old_device_metadata), datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), int(old_device["id"]))
+            )
+            await db.commit()
 
-    # Mark the old device status as replaced and keep replacement linkage in metadata.
+    # If the same device is serviced and reassigned, keep it in maintenance until user confirms receipt.
     await device_service.update_device_status(
         device_id=defect["device_id"],
-        status=DeviceStatus.REPLACED.value,
+        status=DeviceStatus.MAINTENANCE.value if is_same_device_reassignment else DeviceStatus.REPLACED.value,
         performed_by=resolver_id,
         performed_by_name=resolver_name,
-        notes=f"Device replaced by {new_device.get('device_id')} for defect {defect.get('report_id')}"
+        notes=(
+            f"Device serviced and reassigned for defect {defect.get('report_id')}"
+            if is_same_device_reassignment
+            else f"Device replaced by {new_device.get('device_id')} for defect {defect.get('report_id')}"
+        )
     )
 
     holder_user_id = str(original_holder_id) if original_holder_id else None
@@ -1149,9 +1170,10 @@ async def replace_defect_device(
     for recipient_id in recipient_ids:
         await notification_service.create_notification(
             user_id=recipient_id,
-            title="Replacement Device Ready - Confirmation Required",
+            title="Serviced Device Ready - Confirmation Required" if is_same_device_reassignment else "Replacement Device Ready - Confirmation Required",
             message=(
-                f"Operator update for {holder_user_name}: replacement device {new_device.get('device_id')} "
+                f"Operator update for {holder_user_name}: "
+                f"{'serviced device' if is_same_device_reassignment else 'replacement device'} {new_device.get('device_id')} "
                 f"(Serial: {new_device.get('serial_number')}) is prepared for defect {defect['report_id']}. "
                 "Confirm only after you physically receive the replacement device. "
                 "Do not confirm before receiving it."
@@ -1206,7 +1228,9 @@ async def confirm_replacement_receipt(
             raise ValueError("Replacement device not found")
         new_device = dict(new_device)
 
-        if new_device.get("status") not in [DeviceStatus.AVAILABLE.value, DeviceStatus.RETURNED.value]:
+        is_same_device_reassignment = str(new_device.get("id")) == str(old_device.get("id"))
+
+        if (not is_same_device_reassignment) and new_device.get("status") not in [DeviceStatus.AVAILABLE.value, DeviceStatus.RETURNED.value]:
             raise ValueError(
                 f"Replacement device is not available for confirmation. Current status: {new_device.get('status')}"
             )
