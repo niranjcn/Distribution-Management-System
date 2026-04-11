@@ -82,6 +82,7 @@ const DefectReports = () => {
   const [reviewComment, setReviewComment] = useState('');
   const [replaceData, setReplaceData] = useState({ notes: '' });
   const [replaceReturnAmount, setReplaceReturnAmount] = useState('');
+  const [replaceServiceCharge, setReplaceServiceCharge] = useState('');
   const [replacePaymentBillFile, setReplacePaymentBillFile] = useState(null);
   const [replacementMode, setReplacementMode] = useState('existing');
   const [replacementFilter, setReplacementFilter] = useState('all');
@@ -288,6 +289,7 @@ const DefectReports = () => {
     setReplacementMode('existing');
     setReplaceData({ notes: '' });
     setReplaceReturnAmount(row?.return_amount != null ? String(row.return_amount) : '');
+    setReplaceServiceCharge(row?.service_charge != null ? String(row.service_charge) : '');
     setReplacePaymentBillFile(null);
     setReplacementSearch('');
     setReplacementDeviceType(normalizeDeviceType(row?.device_type));
@@ -594,16 +596,32 @@ const DefectReports = () => {
       nuid: String(newDeviceData.nuid || '').trim() || undefined,
     };
 
+    const sameDeviceId = selectedDefect?.device_id ? String(selectedDefect.device_id) : '';
+
     const payload = {
       notes: replaceData.notes || undefined,
       ...(replacementMode === 'existing'
         ? { replacement_device_id: selectedReplacementDeviceId }
+        : replacementMode === 'same'
+        ? { replacement_device_id: sameDeviceId }
         : { register_device: cleanedNewDeviceData })
     };
 
-    const amountValue = replaceReturnAmount === '' ? null : Number(replaceReturnAmount);
+    const shouldSendDueAmount = replacementMode !== 'same';
+    const amountValue = shouldSendDueAmount
+      ? (replaceReturnAmount === '' ? null : Number(replaceReturnAmount))
+      : null;
     if (amountValue !== null && (!Number.isFinite(amountValue) || amountValue < 0)) {
       showToast('Enter a valid due amount', 'error');
+      return;
+    }
+
+    const shouldSendServiceCharge = replacementMode === 'same';
+    const serviceChargeValue = shouldSendServiceCharge
+      ? (replaceServiceCharge === '' ? null : Number(replaceServiceCharge))
+      : null;
+    if (serviceChargeValue !== null && (!Number.isFinite(serviceChargeValue) || serviceChargeValue < 0)) {
+      showToast('Enter a valid service charge amount', 'error');
       return;
     }
 
@@ -617,12 +635,15 @@ const DefectReports = () => {
       const finalPayload = {
         ...payload,
         ...(amountValue !== null ? { return_amount: amountValue } : {}),
+        ...(serviceChargeValue !== null ? { service_charge: serviceChargeValue } : {}),
         ...(uploadedBillUrl ? { payment_bill_url: uploadedBillUrl } : {}),
       };
       await defectsAPI.replaceDevice(selectedDefect._id || selectedDefect.id, finalPayload);
       const deviceLabel =
         replacementMode === 'existing' && selectedReplacementDevice
           ? `${selectedReplacementDevice.device_id} (${selectedReplacementDevice.serial_number})`
+          : replacementMode === 'same'
+          ? `Serviced same device (${selectedDefect?.defective_device?.device_id || selectedDefect?.device_serial || 'N/A'})`
           : replacementMode === 'new'
           ? `New ${cleanedNewDeviceData.device_type} (${cleanedNewDeviceData.serial_number})`
           : 'selected device';
@@ -633,6 +654,7 @@ const DefectReports = () => {
       setShowReplaceModal(false);
       setReplaceData({ notes: '' });
       setReplaceReturnAmount('');
+      setReplaceServiceCharge('');
       setReplacePaymentBillFile(null);
       resetAndLoadDefects();
     } catch (error) {
@@ -1164,6 +1186,7 @@ const DefectReports = () => {
           setShowReplaceModal(false);
           setReplaceData({ notes: '' });
           setReplaceReturnAmount('');
+          setReplaceServiceCharge('');
           setReplacePaymentBillFile(null);
           setSelectedReplacementDevice(null);
           setSelectedReplacementDeviceId('');
@@ -1201,7 +1224,7 @@ const DefectReports = () => {
                 setSelectedReplacementDevice(null);
                 setSelectedReplacementDeviceId('');
               }}
-              className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
                 replacementMode === 'existing'
                   ? 'bg-blue-600 text-white border-blue-600'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
@@ -1212,11 +1235,26 @@ const DefectReports = () => {
             <button
               type="button"
               onClick={() => {
+                setReplacementMode('same');
+                setSelectedReplacementDevice(null);
+                setSelectedReplacementDeviceId('');
+              }}
+              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                replacementMode === 'same'
+                  ? 'bg-amber-600 text-white border-amber-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              Use Same Device (Serviced)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 setReplacementMode('new');
                 setSelectedReplacementDevice(null);
                 setSelectedReplacementDeviceId('');
               }}
-              className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
                 replacementMode === 'new'
                   ? 'bg-emerald-600 text-white border-emerald-600'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
@@ -1324,6 +1362,13 @@ const DefectReports = () => {
                   </div>
                 </div>
               )}
+            </div>
+          ) : replacementMode === 'same' ? (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+              <p className="text-xs text-amber-600 uppercase tracking-wider font-semibold mb-2">🛠️ Serviced Same Device</p>
+              <p className="text-sm text-amber-900">
+                This keeps the same defective device and marks it as serviced after operator confirmation.
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1457,18 +1502,37 @@ const DefectReports = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Due Amount (Optional)</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={replaceReturnAmount}
-                onChange={(e) => setReplaceReturnAmount(e.target.value)}
-                placeholder="Set amount user should pay"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {replacementMode !== 'same' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Due Amount (Optional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={replaceReturnAmount}
+                  onChange={(e) => setReplaceReturnAmount(e.target.value)}
+                  placeholder="Set amount user should pay"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
+            {replacementMode === 'same' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Service Charge (Optional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={replaceServiceCharge}
+                  onChange={(e) => setReplaceServiceCharge(e.target.value)}
+                  placeholder="Set service charge amount"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Upload Bill (Optional)</label>
               <input

@@ -134,6 +134,7 @@ class ReplaceDeviceRequest(BaseModel):
     register_device: Optional[ReplacementDeviceCreate] = None
     notes: Optional[str] = None
     return_amount: Optional[float] = Field(default=None, ge=0)
+    service_charge: Optional[float] = Field(default=None, ge=0)
     payment_bill_url: Optional[str] = None
 
 
@@ -162,6 +163,7 @@ class DefectResponse(BaseModel):
     resolved_by_name: Optional[str] = None
     resolved_at: Optional[datetime] = None
     return_amount: Optional[float] = 0
+    service_charge: Optional[float] = 0
     payment_bill_url: Optional[str] = None
     payment_confirmed: bool = False
     payment_confirmed_at: Optional[datetime] = None
