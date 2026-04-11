@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import DataTable from '../components/ui/DataTable';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -44,10 +44,36 @@ const normalizeDeviceType = (deviceType) => {
 
 const isSetupBoxType = (deviceType) => normalizeDeviceType(deviceType) === 'SB';
 
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
+const TABLE_SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'report_id', label: 'Report ID' },
+  { value: 'device_serial', label: 'Device Serial' },
+  { value: 'description', label: 'Description' },
+  { value: 'defect_type', label: 'Defect Type' },
+  { value: 'severity', label: 'Severity' },
+  { value: 'status', label: 'Status' },
+  { value: 'reported_by_name', label: 'Reported By' },
+  { value: 'device_type', label: 'Device Type' },
+];
+
+const DEFECT_STATUS_CARD_CONFIG = ['reported', 'under_review', 'resolved'];
+
 const DefectReports = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const [defectReports, setDefectReports] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [statusCounts, setStatusCounts] = useState({
+    reported: 0,
+    under_review: 0,
+    resolved: 0,
+    critical: 0,
+  });
+  const [tablePage, setTablePage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedDefect, setSelectedDefect] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -65,6 +91,9 @@ const DefectReports = () => {
   const [replacementDeviceType, setReplacementDeviceType] = useState('all');
   const [selectedReplacementDeviceId, setSelectedReplacementDeviceId] = useState('');
   const [selectedReplacementDevice, setSelectedReplacementDevice] = useState(null);
+  const [tableSearchBy, setTableSearchBy] = useState('all');
+  const [tableSearchInput, setTableSearchInput] = useState('');
+  const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
   const [newDeviceData, setNewDeviceData] = useState({
     device_type: 'ONT',
     model: '',
@@ -76,23 +105,139 @@ const DefectReports = () => {
     nuid: ''
   });
   const [confirmPaymentNotes, setConfirmPaymentNotes] = useState('');
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const queryVersionRef = useRef(0);
 
-  const fetchDefects = async () => {
+  const buildDefectParams = (windowPage) => {
+    const params = {
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+    };
+    if (appliedTableSearch.query) {
+      params.search = appliedTableSearch.query;
+      if (appliedTableSearch.by && appliedTableSearch.by !== 'all') {
+        params.search_by = appliedTableSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const buildDefectCountParams = (extraParams = {}) => {
+    const params = {
+      page: 1,
+      page_size: 1,
+      ...extraParams,
+    };
+    if (appliedTableSearch.query) {
+      params.search = appliedTableSearch.query;
+      if (appliedTableSearch.by && appliedTableSearch.by !== 'all') {
+        params.search_by = appliedTableSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const loadDefectStatusCounts = async () => {
+    const queryVersion = queryVersionRef.current;
     try {
-      setLoading(true);
-      const response = await defectsAPI.getDefects();
-      setDefectReports(response.data || []);
+      const statusResponses = await Promise.all(
+        DEFECT_STATUS_CARD_CONFIG.map((status) => defectsAPI.getDefects(buildDefectCountParams({ status })))
+      );
+      const criticalResponse = await defectsAPI.getDefects(buildDefectCountParams({ severity: 'critical' }));
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const nextCounts = DEFECT_STATUS_CARD_CONFIG.reduce((acc, status, index) => {
+        const total = Number(statusResponses[index]?.pagination?.total || 0);
+        acc[status] = Number.isFinite(total) ? total : 0;
+        return acc;
+      }, {});
+      const criticalTotal = Number(criticalResponse?.pagination?.total || 0);
+      nextCounts.critical = Number.isFinite(criticalTotal) ? criticalTotal : 0;
+
+      setStatusCounts(nextCounts);
+    } catch (error) {
+      console.error('Failed to load defect status counts:', error);
+    }
+  };
+
+  const loadDefectWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = queryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setLoading(true);
+
+    try {
+      const response = await defectsAPI.getDefects(buildDefectParams(windowPage));
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || rows.length);
+
+      setDefectReports((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || row?._id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setTableTotalCount(total);
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
     } catch (error) {
       console.error('Failed to fetch defects:', error);
       showToast('Failed to load defect reports', 'error');
     } finally {
-      setLoading(false);
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setLoading(false);
+    }
+  };
+
+  const resetAndLoadDefects = async () => {
+    queryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setDefectReports([]);
+    setTableTotalCount(0);
+    setStatusCounts({ reported: 0, under_review: 0, resolved: 0, critical: 0 });
+    setTablePage(1);
+    await Promise.all([
+      loadDefectWindow(1, { reset: true, withLoading: true }),
+      loadDefectStatusCounts(),
+    ]);
+  };
+
+  const handleSearchSubmit = () => {
+    const nextQuery = tableSearchInput.trim();
+    setAppliedTableSearch({ by: tableSearchBy, query: nextQuery });
+  };
+
+  const handleSearchReset = () => {
+    setTableSearchBy('all');
+    setTableSearchInput('');
+    setAppliedTableSearch({ by: 'all', query: '' });
+  };
+
+  const handleTablePageChange = async (nextPage) => {
+    setTablePage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(defectReports.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && defectReports.length < tableTotalCount;
+    if (needsNextWindow) {
+      await loadDefectWindow(loadedWindowRef.current + 1, { withLoading: true });
     }
   };
 
   useEffect(() => {
-    fetchDefects();
-  }, []);
+    resetAndLoadDefects();
+  }, [appliedTableSearch]);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [replacementFilter]);
 
   const canReport = ['operator', 'sub_distributor', 'cluster'].includes(user?.role);
   const canReview = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
@@ -110,7 +255,7 @@ const DefectReports = () => {
       showToast('Defect forwarded to manager/admin successfully', 'success');
       setShowReviewModal(false);
       setReviewComment('');
-      fetchDefects();
+      resetAndLoadDefects();
     } catch (error) {
       showToast(error.message || 'Failed to forward defect', 'error');
     }
@@ -328,7 +473,7 @@ const DefectReports = () => {
                     try {
                       await defectsAPI.confirmReplacementReceipt(row._id || row.id);
                       showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
-                      fetchDefects();
+                      resetAndLoadDefects();
                     } catch (error) {
                       showToast(error.message || 'Failed to confirm replacement receipt', 'error');
                     }
@@ -378,7 +523,7 @@ const DefectReports = () => {
       );
       setShowReviewModal(false);
       setReviewComment('');
-      fetchDefects();
+      resetAndLoadDefects();
     } catch (error) {
       showToast(error.message || 'Failed to update defect report', 'error');
     }
@@ -389,7 +534,7 @@ const DefectReports = () => {
       await defectsAPI.confirmPayment(defectRow._id || defectRow.id, confirmPaymentNotes);
       showToast('Payment confirmed successfully', 'success');
       setConfirmPaymentNotes('');
-      fetchDefects();
+      resetAndLoadDefects();
       if (selectedDefect && String(selectedDefect._id || selectedDefect.id) === String(defectRow._id || defectRow.id)) {
         setShowModal(false);
       }
@@ -489,7 +634,7 @@ const DefectReports = () => {
       setReplaceData({ notes: '' });
       setReplaceReturnAmount('');
       setReplacePaymentBillFile(null);
-      fetchDefects();
+      resetAndLoadDefects();
     } catch (error) {
       showToast(error.message || 'Failed to replace device', 'error');
     }
@@ -527,7 +672,7 @@ const DefectReports = () => {
                       try {
                         await defectsAPI.confirmReplacementReceipt(d._id || d.id);
                         showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
-                        fetchDefects();
+                        resetAndLoadDefects();
                       } catch (error) {
                         showToast(error.message || 'Failed to confirm replacement receipt', 'error');
                       }
@@ -635,33 +780,72 @@ const DefectReports = () => {
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Total</p>
-          <p className="text-2xl font-bold text-gray-800">{defectReports.length}</p>
+          <p className="text-2xl font-bold text-gray-800">{tableTotalCount || defectReports.length}</p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Open</p>
           <p className="text-2xl font-bold text-yellow-600">
-            {defectReports.filter(d => d.status === 'reported').length}
+            {statusCounts.reported}
           </p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Under Review</p>
           <p className="text-2xl font-bold text-blue-600">
-            {defectReports.filter(d => d.status === 'under_review').length}
+            {statusCounts.under_review}
           </p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Resolved</p>
           <p className="text-2xl font-bold text-green-600">
-            {defectReports.filter(d => d.status === 'resolved').length}
+            {statusCounts.resolved}
           </p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Critical</p>
           <p className="text-2xl font-bold text-red-600">
-            {defectReports.filter(d => d.severity === 'critical').length}
+            {statusCounts.critical}
           </p>
         </Card>
       </div>
+
+      <Card className="!p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Search className="w-4 h-4 text-blue-600" />
+          <h3 className="text-sm font-semibold text-gray-800">Search Defects</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="md:col-span-3">
+            <select
+              value={tableSearchBy}
+              onChange={(e) => setTableSearchBy(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              {TABLE_SEARCH_BY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-6">
+            <input
+              type="text"
+              value={tableSearchInput}
+              onChange={(e) => setTableSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSearchSubmit();
+                }
+              }}
+              placeholder="Enter pattern to search..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+          <div className="md:col-span-3 flex gap-2">
+            <Button onClick={handleSearchSubmit} className="w-full">Search</Button>
+            <Button variant="secondary" onClick={handleSearchReset}>Reset</Button>
+          </div>
+        </div>
+      </Card>
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -672,6 +856,11 @@ const DefectReports = () => {
         <DataTable
           columns={columns}
           data={filteredDefectReports}
+          searchable={false}
+          pageSize={TABLE_PAGE_SIZE}
+          totalItems={replacementFilter === 'all' ? (tableTotalCount || filteredDefectReports.length) : filteredDefectReports.length}
+          currentPage={tablePage}
+          onPageChange={handleTablePageChange}
           actions={
             <div className="flex items-center gap-2">
               <button
@@ -754,7 +943,7 @@ const DefectReports = () => {
                     await defectsAPI.confirmReplacementReceipt(selectedDefect._id || selectedDefect.id);
                     showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
                     setShowModal(false);
-                    fetchDefects();
+                    resetAndLoadDefects();
                   } catch (error) {
                     showToast(error.message || 'Failed to confirm replacement receipt', 'error');
                   }

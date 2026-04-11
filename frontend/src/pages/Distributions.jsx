@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import DataTable from '../components/ui/DataTable';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -8,7 +8,22 @@ import Card from '../components/ui/Card';
 import { distributionsAPI, devicesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { Plus, Eye, Truck, CheckCircle, Loader2, AlertTriangle, PackageCheck, XCircle, Layers3, Factory, Upload, Download } from 'lucide-react';
+import { Plus, Eye, Truck, CheckCircle, Loader2, AlertTriangle, PackageCheck, XCircle, Layers3, Factory, Upload, Download, Search } from 'lucide-react';
+
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
+const SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'distribution_id', label: 'Distribution ID' },
+  { value: 'from_user_name', label: 'From' },
+  { value: 'to_user_name', label: 'To' },
+  { value: 'status', label: 'Status' },
+  { value: 'approved_by_name', label: 'Approved By' },
+];
+
+const STATUS_CARD_CONFIG = ['pending_receipt', 'approved', 'disputed'];
 
 const toDisplayLabel = (value, fallback = 'Unknown') => {
   if (!value) return fallback;
@@ -33,6 +48,10 @@ const Distributions = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const [distributions, setDistributions] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [statusCounts, setStatusCounts] = useState({ pending_receipt: 0, approved: 0, disputed: 0 });
+  const [pendingReceiptForMeCount, setPendingReceiptForMeCount] = useState(0);
+  const [tablePage, setTablePage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedDist, setSelectedDist] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -41,17 +60,154 @@ const Distributions = () => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptSubmitting, setReceiptSubmitting] = useState(false);
+  const [searchBy, setSearchBy] = useState('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState({ by: 'all', query: '' });
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const queryVersionRef = useRef(0);
 
-  const fetchDistributions = async () => {
+  const buildDistributionParams = (windowPage) => {
+    const params = {
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+    };
+    if (appliedSearch.query) {
+      params.search = appliedSearch.query;
+      if (appliedSearch.by && appliedSearch.by !== 'all') {
+        params.search_by = appliedSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const buildDistributionCountParams = (status) => {
+    const params = {
+      page: 1,
+      page_size: 1,
+      status,
+    };
+    if (appliedSearch.query) {
+      params.search = appliedSearch.query;
+      if (appliedSearch.by && appliedSearch.by !== 'all') {
+        params.search_by = appliedSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const loadDistributionStatusCounts = async () => {
+    const queryVersion = queryVersionRef.current;
     try {
-      setLoading(true);
-      const response = await distributionsAPI.getDistributions();
-      setDistributions(response.data || []);
+      const responses = await Promise.all(
+        STATUS_CARD_CONFIG.map((status) => distributionsAPI.getDistributions(buildDistributionCountParams(status)))
+      );
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const nextCounts = STATUS_CARD_CONFIG.reduce((acc, status, index) => {
+        const total = Number(responses[index]?.pagination?.total || 0);
+        acc[status] = Number.isFinite(total) ? total : 0;
+        return acc;
+      }, {});
+
+      setStatusCounts(nextCounts);
+    } catch (error) {
+      console.error('Failed to load distribution status counts:', error);
+    }
+  };
+
+  const loadPendingReceiptForMeCount = async () => {
+    const queryVersion = queryVersionRef.current;
+    const currentUserId = String(user?.id || '');
+    if (!currentUserId) {
+      setPendingReceiptForMeCount(0);
+      return;
+    }
+
+    try {
+      const response = await distributionsAPI.getDistributions({
+        page: 1,
+        page_size: 1,
+        status: 'pending_receipt',
+        to_user_id: currentUserId,
+      });
+      if (queryVersion !== queryVersionRef.current) return;
+      const total = Number(response?.pagination?.total || 0);
+      setPendingReceiptForMeCount(Number.isFinite(total) ? total : 0);
+    } catch (error) {
+      console.error('Failed to load recipient pending receipt count:', error);
+    }
+  };
+
+  const loadDistributionWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = queryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setLoading(true);
+
+    try {
+      const response = await distributionsAPI.getDistributions(buildDistributionParams(windowPage));
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || rows.length);
+
+      setDistributions((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || row?._id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setTableTotalCount(total);
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
     } catch (error) {
       console.error('Failed to fetch distributions:', error);
       showToast('Failed to load distributions', 'error');
     } finally {
-      setLoading(false);
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setLoading(false);
+    }
+  };
+
+  const resetAndLoadDistributions = async () => {
+    queryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setDistributions([]);
+    setTableTotalCount(0);
+    setStatusCounts({ pending_receipt: 0, approved: 0, disputed: 0 });
+    setPendingReceiptForMeCount(0);
+    setTablePage(1);
+    await Promise.all([
+      loadDistributionWindow(1, { reset: true, withLoading: true }),
+      loadDistributionStatusCounts(),
+      loadPendingReceiptForMeCount(),
+    ]);
+  };
+
+  const handleSearchSubmit = () => {
+    const nextQuery = searchInput.trim();
+    setAppliedSearch({ by: searchBy, query: nextQuery });
+  };
+
+  const handleSearchReset = () => {
+    setSearchBy('all');
+    setSearchInput('');
+    setAppliedSearch({ by: 'all', query: '' });
+  };
+
+  const handleTablePageChange = async (nextPage) => {
+    setTablePage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(distributions.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && distributions.length < tableTotalCount;
+    if (needsNextWindow) {
+      await loadDistributionWindow(loadedWindowRef.current + 1, { withLoading: true });
     }
   };
 
@@ -101,18 +257,14 @@ const Distributions = () => {
   };
 
   useEffect(() => {
-    fetchDistributions();
-  }, []);
+    resetAndLoadDistributions();
+  }, [appliedSearch, user?.id]);
 
   useEffect(() => {
     if (showModal && selectedDist) {
       fetchDistributionDevices(selectedDist.device_ids);
     }
   }, [showModal, selectedDist]);
-
-  const pendingReceiptForMe = distributions.filter(
-    d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)
-  );
 
   const handleReceiptConfirm = async (received) => {
     if (!selectedDist) return;
@@ -129,7 +281,7 @@ const Distributions = () => {
       setShowModal(false);
       setReceiptNotes('');
       setSelectedDist(null);
-      fetchDistributions();
+      resetAndLoadDistributions();
     } catch (error) {
       showToast(error.message || 'Failed to submit confirmation', 'error');
     } finally {
@@ -181,7 +333,7 @@ const Distributions = () => {
         'PDIC confirmed devices are physically back with sender'
       );
       showToast('Disputed return confirmed and devices unlocked for redistribution', 'success');
-      fetchDistributions();
+      resetAndLoadDistributions();
     } catch (error) {
       showToast(error.message || 'Failed to confirm disputed return', 'error');
     }
@@ -300,12 +452,12 @@ const Distributions = () => {
       </div>
 
       {/* Pending Receipt Alert Banner */}
-      {pendingReceiptForMe.length > 0 && (
+      {pendingReceiptForMeCount > 0 && (
         <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-300 rounded-lg">
           <AlertTriangle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="font-semibold text-orange-800">
-              You have {pendingReceiptForMe.length} distribution{pendingReceiptForMe.length > 1 ? 's' : ''} awaiting your receipt confirmation
+              You have {pendingReceiptForMeCount} distribution{pendingReceiptForMeCount > 1 ? 's' : ''} awaiting your receipt confirmation
             </p>
             <p className="text-sm text-orange-700 mt-1">
               You cannot redistribute these devices until you confirm receipt. Click the orange{' '}
@@ -322,7 +474,7 @@ const Distributions = () => {
             </div>
             <div>
               <p className="text-sm text-gray-500">Total</p>
-              <p className="text-xl font-bold text-gray-800">{distributions.length}</p>
+              <p className="text-xl font-bold text-gray-800">{tableTotalCount || distributions.length}</p>
             </div>
           </div>
         </Card>
@@ -334,7 +486,7 @@ const Distributions = () => {
             <div>
               <p className="text-sm text-gray-500">Awaiting Receipt</p>
               <p className="text-xl font-bold text-orange-600">
-                {distributions.filter(d => d.status === 'pending_receipt').length}
+                {statusCounts.pending_receipt}
               </p>
             </div>
           </div>
@@ -347,7 +499,7 @@ const Distributions = () => {
             <div>
               <p className="text-sm text-gray-500">Confirmed</p>
               <p className="text-xl font-bold text-green-600">
-                {distributions.filter(d => d.status === 'approved').length}
+                {statusCounts.approved}
               </p>
             </div>
           </div>
@@ -360,12 +512,51 @@ const Distributions = () => {
             <div>
               <p className="text-sm text-gray-500">Disputed</p>
               <p className="text-xl font-bold text-red-600">
-                {distributions.filter(d => d.status === 'disputed').length}
+                {statusCounts.disputed}
               </p>
             </div>
           </div>
         </Card>
       </div>
+
+      <Card className="!p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Search className="w-4 h-4 text-blue-600" />
+          <h3 className="text-sm font-semibold text-gray-800">Search Distributions</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="md:col-span-3">
+            <select
+              value={searchBy}
+              onChange={(e) => setSearchBy(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              {SEARCH_BY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-6">
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSearchSubmit();
+                }
+              }}
+              placeholder="Enter pattern to search..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+          <div className="md:col-span-3 flex gap-2">
+            <Button onClick={handleSearchSubmit} className="w-full">Search</Button>
+            <Button variant="secondary" onClick={handleSearchReset}>Reset</Button>
+          </div>
+        </div>
+      </Card>
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -376,6 +567,11 @@ const Distributions = () => {
         <DataTable
           columns={columns}
           data={distributions}
+          searchable={false}
+          pageSize={TABLE_PAGE_SIZE}
+          totalItems={tableTotalCount || distributions.length}
+          currentPage={tablePage}
+          onPageChange={handleTablePageChange}
           onRowClick={(row) => {
             setSelectedDist(row);
             setShowModal(true);

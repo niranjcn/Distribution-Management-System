@@ -26,6 +26,7 @@ async def get_returns(
     return_status: Optional[str] = Query(None, alias="status"),
     reason: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all return requests with pagination and filters"""
@@ -37,6 +38,7 @@ async def get_returns(
             reason=reason,
             requested_by=None,
             search=search,
+            search_by=search_by,
             current_user=current_user,
         )
 

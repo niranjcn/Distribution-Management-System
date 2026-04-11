@@ -17,6 +17,7 @@ import {
   Trash2,
   Upload,
   Download,
+  Search,
 } from 'lucide-react';
 
 const initialItemForm = {
@@ -48,6 +49,41 @@ const toTypeLabel = (value) => {
 
 const defaultPOLine = { item_inventory_id: '' };
 
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
+const ITEM_SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'inventory_id', label: 'Inventory ID' },
+  { value: 'item_id', label: 'Item ID' },
+  { value: 'name', label: 'Name' },
+  { value: 'serial_number', label: 'Serial Number' },
+  { value: 'mac_id', label: 'MAC ID' },
+  { value: 'identifier', label: 'Identifier' },
+  { value: 'device_type', label: 'Type' },
+  { value: 'supplier_name', label: 'Supplier' },
+];
+
+const PO_SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'po_id', label: 'PO ID' },
+  { value: 'supplier_name', label: 'Name' },
+  { value: 'ordered_by_name', label: 'Placed By' },
+  { value: 'status', label: 'Status' },
+];
+
+const MOVEMENT_SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'movement_id', label: 'Movement ID' },
+  { value: 'item_sku', label: 'Item ID' },
+  { value: 'item_name', label: 'Item' },
+  { value: 'movement_type', label: 'Type' },
+  { value: 'reference_type', label: 'Reference' },
+  { value: 'reference_id', label: 'Ref ID' },
+  { value: 'notes', label: 'Details' },
+];
+
 const ExternalInventory = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
@@ -57,8 +93,14 @@ const ExternalInventory = () => {
 
   const [dashboard, setDashboard] = useState(null);
   const [items, setItems] = useState([]);
+  const [itemsTotalCount, setItemsTotalCount] = useState(0);
+  const [itemsPage, setItemsPage] = useState(1);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [purchaseOrdersTotalCount, setPurchaseOrdersTotalCount] = useState(0);
+  const [purchaseOrdersPage, setPurchaseOrdersPage] = useState(1);
   const [movements, setMovements] = useState([]);
+  const [movementsTotalCount, setMovementsTotalCount] = useState(0);
+  const [movementsPage, setMovementsPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -75,6 +117,24 @@ const ExternalInventory = () => {
 
   const [itemForm, setItemForm] = useState(initialItemForm);
   const [editingInventoryId, setEditingInventoryId] = useState('');
+  const [itemSearchBy, setItemSearchBy] = useState('all');
+  const [itemSearchInput, setItemSearchInput] = useState('');
+  const [appliedItemSearch, setAppliedItemSearch] = useState({ by: 'all', query: '' });
+  const [poSearchBy, setPoSearchBy] = useState('all');
+  const [poSearchInput, setPoSearchInput] = useState('');
+  const [appliedPOSearch, setAppliedPOSearch] = useState({ by: 'all', query: '' });
+  const [movementSearchBy, setMovementSearchBy] = useState('all');
+  const [movementSearchInput, setMovementSearchInput] = useState('');
+  const [appliedMovementSearch, setAppliedMovementSearch] = useState({ by: 'all', query: '' });
+  const itemsLoadedWindowRef = useRef(0);
+  const itemsLoadingWindowsRef = useRef(new Set());
+  const itemsQueryVersionRef = useRef(0);
+  const poLoadedWindowRef = useRef(0);
+  const poLoadingWindowsRef = useRef(new Set());
+  const poQueryVersionRef = useRef(0);
+  const movementsLoadedWindowRef = useRef(0);
+  const movementsLoadingWindowsRef = useRef(new Set());
+  const movementsQueryVersionRef = useRef(0);
 
   const normalizedItemType = normalizeType(itemForm.device_type);
   const isSetTopBoxType = ['settopbox', 'setupbox', 'sb', 'stb'].includes(normalizedItemType);
@@ -133,31 +193,182 @@ const ExternalInventory = () => {
       maximumFractionDigits: 2,
     }).format(Number(value || 0));
 
+  const buildItemsParams = (windowPage) => {
+    const params = {
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+      status: 'active',
+    };
+    if (appliedItemSearch.query) {
+      params.search = appliedItemSearch.query;
+      if (appliedItemSearch.by && appliedItemSearch.by !== 'all') {
+        params.search_by = appliedItemSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const buildPOParams = (windowPage) => {
+    const params = {
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+    };
+    if (appliedPOSearch.query) {
+      params.search = appliedPOSearch.query;
+      if (appliedPOSearch.by && appliedPOSearch.by !== 'all') {
+        params.search_by = appliedPOSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const buildMovementParams = (windowPage) => {
+    const params = {
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+    };
+    if (appliedMovementSearch.query) {
+      params.search = appliedMovementSearch.query;
+      if (appliedMovementSearch.by && appliedMovementSearch.by !== 'all') {
+        params.search_by = appliedMovementSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const loadItemsWindow = async (windowPage, { reset = false } = {}) => {
+    if (itemsLoadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = itemsQueryVersionRef.current;
+    itemsLoadingWindowsRef.current.add(windowPage);
+    try {
+      const response = await externalInventoryAPI.getItems(buildItemsParams(windowPage));
+      if (queryVersion !== itemsQueryVersionRef.current) return;
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || rows.length);
+      setItems((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.inventory_id || row?.id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setItemsTotalCount(total);
+      itemsLoadedWindowRef.current = Math.max(itemsLoadedWindowRef.current, windowPage);
+    } finally {
+      itemsLoadingWindowsRef.current.delete(windowPage);
+    }
+  };
+
+  const loadPOWindow = async (windowPage, { reset = false } = {}) => {
+    if (poLoadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = poQueryVersionRef.current;
+    poLoadingWindowsRef.current.add(windowPage);
+    try {
+      const response = await externalInventoryAPI.getPurchaseOrders(buildPOParams(windowPage));
+      if (queryVersion !== poQueryVersionRef.current) return;
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || rows.length);
+      setPurchaseOrders((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.po_id || row?.id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setPurchaseOrdersTotalCount(total);
+      poLoadedWindowRef.current = Math.max(poLoadedWindowRef.current, windowPage);
+    } finally {
+      poLoadingWindowsRef.current.delete(windowPage);
+    }
+  };
+
+  const loadMovementWindow = async (windowPage, { reset = false } = {}) => {
+    if (!canManage) return;
+    if (movementsLoadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = movementsQueryVersionRef.current;
+    movementsLoadingWindowsRef.current.add(windowPage);
+    try {
+      const response = await externalInventoryAPI.getMovements(buildMovementParams(windowPage));
+      if (queryVersion !== movementsQueryVersionRef.current) return;
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || rows.length);
+      setMovements((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.movement_id || row?.id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setMovementsTotalCount(total);
+      movementsLoadedWindowRef.current = Math.max(movementsLoadedWindowRef.current, windowPage);
+    } finally {
+      movementsLoadingWindowsRef.current.delete(windowPage);
+    }
+  };
+
+  const resetAndLoadItems = async () => {
+    itemsQueryVersionRef.current += 1;
+    itemsLoadedWindowRef.current = 0;
+    itemsLoadingWindowsRef.current = new Set();
+    setItems([]);
+    setItemsTotalCount(0);
+    setItemsPage(1);
+    await loadItemsWindow(1, { reset: true });
+  };
+
+  const resetAndLoadPOs = async () => {
+    poQueryVersionRef.current += 1;
+    poLoadedWindowRef.current = 0;
+    poLoadingWindowsRef.current = new Set();
+    setPurchaseOrders([]);
+    setPurchaseOrdersTotalCount(0);
+    setPurchaseOrdersPage(1);
+    await loadPOWindow(1, { reset: true });
+  };
+
+  const resetAndLoadMovements = async () => {
+    if (!canManage) {
+      setMovements([]);
+      setMovementsTotalCount(0);
+      setMovementsPage(1);
+      return;
+    }
+    movementsQueryVersionRef.current += 1;
+    movementsLoadedWindowRef.current = 0;
+    movementsLoadingWindowsRef.current = new Set();
+    setMovements([]);
+    setMovementsTotalCount(0);
+    setMovementsPage(1);
+    await loadMovementWindow(1, { reset: true });
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
       if (canManage) {
-        const [dashboardRes, itemsRes, poRes, movementRes] = await Promise.all([
+        const [dashboardRes] = await Promise.all([
           externalInventoryAPI.getDashboard(),
-          externalInventoryAPI.getItems({ page_size: 100, status: 'active' }),
-          externalInventoryAPI.getPurchaseOrders({ page_size: 100 }),
-          externalInventoryAPI.getMovements({ page_size: 100 }),
         ]);
-
         setDashboard(dashboardRes.data || null);
-        setItems(itemsRes.data || []);
-        setPurchaseOrders(poRes.data || []);
-        setMovements(movementRes.data || []);
       } else {
-        const [itemsRes, poRes] = await Promise.all([
-          externalInventoryAPI.getItems({ page_size: 100, status: 'active' }),
-          externalInventoryAPI.getPurchaseOrders({ page_size: 100 }),
-        ]);
         setDashboard(null);
-        setItems(itemsRes.data || []);
-        setPurchaseOrders(poRes.data || []);
-        setMovements([]);
       }
+      await Promise.all([resetAndLoadItems(), resetAndLoadPOs(), resetAndLoadMovements()]);
     } catch (error) {
       showToast(error.message || 'Failed to load external inventory data', 'error');
     } finally {
@@ -167,7 +378,7 @@ const ExternalInventory = () => {
 
   useEffect(() => {
     loadData();
-  }, [canManage]);
+  }, [canManage, appliedItemSearch, appliedPOSearch, appliedMovementSearch]);
 
   const resetPoForm = () => {
     setPoForm({
@@ -737,6 +948,63 @@ const ExternalInventory = () => {
     },
   ];
 
+  const handleItemSearchSubmit = () => {
+    setAppliedItemSearch({ by: itemSearchBy, query: itemSearchInput.trim() });
+  };
+
+  const handleItemSearchReset = () => {
+    setItemSearchBy('all');
+    setItemSearchInput('');
+    setAppliedItemSearch({ by: 'all', query: '' });
+  };
+
+  const handlePOSearchSubmit = () => {
+    setAppliedPOSearch({ by: poSearchBy, query: poSearchInput.trim() });
+  };
+
+  const handlePOSearchReset = () => {
+    setPOSearchBy('all');
+    setPOSearchInput('');
+    setAppliedPOSearch({ by: 'all', query: '' });
+  };
+
+  const handleMovementSearchSubmit = () => {
+    setAppliedMovementSearch({ by: movementSearchBy, query: movementSearchInput.trim() });
+  };
+
+  const handleMovementSearchReset = () => {
+    setMovementSearchBy('all');
+    setMovementSearchInput('');
+    setAppliedMovementSearch({ by: 'all', query: '' });
+  };
+
+  const handleItemsPageChange = async (nextPage) => {
+    setItemsPage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(items.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && items.length < itemsTotalCount;
+    if (needsNextWindow) {
+      await loadItemsWindow(itemsLoadedWindowRef.current + 1);
+    }
+  };
+
+  const handlePOPageChange = async (nextPage) => {
+    setPurchaseOrdersPage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(purchaseOrders.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && purchaseOrders.length < purchaseOrdersTotalCount;
+    if (needsNextWindow) {
+      await loadPOWindow(poLoadedWindowRef.current + 1);
+    }
+  };
+
+  const handleMovementsPageChange = async (nextPage) => {
+    setMovementsPage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(movements.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && movements.length < movementsTotalCount;
+    if (needsNextWindow) {
+      await loadMovementWindow(movementsLoadedWindowRef.current + 1);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="external-inventory-hero relative overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-lime-50 p-6">
@@ -809,11 +1077,55 @@ const ExternalInventory = () => {
         </Card>
       )}
 
+      <Card className="!p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Search className="w-4 h-4 text-blue-600" />
+          <h3 className="text-sm font-semibold text-gray-800">Search Inventory Items</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="md:col-span-3">
+            <select
+              value={itemSearchBy}
+              onChange={(e) => setItemSearchBy(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              {ITEM_SEARCH_BY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-6">
+            <input
+              type="text"
+              value={itemSearchInput}
+              onChange={(e) => setItemSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleItemSearchSubmit();
+                }
+              }}
+              placeholder="Enter pattern to search..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+          <div className="md:col-span-3 flex gap-2">
+            <Button onClick={handleItemSearchSubmit} className="w-full">Search</Button>
+            <Button variant="secondary" onClick={handleItemSearchReset}>Reset</Button>
+          </div>
+        </div>
+      </Card>
+
       <Card title="Inventory Items" subtitle="Standalone external device inventory" padding={false}>
         <DataTable
           columns={itemColumns}
           data={items}
           loading={loading}
+          searchable={false}
+          pageSize={TABLE_PAGE_SIZE}
+          totalItems={itemsTotalCount || items.length}
+          currentPage={itemsPage}
+          onPageChange={handleItemsPageChange}
           emptyMessage="No external inventory items yet"
           onRowClick={canManage ? (row) => setSelectedItem(row) : undefined}
           actions={canManage ? (
@@ -847,14 +1159,114 @@ const ExternalInventory = () => {
         />
       </Card>
 
+      <Card className="!p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Search className="w-4 h-4 text-blue-600" />
+          <h3 className="text-sm font-semibold text-gray-800">Search Purchase Orders</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="md:col-span-3">
+            <select
+              value={poSearchBy}
+              onChange={(e) => setPOSearchBy(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              {PO_SEARCH_BY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-6">
+            <input
+              type="text"
+              value={poSearchInput}
+              onChange={(e) => setPOSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handlePOSearchSubmit();
+                }
+              }}
+              placeholder="Enter pattern to search..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+          <div className="md:col-span-3 flex gap-2">
+            <Button onClick={handlePOSearchSubmit} className="w-full">Search</Button>
+            <Button variant="secondary" onClick={handlePOSearchReset}>Reset</Button>
+          </div>
+        </div>
+      </Card>
+
       <Card title="Purchase Orders" subtitle="Order and receiving status" padding={false}>
-          <DataTable columns={poColumns} data={purchaseOrders} loading={loading} emptyMessage="No purchase orders yet" />
+          <DataTable
+            columns={poColumns}
+            data={purchaseOrders}
+            loading={loading}
+            searchable={false}
+            pageSize={TABLE_PAGE_SIZE}
+            totalItems={purchaseOrdersTotalCount || purchaseOrders.length}
+            currentPage={purchaseOrdersPage}
+            onPageChange={handlePOPageChange}
+            emptyMessage="No purchase orders yet"
+          />
       </Card>
 
       {canManage && (
-        <Card title="Stock Movements" subtitle="Latest material flow" padding={false}>
-          <DataTable columns={movementColumns} data={movements} loading={loading} emptyMessage="No stock movements yet" />
-        </Card>
+        <>
+          <Card className="!p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Search className="w-4 h-4 text-blue-600" />
+              <h3 className="text-sm font-semibold text-gray-800">Search Stock Movements</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+              <div className="md:col-span-3">
+                <select
+                  value={movementSearchBy}
+                  onChange={(e) => setMovementSearchBy(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  {MOVEMENT_SEARCH_BY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-6">
+                <input
+                  type="text"
+                  value={movementSearchInput}
+                  onChange={(e) => setMovementSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleMovementSearchSubmit();
+                    }
+                  }}
+                  placeholder="Enter pattern to search..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </div>
+              <div className="md:col-span-3 flex gap-2">
+                <Button onClick={handleMovementSearchSubmit} className="w-full">Search</Button>
+                <Button variant="secondary" onClick={handleMovementSearchReset}>Reset</Button>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="Stock Movements" subtitle="Latest material flow" padding={false}>
+            <DataTable
+              columns={movementColumns}
+              data={movements}
+              loading={loading}
+              searchable={false}
+              pageSize={TABLE_PAGE_SIZE}
+              totalItems={movementsTotalCount || movements.length}
+              currentPage={movementsPage}
+              onPageChange={handleMovementsPageChange}
+              emptyMessage="No stock movements yet"
+            />
+          </Card>
+        </>
       )}
 
       {canManage && <Modal

@@ -15,6 +15,7 @@ async def get_returns(
     reason: Optional[str] = None,
     requested_by: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = None,
     current_user: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Get all return requests with pagination and filters"""
@@ -83,9 +84,21 @@ async def get_returns(
             conditions.append("r.requested_by = ?")
             params.append(requested_by)
         if search:
-            conditions.append("(r.return_id LIKE ? OR r.device_serial LIKE ?)")
             like = f"%{search}%"
-            params.extend([like, like])
+            search_field_map = {
+                "return_id": "r.return_id",
+                "device_serial": "r.device_serial",
+                "requested_by_name": "r.requested_by_name",
+                "reason": "r.reason",
+                "status": "r.status",
+            }
+            normalized_search_by = str(search_by or "all").strip().lower()
+            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
+                params.append(like)
+            else:
+                conditions.append("(r.return_id LIKE ? OR r.device_serial LIKE ? OR r.requested_by_name LIKE ? OR r.reason LIKE ? OR r.status LIKE ?)")
+                params.extend([like, like, like, like, like])
 
         where = " AND ".join(conditions)
 

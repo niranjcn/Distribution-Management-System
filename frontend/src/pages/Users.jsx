@@ -10,7 +10,7 @@ import { usersAPI, adminUpdateCredentials } from '../services/api';
 import { 
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
   Building, MapPin, Calendar, Users as UsersIcon, Loader2, Lock,
-  Network, ChevronDown, ChevronRight, Filter, X, EyeOff
+  Network, ChevronDown, ChevronRight, Filter, X, EyeOff, Search
 } from 'lucide-react';
 
 // Roles each creator can assign
@@ -30,6 +30,17 @@ const ROLE_LABELS = {
   cluster: 'Cluster',
   operator: 'Operator',
 };
+
+const USER_SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'name', label: 'Name' },
+  { value: 'email', label: 'Email' },
+  { value: 'role', label: 'Role' },
+  { value: 'status', label: 'Status' },
+  { value: 'phone', label: 'Phone' },
+  { value: 'department', label: 'Department' },
+  { value: 'location', label: 'Location' },
+];
 
 const getRoleColor = (role) => {
   switch (role) {
@@ -105,6 +116,9 @@ const Users = () => {
 
   // Cascading filter state (admin/manager table view only)
   const [filters, setFilters] = useState({ role: '', subDistManagerId: '', subDistId: '', clusterId: '' });
+  const [tableSearchBy, setTableSearchBy] = useState('all');
+  const [tableSearchInput, setTableSearchInput] = useState('');
+  const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
 
   const fetchUsers = async () => {
     try {
@@ -448,6 +462,40 @@ const Users = () => {
     return result;
   }, [visibleUsers, filters, isAdmin, isManager]);
 
+  const searchedFilteredUsers = useMemo(() => {
+    const query = String(appliedTableSearch.query || '').trim().toLowerCase();
+    if (!query) return filteredUsers;
+
+    const searchableFields = {
+      name: (row) => row?.name,
+      email: (row) => row?.email,
+      role: (row) => row?.role,
+      status: (row) => row?.status,
+      phone: (row) => row?.phone,
+      department: (row) => row?.department,
+      location: (row) => row?.location,
+    };
+
+    const searchBy = String(appliedTableSearch.by || 'all');
+    if (searchBy !== 'all' && searchableFields[searchBy]) {
+      return filteredUsers.filter((row) => String(searchableFields[searchBy](row) || '').toLowerCase().includes(query));
+    }
+
+    return filteredUsers.filter((row) => {
+      return Object.values(searchableFields).some((getter) => String(getter(row) || '').toLowerCase().includes(query));
+    });
+  }, [filteredUsers, appliedTableSearch]);
+
+  const handleTableSearchSubmit = () => {
+    setAppliedTableSearch({ by: tableSearchBy, query: tableSearchInput.trim() });
+  };
+
+  const handleTableSearchReset = () => {
+    setTableSearchBy('all');
+    setTableSearchInput('');
+    setAppliedTableSearch({ by: 'all', query: '' });
+  };
+
   // Compute clusterOperators map for sub_distributor hierarchical view
   const clusterOperatorsMap = useMemo(() => {
     const map = {};
@@ -780,6 +828,45 @@ const Users = () => {
             </div>
           )}
 
+          <Card className="!p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Search className="w-4 h-4 text-blue-600" />
+              <h3 className="text-sm font-semibold text-gray-800">Search Users</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+              <div className="md:col-span-3">
+                <select
+                  value={tableSearchBy}
+                  onChange={(e) => setTableSearchBy(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  {USER_SEARCH_BY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-6">
+                <input
+                  type="text"
+                  value={tableSearchInput}
+                  onChange={(e) => setTableSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleTableSearchSubmit();
+                    }
+                  }}
+                  placeholder="Enter pattern to search..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </div>
+              <div className="md:col-span-3 flex gap-2">
+                <Button onClick={handleTableSearchSubmit} className="w-full">Search</Button>
+                <Button variant="secondary" onClick={handleTableSearchReset}>Reset</Button>
+              </div>
+            </div>
+          </Card>
+
           <Card>
             {loading ? (
               <div className="flex items-center justify-center py-12">
@@ -789,9 +876,8 @@ const Users = () => {
             ) : (
               <DataTable
                 columns={columns}
-                data={filteredUsers}
-                searchable
-                searchPlaceholder="Search users..."
+                data={searchedFilteredUsers}
+                searchable={false}
               />
             )}
           </Card>

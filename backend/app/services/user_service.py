@@ -19,6 +19,7 @@ async def get_users(
     role: Optional[str] = None,
     status: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = None,
     parent_id: Optional[str] = None,
     parent_ids_in: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
@@ -39,8 +40,22 @@ async def get_users(
             params.append(status)
         if search:
             search_escaped = escape_like(search)
-            conditions.append("(name LIKE ? ESCAPE '\\\\' OR email LIKE ? ESCAPE '\\\\')")
-            params.extend([f"%{search_escaped}%", f"%{search_escaped}%"])
+            search_like = f"%{search_escaped}%"
+            search_field_map = {
+                "name": "name",
+                "email": "email",
+                "role": "role",
+                "phone": "phone",
+                "department": "department",
+                "location": "location",
+            }
+            normalized_search_by = str(search_by or "all").strip().lower()
+            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ? ESCAPE '\\\\'")
+                params.append(search_like)
+            else:
+                conditions.append("(name LIKE ? ESCAPE '\\\\' OR email LIKE ? ESCAPE '\\\\' OR role LIKE ? ESCAPE '\\\\' OR phone LIKE ? ESCAPE '\\\\' OR department LIKE ? ESCAPE '\\\\' OR location LIKE ? ESCAPE '\\\\')")
+                params.extend([search_like, search_like, search_like, search_like, search_like, search_like])
         if parent_ids_in is not None:
             placeholders = ','.join('?' * len(parent_ids_in))
             conditions.append(f"parent_id IN ({placeholders})")

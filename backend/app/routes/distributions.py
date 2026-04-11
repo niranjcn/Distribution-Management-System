@@ -240,7 +240,9 @@ async def get_distributions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
     status: Optional[str] = None,
+    to_user_id: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all distributions with pagination and filters"""
@@ -249,8 +251,10 @@ async def get_distributions(
             page=page,
             page_size=page_size,
             status=status,
+            to_user_id=to_user_id,
             current_user=current_user,
-            search=search
+            search=search,
+            search_by=search_by,
         )
 
         return {

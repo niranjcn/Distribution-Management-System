@@ -53,6 +53,7 @@ async def get_external_inventory_items(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
     search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     device_type: Optional[str] = Query(None, alias="type"),
     status_filter: Optional[str] = Query(None, alias="status"),
     low_stock_only: bool = False,
@@ -63,6 +64,7 @@ async def get_external_inventory_items(
             page=page,
             page_size=page_size,
             search=search,
+            search_by=search_by,
             device_type=device_type,
             status_filter=status_filter,
             low_stock_only=low_stock_only,
@@ -410,6 +412,7 @@ async def get_external_inventory_purchase_orders(
     page_size: int = Query(20, ge=1),
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     current_user: dict = Depends(require_any_role),
 ):
     try:
@@ -428,6 +431,7 @@ async def get_external_inventory_purchase_orders(
             page_size=page_size,
             status_filter=status_filter,
             search=search,
+            search_by=search_by,
             ordered_by=None if is_management_user else user_id,
         )
         return {
@@ -548,6 +552,7 @@ async def get_external_inventory_movements(
     item_inventory_id: Optional[str] = None,
     movement_type: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     current_user: dict = Depends(require_management),
 ):
     try:
@@ -557,6 +562,7 @@ async def get_external_inventory_movements(
             item_inventory_id=item_inventory_id,
             movement_type=movement_type,
             search=search,
+            search_by=search_by,
         )
         return {
             "success": True,

@@ -15,6 +15,7 @@ from app.database import get_db
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+MANAGEMENT_ROLES = {"super_admin", "md_director", "manager", "pdic_staff"}
 
 
 def _chunks(values: List[str], chunk_size: int) -> Iterable[List[str]]:
@@ -104,28 +105,83 @@ def _validate_upload_signature(filename_lower: str, content: bytes) -> None:
         return
 
 
+def _parse_csv_ids(raw_ids: Optional[str]) -> List[str]:
+    if not raw_ids:
+        return []
+    return [item.strip() for item in str(raw_ids).split(",") if item and item.strip()]
+
+
+async def _get_cluster_ids_for_sub_distributor(sub_distributor_id: str) -> List[str]:
+    normalized_id = str(sub_distributor_id or "").strip()
+    if not normalized_id or not normalized_id.isdigit():
+        return []
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE parent_id = ? AND role = 'cluster'",
+            (int(normalized_id),),
+        )
+        rows = await cursor.fetchall()
+        return [str(row.get("id")) for row in rows if row.get("id") is not None]
+
+
+async def _resolve_management_holder_scope(
+    sub_distributor_id: Optional[str],
+    cluster_id: Optional[str],
+) -> Optional[List[str]]:
+    sub_scope = None
+    cluster_scope = None
+
+    normalized_sub_id = str(sub_distributor_id or "").strip()
+    if normalized_sub_id:
+        sub_scope = {normalized_sub_id}
+        sub_scope.update(await _get_cluster_ids_for_sub_distributor(normalized_sub_id))
+
+    normalized_cluster_id = str(cluster_id or "").strip()
+    if normalized_cluster_id:
+        cluster_scope = {normalized_cluster_id}
+
+    if sub_scope is not None and cluster_scope is not None:
+        resolved = sorted(sub_scope.intersection(cluster_scope))
+        return resolved
+    if sub_scope is not None:
+        return sorted(sub_scope)
+    if cluster_scope is not None:
+        return sorted(cluster_scope)
+    return None
+
+
 @router.get("")
 async def get_devices(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
     status: Optional[str] = None,
     device_type: Optional[str] = None,
+    manufacturer: Optional[str] = None,
     holder_id: Optional[str] = None,
+    holder_ids: Optional[str] = None,
+    search_by: Optional[str] = None,
     search: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """Get all devices with pagination and filters"""
     try:
+        parsed_holder_ids = _parse_csv_ids(holder_ids)
+
         # Filter by holder for non-admin/manager/staff users
-        if current_user["role"] not in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        if current_user["role"] not in MANAGEMENT_ROLES:
             holder_id = current_user["id"]
+            parsed_holder_ids = []
 
         result = await device_service.get_devices(
             page=page,
             page_size=page_size,
             status=status,
             device_type=device_type,
+            manufacturer=manufacturer,
             holder_id=holder_id,
+            holder_ids=parsed_holder_ids,
+            search_by=search_by,
             search=search
         )
 
@@ -211,6 +267,15 @@ async def get_my_device_overview(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1),
     show_all: bool = Query(False),
+    paginate: bool = Query(False),
+    scope: str = Query("all"),
+    status: Optional[str] = None,
+    device_type: Optional[str] = None,
+    manufacturer: Optional[str] = None,
+    sub_distributor_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    search_by: Optional[str] = None,
+    search: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """Get comprehensive device overview: devices in hand + under hierarchy + distribution stats.
@@ -220,14 +285,25 @@ async def get_my_device_overview(
     - operator: only their held devices"""
     try:
         role = current_user["role"]
-        if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        if role in MANAGEMENT_ROLES:
             effective_page_size = 1_000_000 if show_all else min(page_size, 1000)
-            result = await device_service.get_devices(page=page, page_size=effective_page_size)
+            holder_scope = await _resolve_management_holder_scope(sub_distributor_id, cluster_id)
+            result = await device_service.get_devices(
+                page=page,
+                page_size=effective_page_size,
+                status=status,
+                device_type=device_type,
+                manufacturer=manufacturer,
+                holder_ids=holder_scope,
+                search_by=search_by,
+                search=search,
+            )
             all_devices = result["data"]
             stats = await device_service.get_device_stats()
             insights = await device_service.get_management_insights()
             pagination = result.get("pagination", {})
             total_count = int(pagination.get("total", stats.get("total", 0) or 0))
+            has_next = (not show_all) and ((page * effective_page_size) < total_count)
             return {
                 "success": True,
                 "data": {
@@ -240,7 +316,7 @@ async def get_my_device_overview(
                         "show_all": show_all,
                         "loaded_count": len(all_devices),
                         "total_count": total_count,
-                        "has_next": bool(pagination.get("has_next", False)),
+                        "has_next": has_next,
                     },
                     "insights": insights,
                     "stats": {
@@ -260,7 +336,102 @@ async def get_my_device_overview(
                 user_id=current_user["id"],
                 user_role=role
             )
-            chain_devices = overview.get("all_under_me") or []
+            scope_normalized = str(scope or "all").strip().lower()
+            if scope_normalized == "mine":
+                scoped_devices = overview.get("held_by_me") or []
+            elif scope_normalized == "hierarchy":
+                scoped_devices = overview.get("under_subordinates") or []
+            else:
+                scoped_devices = overview.get("all_under_me") or []
+            chain_devices = scoped_devices
+
+            # Track Devices uses paginate=true to avoid loading the full chain in one payload.
+            if paginate:
+                filtered_devices = chain_devices
+                if status:
+                    filtered_devices = [d for d in filtered_devices if d.get("status") == status]
+                if device_type:
+                    filtered_devices = [d for d in filtered_devices if d.get("device_type") == device_type]
+                if manufacturer:
+                    filtered_devices = [
+                        d for d in filtered_devices
+                        if str(d.get("manufacturer") or "").strip() == str(manufacturer).strip()
+                    ]
+
+                if sub_distributor_id:
+                    sub_id = str(sub_distributor_id).strip()
+                    filtered_devices = [
+                        d for d in filtered_devices
+                        if str(d.get("current_holder_id") or "") == sub_id
+                    ]
+
+                if cluster_id:
+                    cluster_filter = str(cluster_id).strip()
+                    filtered_devices = [
+                        d for d in filtered_devices
+                        if str(d.get("current_holder_id") or "") == cluster_filter
+                    ]
+
+                if search:
+                    needle = str(search).strip().lower()
+                    field_alias = {
+                        "nuid": "nuid",
+                        "mac": "mac_address",
+                        "mac_address": "mac_address",
+                        "serial": "serial_number",
+                        "serial_number": "serial_number",
+                        "vendor": "manufacturer",
+                        "manufacturer": "manufacturer",
+                        "type": "device_type",
+                        "device_type": "device_type",
+                        "device_id": "device_id",
+                        "model": "model",
+                    }
+                    selected_field = field_alias.get(str(search_by or "").strip().lower())
+
+                    def _matches(device: Dict[str, Any]) -> bool:
+                        if selected_field:
+                            return needle in str(device.get(selected_field) or "").lower()
+
+                        search_fields = [
+                            "device_id",
+                            "serial_number",
+                            "mac_address",
+                            "model",
+                            "nuid",
+                            "manufacturer",
+                            "device_type",
+                        ]
+                        return any(needle in str(device.get(field) or "").lower() for field in search_fields)
+
+                    filtered_devices = [d for d in filtered_devices if _matches(d)]
+
+                total_count = len(filtered_devices)
+                effective_page_size = total_count if show_all else min(page_size, 1000)
+                start = 0 if show_all else max((page - 1) * effective_page_size, 0)
+                end = total_count if show_all else (start + effective_page_size)
+                page_devices = filtered_devices[start:end]
+                has_next = (not show_all) and (end < total_count)
+
+                overview["held_by_me"] = [
+                    d for d in page_devices
+                    if str(d.get("current_holder_id") or "") == str(current_user["id"])
+                ]
+                overview["under_subordinates"] = [
+                    d for d in page_devices
+                    if str(d.get("current_holder_id") or "") != str(current_user["id"])
+                ]
+                overview["all_under_me"] = page_devices
+                overview["meta"] = {
+                    "page": page,
+                    "page_size": effective_page_size,
+                    "show_all": show_all,
+                    "loaded_count": len(page_devices),
+                    "total_count": total_count,
+                    "has_next": has_next,
+                }
+                return {"success": True, "data": overview}
+
             stats = overview.get("stats") or {}
             total_count = int(stats.get("total_in_chain", len(chain_devices)) or len(chain_devices))
             overview["meta"] = {
@@ -275,6 +446,31 @@ async def get_my_device_overview(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
+@router.get("/management-holder-insights")
+async def get_management_holder_insights(
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] not in MANAGEMENT_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only management can access holder insights"
+        )
+    try:
+        insights = await device_service.get_management_holder_insights()
+        return {
+            "success": True,
+            "data": insights,
+        }
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -88,6 +88,7 @@ async def get_items(
     page: int = 1,
     page_size: int = 20,
     search: Optional[str] = None,
+    search_by: Optional[str] = None,
     device_type: Optional[str] = None,
     status_filter: Optional[str] = None,
     low_stock_only: bool = False,
@@ -98,10 +99,27 @@ async def get_items(
 
         if search:
             like = f"%{search}%"
-            conditions.append(
-                "(item_id LIKE ? OR name LIKE ? OR serial_number LIKE ? OR mac_id LIKE ? OR supplier_name LIKE ? OR location LIKE ?)"
-            )
-            params.extend([like, like, like, like, like, like])
+            search_field_map = {
+                "inventory_id": "inventory_id",
+                "item_id": "item_id",
+                "name": "name",
+                "serial_number": "serial_number",
+                "mac_id": "mac_id",
+                "identifier": "identifier",
+                "identifier_type": "identifier_type",
+                "device_type": "device_type",
+                "supplier_name": "supplier_name",
+                "location": "location",
+            }
+            normalized_search_by = str(search_by or "all").strip().lower()
+            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
+                params.append(like)
+            else:
+                conditions.append(
+                    "(inventory_id LIKE ? OR item_id LIKE ? OR name LIKE ? OR serial_number LIKE ? OR mac_id LIKE ? OR identifier LIKE ? OR identifier_type LIKE ? OR device_type LIKE ? OR supplier_name LIKE ? OR location LIKE ?)"
+                )
+                params.extend([like, like, like, like, like, like, like, like, like, like])
 
         if device_type:
             conditions.append("device_type = ?")
@@ -348,6 +366,7 @@ async def get_purchase_orders(
     page_size: int = 20,
     status_filter: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = None,
     ordered_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     async with get_db() as db:
@@ -360,8 +379,19 @@ async def get_purchase_orders(
 
         if search:
             like = f"%{search}%"
-            conditions.append("(po_id LIKE ? OR supplier_name LIKE ? OR ordered_by_name LIKE ?)")
-            params.extend([like, like, like])
+            search_field_map = {
+                "po_id": "po_id",
+                "supplier_name": "supplier_name",
+                "ordered_by_name": "ordered_by_name",
+                "status": "status",
+            }
+            normalized_search_by = str(search_by or "all").strip().lower()
+            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
+                params.append(like)
+            else:
+                conditions.append("(po_id LIKE ? OR supplier_name LIKE ? OR ordered_by_name LIKE ? OR status LIKE ?)")
+                params.extend([like, like, like, like])
 
         if ordered_by:
             conditions.append("ordered_by = ?")
@@ -779,6 +809,7 @@ async def get_stock_movements(
     item_inventory_id: Optional[str] = None,
     movement_type: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     async with get_db() as db:
         conditions = ["1=1"]
@@ -794,8 +825,22 @@ async def get_stock_movements(
 
         if search:
             like = f"%{search}%"
-            conditions.append("(item_sku LIKE ? OR item_name LIKE ? OR reference_id LIKE ? OR notes LIKE ?)")
-            params.extend([like, like, like, like])
+            search_field_map = {
+                "movement_id": "movement_id",
+                "item_sku": "item_sku",
+                "item_name": "item_name",
+                "movement_type": "movement_type",
+                "reference_type": "reference_type",
+                "reference_id": "reference_id",
+                "notes": "notes",
+            }
+            normalized_search_by = str(search_by or "all").strip().lower()
+            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
+                params.append(like)
+            else:
+                conditions.append("(movement_id LIKE ? OR item_sku LIKE ? OR item_name LIKE ? OR movement_type LIKE ? OR reference_type LIKE ? OR reference_id LIKE ? OR notes LIKE ?)")
+                params.extend([like, like, like, like, like, like, like])
 
         where_clause = " AND ".join(conditions)
 

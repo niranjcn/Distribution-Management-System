@@ -278,6 +278,7 @@ async def get_defects(
     reported_by: Optional[str] = None,
     holder_user_id: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = None,
     visibility_user: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Get all defect reports with pagination and filters"""
@@ -303,9 +304,24 @@ async def get_defects(
             )
             params.extend([str(holder_user_id), str(holder_user_id)])
         if search:
-            conditions.append("(report_id LIKE ? OR device_serial LIKE ? OR description LIKE ?)")
             like = f"%{search}%"
-            params.extend([like, like, like])
+            search_field_map = {
+                "report_id": "report_id",
+                "device_serial": "device_serial",
+                "description": "description",
+                "defect_type": "defect_type",
+                "severity": "severity",
+                "status": "status",
+                "reported_by_name": "reported_by_name",
+                "device_type": "device_type",
+            }
+            normalized_search_by = str(search_by or "all").strip().lower()
+            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
+                params.append(like)
+            else:
+                conditions.append("(report_id LIKE ? OR device_serial LIKE ? OR description LIKE ? OR defect_type LIKE ? OR severity LIKE ? OR status LIKE ? OR reported_by_name LIKE ? OR device_type LIKE ?)")
+                params.extend([like, like, like, like, like, like, like, like])
 
         if visibility_user:
             role = visibility_user.get("role")

@@ -49,7 +49,10 @@ async def get_devices(
     page_size: int = 20,
     status: Optional[str] = None,
     device_type: Optional[str] = None,
+    manufacturer: Optional[str] = None,
     holder_id: Optional[str] = None,
+    holder_ids: Optional[List[str]] = None,
+    search_by: Optional[str] = None,
     search: Optional[str] = None
 ) -> Dict[str, Any]:
     """Get all devices with pagination and filters"""
@@ -63,12 +66,54 @@ async def get_devices(
         if device_type:
             conditions.append("device_type = ?")
             params.append(device_type)
+        if manufacturer:
+            conditions.append("manufacturer = ?")
+            params.append(manufacturer)
         if holder_id:
             conditions.append("current_holder_id = ?")
             params.append(holder_id)
+        if holder_ids:
+            normalized_holder_ids = [str(item).strip() for item in holder_ids if str(item).strip()]
+            if normalized_holder_ids:
+                placeholders = ",".join(["?"] * len(normalized_holder_ids))
+                conditions.append(f"CAST(current_holder_id AS TEXT) IN ({placeholders})")
+                params.extend(normalized_holder_ids)
         if search:
-            conditions.append("(device_id LIKE ? OR serial_number LIKE ? OR mac_address LIKE ? OR model LIKE ?)")
-            params.extend([f"%{search}%"] * 4)
+            pattern = f"%{str(search).strip()}%"
+            search_field_map = {
+                "nuid": "nuid",
+                "mac": "mac_address",
+                "mac_address": "mac_address",
+                "serial": "serial_number",
+                "serial_number": "serial_number",
+                "vendor": "manufacturer",
+                "manufacturer": "manufacturer",
+                "type": "device_type",
+                "device_type": "device_type",
+                "device_id": "device_id",
+                "model": "model",
+            }
+            normalized_search_by = str(search_by or "").strip().lower()
+            selected_column = search_field_map.get(normalized_search_by)
+
+            if selected_column:
+                conditions.append(f"COALESCE(CAST({selected_column} AS TEXT), '') LIKE ?")
+                params.append(pattern)
+            else:
+                conditions.append(
+                    "(" +
+                    " OR ".join([
+                        "COALESCE(CAST(device_id AS TEXT), '') LIKE ?",
+                        "COALESCE(CAST(serial_number AS TEXT), '') LIKE ?",
+                        "COALESCE(CAST(mac_address AS TEXT), '') LIKE ?",
+                        "COALESCE(CAST(model AS TEXT), '') LIKE ?",
+                        "COALESCE(CAST(nuid AS TEXT), '') LIKE ?",
+                        "COALESCE(CAST(manufacturer AS TEXT), '') LIKE ?",
+                        "COALESCE(CAST(device_type AS TEXT), '') LIKE ?",
+                    ]) +
+                    ")"
+                )
+                params.extend([pattern] * 7)
         
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         
@@ -77,7 +122,7 @@ async def get_devices(
         
         offset = (page - 1) * page_size
         cursor = await db.execute(
-            f"SELECT * FROM devices WHERE {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM devices WHERE {where_clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
             params + [page_size, offset]
         )
         rows = await cursor.fetchall()
@@ -878,5 +923,151 @@ async def get_management_insights() -> Dict[str, Any]:
         return {
             "by_type": by_type,
             "by_vendor": by_vendor,
+        }
+
+
+async def get_management_holder_insights() -> Dict[str, Any]:
+    """Get aggregate device totals by hierarchy holder groups for management dashboards.
+    Returns sub-distributor and cluster totals with device-type breakdowns."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """SELECT id, name, role, parent_id
+               FROM users
+               WHERE role IN ('sub_distributor', 'cluster', 'operator')"""
+        )
+        users = rows_to_list(await cursor.fetchall())
+
+        cursor = await db.execute(
+            """SELECT
+                   CAST(current_holder_id AS TEXT) AS holder_id,
+                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
+                   COUNT(*) AS total
+               FROM devices
+               WHERE current_holder_id IS NOT NULL
+               AND TRIM(CAST(current_holder_id AS TEXT)) != ''
+               GROUP BY
+                   CAST(current_holder_id AS TEXT),
+                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')"""
+        )
+        holder_rows = rows_to_list(await cursor.fetchall())
+
+        sub_distributors = [u for u in users if u.get("role") == "sub_distributor"]
+        clusters = [u for u in users if u.get("role") == "cluster"]
+        operators = [u for u in users if u.get("role") == "operator"]
+
+        clusters_by_sub: Dict[str, List[Dict[str, Any]]] = {}
+        for cluster in clusters:
+            parent_key = str(cluster.get("parent_id") or "")
+            if not parent_key:
+                continue
+            if parent_key not in clusters_by_sub:
+                clusters_by_sub[parent_key] = []
+            clusters_by_sub[parent_key].append(cluster)
+
+        operators_by_cluster: Dict[str, List[Dict[str, Any]]] = {}
+        operators_by_sub: Dict[str, List[Dict[str, Any]]] = {}
+        cluster_id_set = {str(cluster.get("id")) for cluster in clusters}
+        for operator in operators:
+            parent_key = str(operator.get("parent_id") or "")
+            if not parent_key:
+                continue
+            if parent_key in cluster_id_set:
+                if parent_key not in operators_by_cluster:
+                    operators_by_cluster[parent_key] = []
+                operators_by_cluster[parent_key].append(operator)
+            else:
+                if parent_key not in operators_by_sub:
+                    operators_by_sub[parent_key] = []
+                operators_by_sub[parent_key].append(operator)
+
+        holder_breakdown: Dict[str, Dict[str, Any]] = {}
+        for row in holder_rows:
+            holder_id = str(row.get("holder_id") or "").strip()
+            if not holder_id:
+                continue
+            device_type = row.get("device_type") or "Unknown"
+            count = int(row.get("total", 0) or 0)
+            if holder_id not in holder_breakdown:
+                holder_breakdown[holder_id] = {"total": 0, "byType": {}}
+            holder_breakdown[holder_id]["total"] += count
+            holder_breakdown[holder_id]["byType"][device_type] = (
+                holder_breakdown[holder_id]["byType"].get(device_type, 0) + count
+            )
+
+        def aggregate_for_holders(holder_ids: List[str]) -> Dict[str, Any]:
+            total = 0
+            by_type: Dict[str, int] = {}
+            for holder_id in holder_ids:
+                payload = holder_breakdown.get(holder_id)
+                if not payload:
+                    continue
+                total += int(payload.get("total", 0) or 0)
+                for device_type, count in payload.get("byType", {}).items():
+                    by_type[device_type] = by_type.get(device_type, 0) + int(count or 0)
+            return {"total": total, "byType": by_type}
+
+        sub_summary = []
+        for sub in sub_distributors:
+            sub_id = str(sub.get("id"))
+            child_clusters = clusters_by_sub.get(sub_id, [])
+            direct_operators = operators_by_sub.get(sub_id, [])
+            holder_ids = [
+                sub_id,
+                *[str(cluster.get("id")) for cluster in child_clusters],
+                *[str(operator.get("id")) for operator in direct_operators],
+                *[
+                    str(operator.get("id"))
+                    for cluster in child_clusters
+                    for operator in operators_by_cluster.get(str(cluster.get("id")), [])
+                ],
+            ]
+            aggregated = aggregate_for_holders(holder_ids)
+            if aggregated["total"] <= 0:
+                continue
+            sub_summary.append(
+                {
+                    "id": sub_id,
+                    "name": sub.get("name") or "Unknown Sub Distribution",
+                    "total": aggregated["total"],
+                    "typeBreakdown": [
+                        {"type": dtype, "count": count}
+                        for dtype, count in sorted(
+                            aggregated["byType"].items(),
+                            key=lambda item: item[1],
+                            reverse=True,
+                        )
+                    ],
+                }
+            )
+        sub_summary.sort(key=lambda item: item["total"], reverse=True)
+
+        cluster_summary = []
+        for cluster in clusters:
+            cluster_id = str(cluster.get("id"))
+            child_operators = operators_by_cluster.get(cluster_id, [])
+            holder_ids = [cluster_id, *[str(operator.get("id")) for operator in child_operators]]
+            aggregated = aggregate_for_holders(holder_ids)
+            if aggregated["total"] <= 0:
+                continue
+            cluster_summary.append(
+                {
+                    "id": cluster_id,
+                    "name": cluster.get("name") or "Unknown Cluster",
+                    "total": aggregated["total"],
+                    "typeBreakdown": [
+                        {"type": dtype, "count": count}
+                        for dtype, count in sorted(
+                            aggregated["byType"].items(),
+                            key=lambda item: item[1],
+                            reverse=True,
+                        )
+                    ],
+                }
+            )
+        cluster_summary.sort(key=lambda item: item["total"], reverse=True)
+
+        return {
+            "sub_distributors": sub_summary,
+            "clusters": cluster_summary,
         }
 

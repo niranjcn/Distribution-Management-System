@@ -188,6 +188,7 @@ async def get_distributions(
     to_user_id: Optional[str] = None,
     user_id: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = None,
     current_user: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Get all distributions with pagination and filters"""
@@ -218,8 +219,21 @@ async def get_distributions(
             conditions.append("(from_user_id = ? OR to_user_id = ?)")
             params.extend([user_id, user_id])
         if search:
-            conditions.append("(distribution_id LIKE ? OR from_user_name LIKE ? OR to_user_name LIKE ?)")
-            params.extend([f"%{search}%"] * 3)
+            like = f"%{search}%"
+            search_field_map = {
+                "distribution_id": "distribution_id",
+                "from_user_name": "from_user_name",
+                "to_user_name": "to_user_name",
+                "status": "status",
+                "approved_by_name": "approved_by_name",
+            }
+            normalized_search_by = str(search_by or "all").strip().lower()
+            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
+                params.append(like)
+            else:
+                conditions.append("(distribution_id LIKE ? OR from_user_name LIKE ? OR to_user_name LIKE ? OR status LIKE ? OR approved_by_name LIKE ?)")
+                params.extend([like, like, like, like, like])
         
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         

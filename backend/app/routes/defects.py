@@ -189,6 +189,7 @@ async def get_defects(
     severity: Optional[str] = None,
     defect_type: Optional[str] = None,
     search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all defect reports with pagination and filters"""
@@ -221,6 +222,7 @@ async def get_defects(
             reported_by=reported_by,
             holder_user_id=holder_user_id,
             search=search,
+            search_by=search_by,
             visibility_user=current_user
         )
 

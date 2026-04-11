@@ -15,11 +15,18 @@ const DataTable = ({
   searchPlaceholder = "Search...",
   getRowClassName,
   exportTableName,
+  totalItems,
+  currentPage: controlledCurrentPage,
+  onPageChange,
 }) => {
   const INITIAL_PROGRESSIVE_PAGES = 50;
   const PROGRESSIVE_STEP_PAGES = 25;
 
-  const [currentPage, setCurrentPage] = useState(1);
+  const [internalCurrentPage, setInternalCurrentPage] = useState(1);
+    const currentPage = typeof controlledCurrentPage === 'number'
+      ? controlledCurrentPage
+      : internalCurrentPage;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [selectedRows, setSelectedRows] = useState([]);
@@ -74,11 +81,25 @@ const DataTable = ({
   });
 
   // Paginate data
-  const totalPages = Math.ceil(sortedData.length / pageSize);
+  const resolvedTotalItems = Number.isFinite(Number(totalItems))
+    ? Number(totalItems)
+    : sortedData.length;
+  const totalPages = Math.max(1, Math.ceil(resolvedTotalItems / pageSize));
+  const loadedPages = Math.max(1, Math.ceil(sortedData.length / pageSize));
   const paginatedData = sortedData.slice(
     (currentPage - 1) * pageSize,
     currentPage * pageSize
   );
+
+  const setPage = (nextPage) => {
+    const bounded = Math.max(1, Math.min(loadedPages, nextPage));
+    if (typeof controlledCurrentPage === 'number') {
+      onPageChange?.(bounded);
+      return;
+    }
+    setInternalCurrentPage(bounded);
+    onPageChange?.(bounded);
+  };
 
   const handleSort = (key) => {
     setSortConfig((prev) => ({
@@ -154,7 +175,7 @@ const DataTable = ({
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
-                setCurrentPage(1);
+                setPage(1);
               }}
               placeholder="Search..."
               className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full sm:w-64"
@@ -332,21 +353,21 @@ const DataTable = ({
       {/* Pagination */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-200">
         <div className="text-sm text-gray-600 text-center sm:text-left">
-          Showing {((currentPage - 1) * pageSize) + 1} to{' '}
-          {Math.min(currentPage * pageSize, sortedData.length)} of{' '}
-          {sortedData.length} entries
+          Showing {resolvedTotalItems === 0 ? 0 : ((currentPage - 1) * pageSize) + 1} to{' '}
+          {Math.min(currentPage * pageSize, resolvedTotalItems)} of{' '}
+          {resolvedTotalItems} entries
         </div>
 
         <div className="flex items-center justify-center gap-1">
           <button
-            onClick={() => setCurrentPage(1)}
+            onClick={() => setPage(1)}
             disabled={currentPage === 1}
             className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hidden sm:block"
           >
             <ChevronsLeft className="w-4 h-4" />
           </button>
           <button
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            onClick={() => setPage(currentPage - 1)}
             disabled={currentPage === 1}
             className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -355,26 +376,26 @@ const DataTable = ({
 
           {/* Mobile: Show current/total */}
           <span className="sm:hidden px-3 py-1 text-sm text-gray-600">
-            {currentPage} / {totalPages || 1}
+            {currentPage} / {loadedPages || 1}
           </span>
 
           {/* Desktop: Show page numbers */}
           <div className="hidden sm:flex items-center gap-1">
-            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+            {Array.from({ length: Math.min(5, loadedPages) }, (_, i) => {
               let pageNum;
-              if (totalPages <= 5) {
+              if (loadedPages <= 5) {
                 pageNum = i + 1;
               } else if (currentPage <= 3) {
                 pageNum = i + 1;
-              } else if (currentPage >= totalPages - 2) {
-                pageNum = totalPages - 4 + i;
+              } else if (currentPage >= loadedPages - 2) {
+                pageNum = loadedPages - 4 + i;
               } else {
                 pageNum = currentPage - 2 + i;
               }
               return (
                 <button
                   key={pageNum}
-                  onClick={() => setCurrentPage(pageNum)}
+                  onClick={() => setPage(pageNum)}
                   className={`w-8 h-8 text-sm font-medium rounded-lg ${
                     currentPage === pageNum
                       ? 'bg-blue-600 text-white'
@@ -388,15 +409,15 @@ const DataTable = ({
           </div>
 
           <button
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-            disabled={currentPage === totalPages || totalPages === 0}
+            onClick={() => setPage(currentPage + 1)}
+            disabled={currentPage === loadedPages || loadedPages === 0}
             className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
           <button
-            onClick={() => setCurrentPage(totalPages)}
-            disabled={currentPage === totalPages || totalPages === 0}
+            onClick={() => setPage(loadedPages)}
+            disabled={currentPage === loadedPages || loadedPages === 0}
             className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hidden sm:block"
           >
             <ChevronsRight className="w-4 h-4" />

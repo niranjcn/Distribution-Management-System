@@ -1,14 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import DataTable from '../components/ui/DataTable';
 import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
-import { devicesAPI, defectsAPI, usersAPI } from '../services/api';
+import { devicesAPI, defectsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { Plus, Eye, Edit, Trash2, Box, Upload, Loader2, Users, Send, ArrowDownToLine, Link2, AlertTriangle, CheckCircle2, Save, Filter, Building2, Network, Factory } from 'lucide-react';
+import { Plus, Eye, Edit, Trash2, Box, Upload, Loader2, Users, Send, ArrowDownToLine, Link2, AlertTriangle, CheckCircle2, Save, Filter, Building2, Network, Factory, Search } from 'lucide-react';
 
 const normalizeDeviceType = (value) => {
   const normalized = String(value || '').trim().toLowerCase().replace(/[-_\s]+/g, '');
@@ -41,6 +41,21 @@ const extractBoxType = (device) => {
   return null;
 };
 
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
+const SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'nuid', label: 'NUID' },
+  { value: 'mac_address', label: 'MAC Address' },
+  { value: 'serial_number', label: 'Serial Number' },
+  { value: 'manufacturer', label: 'Vendor' },
+  { value: 'device_type', label: 'Type' },
+  { value: 'model', label: 'Model' },
+  { value: 'device_id', label: 'Device ID' },
+];
+
 const Devices = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
@@ -49,15 +64,20 @@ const Devices = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [overview, setOverview] = useState(null);
-  const [managementSummaryDevices, setManagementSummaryDevices] = useState([]);
-  const [hierarchyUsers, setHierarchyUsers] = useState([]);
+  const [holderInsights, setHolderInsights] = useState({ sub_distributors: [], clusters: [] });
+  const [tableRows, setTableRows] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [tablePage, setTablePage] = useState(1);
+  const [tableLoading, setTableLoading] = useState(false);
   const [defectsData, setDefectsData] = useState([]);
   const [replacementMap, setReplacementMap] = useState({ replacementIds: new Set(), defectiveIds: new Set(), defectByDeviceId: {} });
   const [loading, setLoading] = useState(true);
-  const [showAllDevices, setShowAllDevices] = useState(false);
   const [deviceMeta, setDeviceMeta] = useState({ loaded_count: 0, total_count: 0, has_next: false, show_all: false });
   const [activeTab, setActiveTab] = useState('all');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [searchBy, setSearchBy] = useState('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState({ by: 'all', query: '' });
   const [tableFilters, setTableFilters] = useState({
     device_type: '',
     manufacturer: '',
@@ -65,6 +85,9 @@ const Devices = () => {
     sub_distributor_id: '',
     cluster_id: '',
   });
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const tableQueryVersionRef = useRef(0);
 
   const deviceTypeOptions = ['ONT', 'ONU', 'Router', 'Switch', 'Modem', 'Access Point', 'SB', 'Other'];
   const bandTypeOptions = [
@@ -88,85 +111,170 @@ const Devices = () => {
 
   const isManagement = ['super_admin', 'md_director', 'manager', 'pdic_staff'].includes(user?.role);
   const hasHierarchy = ['sub_distribution_manager', 'sub_distributor', 'cluster'].includes(user?.role);
+  const isAllDevicesView = isManagement && activeTab === 'all';
   const canRegister = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const isStaff = user?.role === 'pdic_staff';
   const isAdminOrManager = ['super_admin', 'manager'].includes(user?.role);
   const canDeleteDevice = ['super_admin', 'manager'].includes(user?.role);
 
-  useEffect(() => {
-    fetchDevices();
-  }, [showAllDevices]);
+  const queryFingerprint = useMemo(() => {
+    const filterPayload = isAllDevicesView
+      ? tableFilters
+      : {
+          device_type: '',
+          manufacturer: '',
+          status: '',
+          sub_distributor_id: '',
+          cluster_id: '',
+        };
+    return JSON.stringify({
+      scope: hasHierarchy ? activeTab : 'all',
+      filters: filterPayload,
+      search: appliedSearch,
+    });
+  }, [activeTab, appliedSearch, hasHierarchy, isAllDevicesView, tableFilters]);
 
-  const fetchDevices = async () => {
+  const loadOverviewCards = async () => {
+    const response = await devicesAPI.getMyOverview({ page: 1, page_size: 1 });
+    setOverview(response?.data || null);
+  };
+
+  const loadDefectMappings = async () => {
+    const defectsResponse = await defectsAPI.getDefects({ page_size: 100 });
+    const replacementIds = new Set();
+    const defectiveIds = new Set();
+    const defectByDeviceId = {};
+    for (const defect of defectsResponse.data || []) {
+      if (defect.replacement_device_id) {
+        replacementIds.add(String(defect.replacement_device_id));
+        defectiveIds.add(String(defect.device_id));
+        defectByDeviceId[String(defect.replacement_device_id)] = defect;
+        defectByDeviceId[String(defect.device_id)] = defect;
+      } else if (defect.device_id) {
+        defectByDeviceId[String(defect.device_id)] = defect;
+        if (defect.status !== 'resolved') defectiveIds.add(String(defect.device_id));
+      }
+    }
+    setDefectsData(defectsResponse.data || []);
+    setReplacementMap({ replacementIds, defectiveIds, defectByDeviceId });
+  };
+
+  const loadHolderInsights = async () => {
+    if (!isManagement) {
+      setHolderInsights({ sub_distributors: [], clusters: [] });
+      return;
+    }
+    const response = await devicesAPI.getManagementHolderInsights();
+    setHolderInsights(response?.data || { sub_distributors: [], clusters: [] });
+  };
+
+  const buildTableQueryParams = (windowPage) => {
+    const params = {
+      paginate: true,
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+      scope: hasHierarchy ? activeTab : 'all',
+    };
+
+    if (isAllDevicesView) {
+      if (tableFilters.device_type) params.device_type = tableFilters.device_type;
+      if (tableFilters.manufacturer) params.manufacturer = tableFilters.manufacturer;
+      if (tableFilters.status) params.status = tableFilters.status;
+      if (tableFilters.sub_distributor_id) params.sub_distributor_id = tableFilters.sub_distributor_id;
+      if (tableFilters.cluster_id) params.cluster_id = tableFilters.cluster_id;
+    }
+
+    if (appliedSearch.query) {
+      params.search = appliedSearch.query;
+      if (appliedSearch.by && appliedSearch.by !== 'all') {
+        params.search_by = appliedSearch.by;
+      }
+    }
+
+    return params;
+  };
+
+  const loadTableWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = tableQueryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setTableLoading(true);
+
+    try {
+      const response = await devicesAPI.getMyOverview(buildTableQueryParams(windowPage));
+      if (queryVersion !== tableQueryVersionRef.current) {
+        return;
+      }
+      const rows = Array.isArray(response?.data?.all_under_me) ? response.data.all_under_me : [];
+      const meta = response?.data?.meta || {};
+      const totalCount = Number(meta.total_count || rows.length);
+
+      setTableRows((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        setDeviceMeta({
+          loaded_count: unique.length,
+          total_count: totalCount,
+          has_next: unique.length < totalCount,
+          show_all: false,
+        });
+        return unique;
+      });
+
+      setTableTotalCount(totalCount);
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
+    } finally {
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setTableLoading(false);
+    }
+  };
+
+  const resetAndLoadTable = async () => {
+    tableQueryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setTableRows([]);
+    setTableTotalCount(0);
+    setTablePage(1);
+    await loadTableWindow(1, { reset: true, withLoading: true });
+  };
+
+  useEffect(() => {
+    if (!user?.role) return;
+    const run = async () => {
+      try {
+        setLoading(true);
+        await Promise.all([loadOverviewCards(), loadDefectMappings(), loadHolderInsights()]);
+      } catch (error) {
+        console.error('Failed to load overview data:', error);
+        showToast('Failed to load devices', 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+    run();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (!user?.role) return;
+    resetAndLoadTable();
+  }, [user?.role, queryFingerprint]);
+
+  const refreshAllData = async () => {
     try {
       setLoading(true);
-      const requests = [
-        devicesAPI.getMyOverview({ page: 1, page_size: 100, show_all: showAllDevices }),
-        defectsAPI.getDefects({ page_size: 100 })
-      ];
-
-      if (isManagement && !showAllDevices) {
-        requests.push(devicesAPI.getMyOverview({ page: 1, page_size: 100, show_all: true }));
-      }
-
-      const [overviewResponse, defectsResponse, summaryResponse] = await Promise.all(requests);
-
-      setOverview(overviewResponse.data);
-      if (isManagement) {
-        if (showAllDevices) {
-          setManagementSummaryDevices(overviewResponse?.data?.all_under_me || []);
-        } else {
-          setManagementSummaryDevices(summaryResponse?.data?.all_under_me || overviewResponse?.data?.all_under_me || []);
-        }
-      } else {
-        setManagementSummaryDevices([]);
-      }
-      setDeviceMeta(overviewResponse?.data?.meta || { loaded_count: 0, total_count: 0, has_next: false, show_all: showAllDevices });
-
-      try {
-        const [subsResponse, clustersResponse, operatorsResponse] = await Promise.all([
-          usersAPI.getUsers({ role: 'sub_distributor', page_size: 100 }),
-          usersAPI.getUsers({ role: 'cluster', page_size: 100 }),
-          usersAPI.getUsers({ role: 'operator', page_size: 100 }),
-        ]);
-
-        const collect = (response) => {
-          const payload = response?.data;
-          if (Array.isArray(payload)) return payload;
-          if (Array.isArray(payload?.users)) return payload.users;
-          return [];
-        };
-
-        const usersMap = new Map();
-        [...collect(subsResponse), ...collect(clustersResponse), ...collect(operatorsResponse)].forEach((u) => {
-          const key = String(u.id || u._id);
-          if (!key) return;
-          usersMap.set(key, u);
-        });
-        setHierarchyUsers(Array.from(usersMap.values()));
-      } catch {
-        setHierarchyUsers([]);
-      }
-
-      const replacementIds = new Set();
-      const defectiveIds = new Set();
-      const defectByDeviceId = {};
-      for (const defect of defectsResponse.data || []) {
-        if (defect.replacement_device_id) {
-          replacementIds.add(String(defect.replacement_device_id));
-          defectiveIds.add(String(defect.device_id));
-          defectByDeviceId[String(defect.replacement_device_id)] = defect;
-          defectByDeviceId[String(defect.device_id)] = defect;
-        } else if (defect.device_id) {
-          defectByDeviceId[String(defect.device_id)] = defect;
-          if (defect.status !== 'resolved') defectiveIds.add(String(defect.device_id));
-        }
-      }
-      setDefectsData(defectsResponse.data || []);
-      setReplacementMap({ replacementIds, defectiveIds, defectByDeviceId });
+      await Promise.all([loadOverviewCards(), loadDefectMappings(), loadHolderInsights()]);
+      await resetAndLoadTable();
     } catch (error) {
-      console.error('Failed to fetch devices:', error);
-      showToast('Failed to load devices', 'error');
+      console.error('Failed to refresh devices:', error);
+      showToast('Failed to refresh devices', 'error');
     } finally {
       setLoading(false);
     }
@@ -186,79 +294,22 @@ const Devices = () => {
     return device.status;
   };
 
-  const displayedDevices = (() => {
-    if (!overview) return [];
+  const displayedDevices = useMemo(() => {
     const getCategoryRank = (device) => {
       const id = String(device.id);
-      if (replacementMap.replacementIds.has(id)) return 1;  // replacement — show second
-      if (replacementMap.defectiveIds.has(id) || device.status === 'defective') return 2; // defective — show last
-      return 0; // normal — show first
+      if (replacementMap.replacementIds.has(id)) return 1;
+      if (replacementMap.defectiveIds.has(id) || device.status === 'defective') return 2;
+      return 0;
     };
 
-    const sortByReplacementGroups = (devices) => [...devices].sort((a, b) => {
+    return [...tableRows].sort((a, b) => {
       const rankDiff = getCategoryRank(a) - getCategoryRank(b);
       if (rankDiff !== 0) return rankDiff;
       const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
       const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
       return bTime - aTime;
     });
-
-    if (!hasHierarchy) return sortByReplacementGroups(overview.all_under_me || []);
-    switch (activeTab) {
-      case 'mine': return sortByReplacementGroups(overview.held_by_me || []);
-      case 'hierarchy': return sortByReplacementGroups(overview.under_subordinates || []);
-      default: return sortByReplacementGroups(overview.all_under_me || []);
-    }
-  })();
-
-  const managementAllDevices = useMemo(() => {
-    if (!isManagement) return [];
-    return managementSummaryDevices;
-  }, [isManagement, managementSummaryDevices]);
-
-  const isAllDevicesView = isManagement && activeTab === 'all';
-
-  const hierarchyIndex = useMemo(() => {
-    const subDistributors = hierarchyUsers.filter((u) => u.role === 'sub_distributor');
-    const clusters = hierarchyUsers.filter((u) => u.role === 'cluster');
-    const operators = hierarchyUsers.filter((u) => u.role === 'operator');
-
-    const clustersBySub = {};
-    for (const cluster of clusters) {
-      const parentKey = String(cluster.parent_id || '');
-      if (!parentKey) continue;
-      if (!clustersBySub[parentKey]) clustersBySub[parentKey] = [];
-      clustersBySub[parentKey].push(cluster);
-    }
-
-    const operatorsByCluster = {};
-    const operatorsBySub = {};
-    for (const operator of operators) {
-      const parentKey = String(operator.parent_id || '');
-      if (!parentKey) continue;
-      const parentCluster = clusters.find((cluster) => String(cluster.id) === parentKey);
-      if (parentCluster) {
-        if (!operatorsByCluster[parentKey]) operatorsByCluster[parentKey] = [];
-        operatorsByCluster[parentKey].push(operator);
-      } else {
-        if (!operatorsBySub[parentKey]) operatorsBySub[parentKey] = [];
-        operatorsBySub[parentKey].push(operator);
-      }
-    }
-
-    return { subDistributors, clusters, operators, clustersBySub, operatorsByCluster, operatorsBySub };
-  }, [hierarchyUsers]);
-
-  const devicesByHolder = useMemo(() => {
-    const grouped = {};
-    for (const device of managementAllDevices) {
-      const holderId = String(device.current_holder_id || '');
-      if (!holderId) continue;
-      if (!grouped[holderId]) grouped[holderId] = [];
-      grouped[holderId].push(device);
-    }
-    return grouped;
-  }, [managementAllDevices]);
+  }, [replacementMap, tableRows]);
 
   const byTypeSummary = useMemo(() => {
     const aggregated = overview?.insights?.by_type;
@@ -271,93 +322,16 @@ const Devices = () => {
         .sort((a, b) => b.total - a.total);
     }
 
-    const grouped = {};
-    for (const device of managementAllDevices) {
-      const key = device.device_type || 'Unknown';
-      grouped[key] = (grouped[key] || 0) + 1;
-    }
-    return Object.entries(grouped)
-      .map(([type, total]) => ({ type, total }))
-      .sort((a, b) => b.total - a.total);
-  }, [managementAllDevices]);
+    return [];
+  }, [overview?.insights?.by_type]);
 
   const subDistributorSummary = useMemo(() => {
-    return hierarchyIndex.subDistributors
-      .map((sub) => {
-        const subId = String(sub.id);
-        const childClusters = hierarchyIndex.clustersBySub[subId] || [];
-        const directOperators = hierarchyIndex.operatorsBySub[subId] || [];
-        const holderIds = [
-          subId,
-          ...childClusters.map((cluster) => String(cluster.id)),
-          ...directOperators.map((operator) => String(operator.id)),
-          ...childClusters.flatMap((cluster) =>
-            (hierarchyIndex.operatorsByCluster[String(cluster.id)] || []).map((operator) => String(operator.id))
-          ),
-        ];
-
-        const byType = {};
-        let total = 0;
-        for (const holderId of holderIds) {
-          for (const device of (devicesByHolder[holderId] || [])) {
-            total += 1;
-            const type = device.device_type || 'Unknown';
-            byType[type] = (byType[type] || 0) + 1;
-          }
-        }
-
-        return {
-          id: subId,
-          name: sub.name || 'Unknown Sub Distribution',
-          total,
-          byType,
-          holderIds,
-        };
-      })
-      .filter((item) => item.total > 0)
-      .map((item) => ({
-        ...item,
-        typeBreakdown: Object.entries(item.byType)
-          .map(([type, count]) => ({ type, count }))
-          .sort((a, b) => b.count - a.count),
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [devicesByHolder, hierarchyIndex]);
+    return Array.isArray(holderInsights?.sub_distributors) ? holderInsights.sub_distributors : [];
+  }, [holderInsights?.sub_distributors]);
 
   const clusterSummary = useMemo(() => {
-    return hierarchyIndex.clusters
-      .map((cluster) => {
-        const clusterId = String(cluster.id);
-        const childOperators = hierarchyIndex.operatorsByCluster[clusterId] || [];
-        const holderIds = [clusterId, ...childOperators.map((operator) => String(operator.id))];
-
-        const byType = {};
-        let total = 0;
-        for (const holderId of holderIds) {
-          for (const device of (devicesByHolder[holderId] || [])) {
-            total += 1;
-            const type = device.device_type || 'Unknown';
-            byType[type] = (byType[type] || 0) + 1;
-          }
-        }
-
-        return {
-          id: clusterId,
-          name: cluster.name || 'Unknown Cluster',
-          total,
-          byType,
-          holderIds,
-        };
-      })
-      .filter((item) => item.total > 0)
-      .map((item) => ({
-        ...item,
-        typeBreakdown: Object.entries(item.byType)
-          .map(([type, count]) => ({ type, count }))
-          .sort((a, b) => b.count - a.count),
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [devicesByHolder, hierarchyIndex]);
+    return Array.isArray(holderInsights?.clusters) ? holderInsights.clusters : [];
+  }, [holderInsights?.clusters]);
 
   const manufacturerSummary = useMemo(() => {
     const aggregated = overview?.insights?.by_vendor;
@@ -374,59 +348,51 @@ const Devices = () => {
         .sort((a, b) => b.total - a.total);
     }
 
-    const grouped = {};
-    for (const device of managementAllDevices) {
-      const key = (device.manufacturer || 'Unknown').trim() || 'Unknown';
-      if (!grouped[key]) {
-        grouped[key] = {
-          manufacturer: key,
-          total: 0,
-          byType: {},
-        };
-      }
-      grouped[key].total += 1;
-      const type = device.device_type || 'Unknown';
-      grouped[key].byType[type] = (grouped[key].byType[type] || 0) + 1;
-    }
-
-    return Object.values(grouped)
-      .map((item) => ({
-        ...item,
-        distinctTypes: Object.keys(item.byType).length,
-        typeBreakdown: Object.entries(item.byType)
-          .map(([type, count]) => ({ type, count }))
-          .sort((a, b) => b.count - a.count),
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [managementAllDevices]);
+    return [];
+  }, [overview?.insights?.by_vendor]);
 
   const filterOptions = useMemo(() => {
-    const deviceTypes = [...new Set(managementAllDevices.map((d) => d.device_type).filter(Boolean))].sort();
-    const manufacturers = [...new Set(managementAllDevices.map((d) => (d.manufacturer || '').trim()).filter(Boolean))].sort();
+    const byType = Array.isArray(overview?.insights?.by_type) ? overview.insights.by_type : [];
+    const byVendor = Array.isArray(overview?.insights?.by_vendor) ? overview.insights.by_vendor : [];
+    const deviceTypes = [...new Set(byType.map((entry) => entry?.type).filter(Boolean))].sort();
+    const manufacturers = [...new Set(byVendor.map((entry) => entry?.manufacturer).filter(Boolean))].sort();
     const subDistributors = subDistributorSummary.map((item) => ({ id: item.id, name: item.name }));
     const clusters = clusterSummary.map((item) => ({ id: item.id, name: item.name }));
 
     return { deviceTypes, manufacturers, subDistributors, clusters };
-  }, [managementAllDevices, subDistributorSummary, clusterSummary]);
+  }, [clusterSummary, overview?.insights?.by_type, overview?.insights?.by_vendor, subDistributorSummary]);
 
-  const tableFilteredDevices = useMemo(() => {
-    if (!isAllDevicesView) return displayedDevices;
-    const selectedSub = subDistributorSummary.find((item) => item.id === tableFilters.sub_distributor_id);
-    const selectedCluster = clusterSummary.find((item) => item.id === tableFilters.cluster_id);
-    const subHolderSet = selectedSub ? new Set(selectedSub.holderIds) : null;
-    const clusterHolderSet = selectedCluster ? new Set(selectedCluster.holderIds) : null;
+  const tableData = displayedDevices;
 
-    return displayedDevices.filter((device) => {
-      if (tableFilters.device_type && device.device_type !== tableFilters.device_type) return false;
-      if (tableFilters.manufacturer && (device.manufacturer || '').trim() !== tableFilters.manufacturer) return false;
-      if (tableFilters.status && device.status !== tableFilters.status) return false;
-      if (subHolderSet && !subHolderSet.has(String(device.current_holder_id || ''))) return false;
-      if (clusterHolderSet && !clusterHolderSet.has(String(device.current_holder_id || ''))) return false;
-      return true;
-    });
-  }, [displayedDevices, isAllDevicesView, tableFilters, subDistributorSummary, clusterSummary]);
+  const handleSearchSubmit = () => {
+    const nextQuery = String(searchInput || '').trim();
+    setAppliedSearch({ by: searchBy, query: nextQuery });
+  };
 
-  const tableData = isAllDevicesView ? tableFilteredDevices : displayedDevices;
+  const handleSearchReset = () => {
+    setSearchBy('all');
+    setSearchInput('');
+    setAppliedSearch({ by: 'all', query: '' });
+  };
+
+  const handleTablePageChange = (nextPage) => {
+    setTablePage(nextPage);
+    const requiredWindow = Math.ceil(nextPage / TABLE_WINDOW_PAGES);
+    const loadedPageCount = Math.max(1, Math.ceil((tableRows.length || 0) / TABLE_PAGE_SIZE));
+    const totalPageCount = Math.max(1, Math.ceil((tableTotalCount || 0) / TABLE_PAGE_SIZE));
+    const totalWindows = Math.ceil((tableTotalCount || 0) / TABLE_WINDOW_SIZE);
+
+    if (requiredWindow > loadedWindowRef.current) {
+      loadTableWindow(requiredWindow, { reset: false, withLoading: false });
+    }
+
+    if (nextPage >= loadedPageCount && loadedPageCount < totalPageCount) {
+      const nextWindow = loadedWindowRef.current + 1;
+      if (nextWindow <= totalWindows && nextWindow > loadedWindowRef.current) {
+        loadTableWindow(nextWindow, { reset: false, withLoading: false });
+      }
+    }
+  };
 
   const getRowClassName = (row) => {
     const id = String(row.id);
@@ -521,7 +487,7 @@ const Devices = () => {
         showToast('Device updated successfully.', 'success');
       }
       setShowEditModal(false);
-      fetchDevices();
+      await refreshAllData();
     } catch (error) {
       showToast(error.message || 'Failed to update device', 'error');
     } finally {
@@ -632,7 +598,7 @@ const Devices = () => {
       showToast(`Device ${selectedDevice.mac_address} deleted successfully`, 'success');
       setShowDeleteModal(false);
       setSelectedDevice(null);
-      fetchDevices();
+      await refreshAllData();
     } catch (error) {
       showToast('Failed to delete device', 'error');
     }
@@ -986,30 +952,61 @@ const Devices = () => {
             )}
 
             <p className="text-xs text-gray-500 mt-3">
-              Table result count: {tableData.length} | Loaded: {deviceMeta.loaded_count || tableData.length} / Total: {deviceMeta.total_count || overviewStats.total || tableData.length}
+              Loaded: {deviceMeta.loaded_count || tableData.length} / Total: {deviceMeta.total_count || overviewStats.total || tableData.length}
             </p>
-
-            {isManagement && !showAllDevices && (
-              <div className="mt-3">
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowAllDevices(true)}
-                >
-                  Show All Devices
-                </Button>
-              </div>
-            )}
           </Card>
         </>
       )}
 
-      {loading ? (
+      {loading || (tableLoading && tableData.length === 0) ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
           <span className="ml-3 text-gray-500">Loading devices...</span>
         </div>
       ) : (
         <>
+          <Card className="!p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Search className="w-4 h-4 text-blue-600" />
+              <h3 className="text-sm font-semibold text-gray-800">Search Devices</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+              <div className="md:col-span-3">
+                <select
+                  value={searchBy}
+                  onChange={(e) => setSearchBy(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  {SEARCH_BY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-6">
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSearchSubmit();
+                    }
+                  }}
+                  placeholder="Enter pattern to search..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </div>
+              <div className="md:col-span-3 flex gap-2">
+                <Button onClick={handleSearchSubmit} className="w-full">Search</Button>
+                <Button variant="secondary" onClick={handleSearchReset}>Reset</Button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-3">
+              Pattern search runs on the complete dataset (not only loaded rows).
+            </p>
+          </Card>
+
           {/* Color legend */}
           {(replacementMap.replacementIds.size > 0 || replacementMap.defectiveIds.size > 0) && (
             <div className="flex flex-wrap items-center gap-4 px-1 py-2 text-xs text-gray-500">
@@ -1027,6 +1024,11 @@ const Devices = () => {
           <DataTable
             columns={columns}
             data={tableData}
+            searchable={false}
+            pageSize={TABLE_PAGE_SIZE}
+            totalItems={tableTotalCount || tableData.length}
+            currentPage={tablePage}
+            onPageChange={handleTablePageChange}
             selectable={canRegister}
             getRowClassName={getRowClassName}
             onRowClick={(row) => {

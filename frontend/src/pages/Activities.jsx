@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Filter, RefreshCw } from 'lucide-react';
 import Card from '../components/ui/Card';
@@ -7,11 +7,21 @@ import DataTable from '../components/ui/DataTable';
 import { dashboardAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
 const Activities = () => {
   const navigate = useNavigate();
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(true);
+  const [tableLoading, setTableLoading] = useState(false);
   const [activities, setActivities] = useState([]);
+  const [totalActivities, setTotalActivities] = useState(0);
+  const [tablePage, setTablePage] = useState(1);
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const queryVersionRef = useRef(0);
   const [filters, setFilters] = useState({
     actor: '',
     category: 'all',
@@ -19,36 +29,97 @@ const Activities = () => {
     start_date: '',
     end_date: '',
   });
+  const [appliedFilters, setAppliedFilters] = useState({
+    actor: '',
+    category: 'all',
+    search: '',
+    start_date: '',
+    end_date: '',
+  });
 
-  const loadActivities = async (appliedFilters = filters) => {
+  const appliedFilterKey = useMemo(
+    () => JSON.stringify(appliedFilters),
+    [appliedFilters]
+  );
+
+  const buildActivityParams = (windowPage) => {
+    const params = {
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+      category: appliedFilters.category,
+    };
+
+    if (appliedFilters.actor.trim()) params.actor = appliedFilters.actor.trim();
+    if (appliedFilters.search.trim()) params.search = appliedFilters.search.trim();
+    if (appliedFilters.start_date) params.start_date = appliedFilters.start_date;
+    if (appliedFilters.end_date) params.end_date = appliedFilters.end_date;
+
+    return params;
+  };
+
+  const loadActivityWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = queryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setTableLoading(true);
+
     try {
-      setLoading(true);
-      const params = {
-        page: 1,
-        page_size: 100,
-        category: appliedFilters.category,
-      };
+      const response = await dashboardAPI.getActivities(buildActivityParams(windowPage));
+      if (queryVersion !== queryVersionRef.current) {
+        return;
+      }
 
-      if (appliedFilters.actor.trim()) params.actor = appliedFilters.actor.trim();
-      if (appliedFilters.search.trim()) params.search = appliedFilters.search.trim();
-      if (appliedFilters.start_date) params.start_date = appliedFilters.start_date;
-      if (appliedFilters.end_date) params.end_date = appliedFilters.end_date;
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const pagination = response?.pagination || {};
+      const total = Number(pagination.total || rows.length);
 
-      const response = await dashboardAPI.getActivities(params);
-      setActivities(response.data || []);
+      setActivities((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+
+      setTotalActivities(total);
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
     } catch (error) {
       showToast(error.message || 'Failed to load activities', 'error');
     } finally {
-      setLoading(false);
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setTableLoading(false);
     }
   };
 
+  const resetAndLoadActivities = async () => {
+    queryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setActivities([]);
+    setTotalActivities(0);
+    setTablePage(1);
+    await loadActivityWindow(1, { reset: true, withLoading: true });
+  };
+
   useEffect(() => {
-    loadActivities();
-  }, []);
+    const run = async () => {
+      try {
+        setLoading(true);
+        await resetAndLoadActivities();
+      } finally {
+        setLoading(false);
+      }
+    };
+    run();
+  }, [appliedFilterKey]);
 
   const handleApplyFilters = () => {
-    loadActivities(filters);
+    setAppliedFilters(filters);
   };
 
   const handleResetFilters = () => {
@@ -60,7 +131,27 @@ const Activities = () => {
       end_date: '',
     };
     setFilters(reset);
-    loadActivities(reset);
+    setAppliedFilters(reset);
+  };
+
+  const handleTablePageChange = (nextPage) => {
+    setTablePage(nextPage);
+
+    const requiredWindow = Math.ceil(nextPage / TABLE_WINDOW_PAGES);
+    const loadedPageCount = Math.max(1, Math.ceil((activities.length || 0) / TABLE_PAGE_SIZE));
+    const totalPageCount = Math.max(1, Math.ceil((totalActivities || 0) / TABLE_PAGE_SIZE));
+    const totalWindows = Math.ceil((totalActivities || 0) / TABLE_WINDOW_SIZE);
+
+    if (requiredWindow > loadedWindowRef.current) {
+      loadActivityWindow(requiredWindow, { reset: false, withLoading: false });
+    }
+
+    if (nextPage >= loadedPageCount && loadedPageCount < totalPageCount) {
+      const nextWindow = loadedWindowRef.current + 1;
+      if (nextWindow <= totalWindows && nextWindow > loadedWindowRef.current) {
+        loadActivityWindow(nextWindow, { reset: false, withLoading: false });
+      }
+    }
   };
 
   const columns = [
@@ -145,6 +236,10 @@ const Activities = () => {
         <DataTable
           columns={columns}
           data={activities}
+          pageSize={TABLE_PAGE_SIZE}
+          totalItems={totalActivities || activities.length}
+          currentPage={tablePage}
+          onPageChange={handleTablePageChange}
           onRowClick={(row) => {
             if (row?.link) {
               navigate(row.link);
@@ -153,7 +248,7 @@ const Activities = () => {
           exportTableName="activity log"
           searchable={false}
           exportable={true}
-          emptyMessage={loading ? 'Loading activities...' : 'No activities found'}
+          emptyMessage={loading || tableLoading ? 'Loading activities...' : 'No activities found'}
         />
       </Card>
     </div>

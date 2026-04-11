@@ -6,7 +6,15 @@ import StatusBadge from '../components/ui/StatusBadge';
 import { defectsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
-import { Loader2, Receipt, DollarSign } from 'lucide-react';
+import { Loader2, Receipt, DollarSign, Search } from 'lucide-react';
+
+const PENDING_DUES_SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'user_name', label: 'User' },
+  { value: 'user_role', label: 'Role' },
+  { value: 'parent_name', label: 'Parent' },
+  { value: 'total_due', label: 'Total Due' },
+];
 
 const PendingDues = () => {
   const { user } = useAuth();
@@ -16,6 +24,9 @@ const PendingDues = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [details, setDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [tableSearchBy, setTableSearchBy] = useState('all');
+  const [tableSearchInput, setTableSearchInput] = useState('');
+  const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
 
   const role = String(user?.role || '').toLowerCase();
   const isOperatorView = role === 'operator';
@@ -71,6 +82,35 @@ const PendingDues = () => {
     () => users.reduce((acc, row) => acc + Number(row.total_due || 0), 0),
     [users]
   );
+
+  const filteredUsers = useMemo(() => {
+    const query = String(appliedTableSearch.query || '').trim().toLowerCase();
+    if (!query) return users;
+
+    const fieldMap = {
+      user_name: (row) => row?.user_name,
+      user_role: (row) => row?.user_role,
+      parent_name: (row) => row?.parent_name,
+      total_due: (row) => row?.total_due,
+    };
+    const searchBy = String(appliedTableSearch.by || 'all');
+
+    if (searchBy !== 'all' && fieldMap[searchBy]) {
+      return users.filter((row) => String(fieldMap[searchBy](row) || '').toLowerCase().includes(query));
+    }
+
+    return users.filter((row) => Object.values(fieldMap).some((getter) => String(getter(row) || '').toLowerCase().includes(query)));
+  }, [users, appliedTableSearch]);
+
+  const handleSearchSubmit = () => {
+    setAppliedTableSearch({ by: tableSearchBy, query: tableSearchInput.trim() });
+  };
+
+  const handleSearchReset = () => {
+    setTableSearchBy('all');
+    setTableSearchInput('');
+    setAppliedTableSearch({ by: 'all', query: '' });
+  };
 
   const userColumns = [
     { key: 'user_name', label: 'User' },
@@ -129,11 +169,49 @@ const PendingDues = () => {
                   <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading users...
                 </div>
               ) : (
-                <DataTable
-                  columns={userColumns}
-                  data={users}
-                  onRowClick={(row) => loadUserDetails(row.user_id, row)}
-                />
+                <>
+                  <div className="mb-3">
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                      <div className="md:col-span-3">
+                        <select
+                          value={tableSearchBy}
+                          onChange={(e) => setTableSearchBy(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        >
+                          {PENDING_DUES_SEARCH_BY_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="md:col-span-6 relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                          type="text"
+                          value={tableSearchInput}
+                          onChange={(e) => setTableSearchInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSearchSubmit();
+                            }
+                          }}
+                          placeholder="Enter pattern to search..."
+                          className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div className="md:col-span-3 flex gap-2">
+                        <Button onClick={handleSearchSubmit} className="w-full">Search</Button>
+                        <Button variant="secondary" onClick={handleSearchReset}>Reset</Button>
+                      </div>
+                    </div>
+                  </div>
+                  <DataTable
+                    columns={userColumns}
+                    data={filteredUsers}
+                    searchable={false}
+                    onRowClick={(row) => loadUserDetails(row.user_id, row)}
+                  />
+                </>
               )}
             </Card>
           </div>

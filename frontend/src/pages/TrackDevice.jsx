@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -9,7 +9,7 @@ import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { devicesAPI, changeRequestsAPI, defectsAPI, usersAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { Search, Box, MapPin, Clock, User, ChevronRight, Loader2, Edit, Send, RefreshCw, Link2, AlertTriangle, Filter } from 'lucide-react';
+import { Search, Box, MapPin, Clock, User, ChevronRight, ChevronDown, Loader2, Edit, Send, RefreshCw, Link2, AlertTriangle, Filter } from 'lucide-react';
 
 const DEVICE_STATUSES = [
   { value: 'available', label: 'Available' },
@@ -21,6 +21,8 @@ const DEVICE_STATUSES = [
   { value: 'maintenance', label: 'Maintenance' },
 ];
 
+const TRACK_PAGE_SIZE = 30;
+
 const TrackDevice = () => {
   const [searchParams] = useSearchParams();
   const { user: currentUser } = useAuth();
@@ -31,11 +33,16 @@ const TrackDevice = () => {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [allDevices, setAllDevices] = useState([]);
-  const [showAllDevices, setShowAllDevices] = useState(false);
+  const [devicesPage, setDevicesPage] = useState(1);
+  const [hasMoreDevices, setHasMoreDevices] = useState(false);
+  const [totalDevices, setTotalDevices] = useState(0);
+  const [loadingMoreDevices, setLoadingMoreDevices] = useState(false);
   const [hierarchyUsers, setHierarchyUsers] = useState([]);
+  const [overviewInsights, setOverviewInsights] = useState({ by_type: [], by_vendor: [] });
   const [replacementMappings, setReplacementMappings] = useState([]);
   const [devicesLoading, setDevicesLoading] = useState(true);
   const [deviceHistory, setDeviceHistory] = useState([]);
+  const fetchSequenceRef = useRef(0);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [tableFilters, setTableFilters] = useState({
     device_type: '',
@@ -55,10 +62,111 @@ const TrackDevice = () => {
   const [requestReason, setRequestReason] = useState('');
   const [requestSubmitting, setRequestSubmitting] = useState(false);
 
-  // Fetch all devices on mount
+  const isManagement = ['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role);
+
+  const activeFilterKey = useMemo(() => {
+    if (!isManagement) return '';
+    return JSON.stringify(tableFilters);
+  }, [isManagement, tableFilters]);
+
+  const buildOverviewParams = (page) => {
+    const params = {
+      page,
+      page_size: TRACK_PAGE_SIZE,
+      paginate: true,
+    };
+
+    if (isManagement) {
+      if (tableFilters.device_type) params.device_type = tableFilters.device_type;
+      if (tableFilters.manufacturer) params.manufacturer = tableFilters.manufacturer;
+      if (tableFilters.status) params.status = tableFilters.status;
+      if (tableFilters.sub_distributor_id) params.sub_distributor_id = tableFilters.sub_distributor_id;
+      if (tableFilters.cluster_id) params.cluster_id = tableFilters.cluster_id;
+    }
+
+    return params;
+  };
+
+  const fetchAllDevices = async ({ page = 1, append = false } = {}) => {
+    const requestId = ++fetchSequenceRef.current;
+    const isInitialPage = page === 1 && !append;
+
+    try {
+      if (isInitialPage) {
+        setDevicesLoading(true);
+      }
+      if (append) {
+        setLoadingMoreDevices(true);
+      }
+
+      const [overviewResponse, replacementsResponse] = await Promise.all([
+        devicesAPI.getMyOverview(buildOverviewParams(page)),
+        isInitialPage ? defectsAPI.getReplacements({ page_size: 100 }) : Promise.resolve(null),
+      ]);
+
+      if (requestId !== fetchSequenceRef.current) {
+        return;
+      }
+
+      const pageDevices = Array.isArray(overviewResponse?.data?.all_under_me)
+        ? overviewResponse.data.all_under_me
+        : [];
+
+      setAllDevices((previous) => (append ? [...previous, ...pageDevices] : pageDevices));
+
+      const meta = overviewResponse?.data?.meta || {};
+      setDevicesPage(page);
+      setHasMoreDevices(Boolean(meta.has_next));
+      setTotalDevices(Number(meta.total_count || pageDevices.length));
+
+      if (isManagement && overviewResponse?.data?.insights) {
+        setOverviewInsights(overviewResponse.data.insights);
+      }
+
+      if (isInitialPage) {
+        setReplacementMappings(Array.isArray(replacementsResponse?.data) ? replacementsResponse.data : []);
+
+        if (isManagement) {
+          try {
+            const [subsResponse, clustersResponse] = await Promise.all([
+              usersAPI.getUsers({ role: 'sub_distributor', page_size: 100 }),
+              usersAPI.getUsers({ role: 'cluster', page_size: 100 }),
+            ]);
+
+            const collect = (response) => {
+              const payload = response?.data;
+              if (Array.isArray(payload)) return payload;
+              if (Array.isArray(payload?.users)) return payload.users;
+              return [];
+            };
+
+            setHierarchyUsers([...collect(subsResponse), ...collect(clustersResponse)]);
+          } catch {
+            setHierarchyUsers([]);
+          }
+        } else {
+          setHierarchyUsers([]);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch devices:', error);
+      if (!append) {
+        setAllDevices([]);
+        setHasMoreDevices(false);
+        setTotalDevices(0);
+      }
+    } finally {
+      if (requestId === fetchSequenceRef.current) {
+        setDevicesLoading(false);
+        setLoadingMoreDevices(false);
+      }
+    }
+  };
+
   useEffect(() => {
-    fetchAllDevices(showAllDevices);
-  }, [showAllDevices]);
+    if (!currentUser?.role) return;
+    fetchAllDevices({ page: 1, append: false });
+  }, [currentUser?.role, activeFilterKey]);
 
   // Auto-search if query param is present
   useEffect(() => {
@@ -67,54 +175,12 @@ const TrackDevice = () => {
     }
   }, []);
 
-  const fetchAllDevices = async (loadAll = false) => {
-    try {
-      setDevicesLoading(true);
-      const [overviewResponse, replacementsResponse] = await Promise.all([
-        devicesAPI.getMyOverview({
-          page: 1,
-          page_size: 1000,
-          show_all: ['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role) ? loadAll : false,
-        }),
-        defectsAPI.getReplacements({ page_size: 100 })
-      ]);
-      setAllDevices(overviewResponse.data?.all_under_me || []);
-      setReplacementMappings(Array.isArray(replacementsResponse.data) ? replacementsResponse.data : []);
-
-      if (['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role)) {
-        try {
-          const [subsResponse, clustersResponse] = await Promise.all([
-            usersAPI.getUsers({ role: 'sub_distributor', page_size: 100 }),
-            usersAPI.getUsers({ role: 'cluster', page_size: 100 }),
-          ]);
-          const collect = (response) => {
-            const payload = response?.data;
-            if (Array.isArray(payload)) return payload;
-            if (Array.isArray(payload?.users)) return payload.users;
-            return [];
-          };
-          setHierarchyUsers([...collect(subsResponse), ...collect(clustersResponse)]);
-        } catch {
-          setHierarchyUsers([]);
-        }
-      } else {
-        setHierarchyUsers([]);
-      }
-    } catch (error) {
-      console.error('Failed to fetch devices:', error);
-    } finally {
-      setDevicesLoading(false);
-    }
-  };
-
   const replacementMapByDefectiveId = replacementMappings.reduce((acc, defect) => {
     if (defect?.device_id) {
       acc[String(defect.device_id)] = defect;
     }
     return acc;
   }, {});
-
-  const isManagement = ['super_admin', 'manager', 'pdic_staff'].includes(currentUser?.role);
 
   const hierarchyIndex = useMemo(() => {
     const subDistributors = hierarchyUsers.filter((u) => u.role === 'sub_distributor');
@@ -129,77 +195,25 @@ const TrackDevice = () => {
     return { subDistributors, clusters, clustersBySub };
   }, [hierarchyUsers]);
 
-  const devicesByHolder = useMemo(() => {
-    const grouped = {};
-    for (const device of allDevices) {
-      const holderId = String(device.current_holder_id || '');
-      if (!holderId) continue;
-      if (!grouped[holderId]) grouped[holderId] = [];
-      grouped[holderId].push(device);
-    }
-    return grouped;
-  }, [allDevices]);
-
-  const subDistributorSummary = useMemo(() => {
-    return hierarchyIndex.subDistributors
-      .map((sub) => {
-        const subId = String(sub.id);
-        const childClusters = hierarchyIndex.clustersBySub[subId] || [];
-        const holderIds = [subId, ...childClusters.map((cluster) => String(cluster.id))];
-        let total = 0;
-        for (const holderId of holderIds) {
-          total += (devicesByHolder[holderId] || []).length;
-        }
-        return {
-          id: subId,
-          name: sub.name || 'Unknown Sub Distribution',
-          total,
-          holderIds,
-        };
-      })
-      .filter((item) => item.total > 0)
-      .sort((a, b) => b.total - a.total);
-  }, [devicesByHolder, hierarchyIndex]);
-
-  const clusterSummary = useMemo(() => {
-    return hierarchyIndex.clusters
-      .map((cluster) => {
-        const clusterId = String(cluster.id);
-        return {
-          id: clusterId,
-          name: cluster.name || 'Unknown Cluster',
-          total: (devicesByHolder[clusterId] || []).length,
-          holderIds: [clusterId],
-        };
-      })
-      .filter((item) => item.total > 0)
-      .sort((a, b) => b.total - a.total);
-  }, [devicesByHolder, hierarchyIndex]);
-
   const filterOptions = useMemo(() => {
-    const deviceTypes = [...new Set(allDevices.map((d) => d.device_type).filter(Boolean))].sort();
-    const manufacturers = [...new Set(allDevices.map((d) => (d.manufacturer || '').trim()).filter(Boolean))].sort();
-    const subDistributors = subDistributorSummary.map((item) => ({ id: item.id, name: item.name }));
-    const clusters = clusterSummary.map((item) => ({ id: item.id, name: item.name }));
+    const insightTypes = Array.isArray(overviewInsights?.by_type)
+      ? overviewInsights.by_type.map((item) => item?.type).filter(Boolean)
+      : [];
+    const insightManufacturers = Array.isArray(overviewInsights?.by_vendor)
+      ? overviewInsights.by_vendor.map((item) => item?.manufacturer).filter(Boolean)
+      : [];
+
+    const loadedTypes = allDevices.map((d) => d.device_type).filter(Boolean);
+    const loadedManufacturers = allDevices.map((d) => (d.manufacturer || '').trim()).filter(Boolean);
+
+    const deviceTypes = [...new Set([...insightTypes, ...loadedTypes])].sort();
+    const manufacturers = [...new Set([...insightManufacturers, ...loadedManufacturers])].sort();
+    const subDistributors = hierarchyIndex.subDistributors.map((item) => ({ id: String(item.id), name: item.name }));
+    const clusters = hierarchyIndex.clusters.map((item) => ({ id: String(item.id), name: item.name }));
     return { deviceTypes, manufacturers, subDistributors, clusters };
-  }, [allDevices, subDistributorSummary, clusterSummary]);
+  }, [allDevices, hierarchyIndex, overviewInsights]);
 
-  const filteredAllDevices = useMemo(() => {
-    if (!isManagement) return allDevices;
-    const selectedSub = subDistributorSummary.find((item) => item.id === tableFilters.sub_distributor_id);
-    const selectedCluster = clusterSummary.find((item) => item.id === tableFilters.cluster_id);
-    const subHolderSet = selectedSub ? new Set(selectedSub.holderIds) : null;
-    const clusterHolderSet = selectedCluster ? new Set(selectedCluster.holderIds) : null;
-
-    return allDevices.filter((device) => {
-      if (tableFilters.device_type && device.device_type !== tableFilters.device_type) return false;
-      if (tableFilters.manufacturer && (device.manufacturer || '').trim() !== tableFilters.manufacturer) return false;
-      if (tableFilters.status && device.status !== tableFilters.status) return false;
-      if (subHolderSet && !subHolderSet.has(String(device.current_holder_id || ''))) return false;
-      if (clusterHolderSet && !clusterHolderSet.has(String(device.current_holder_id || ''))) return false;
-      return true;
-    });
-  }, [allDevices, isManagement, tableFilters, subDistributorSummary, clusterSummary]);
+  const filteredAllDevices = allDevices;
 
   const activeDevices = filteredAllDevices.filter((device) => device.status !== 'replaced');
   const replacedDevices = filteredAllDevices.filter((device) => device.status === 'replaced');
@@ -239,6 +253,11 @@ const TrackDevice = () => {
     const identifier = device?.serial_number || device?.nuid || device?.mac_address || '';
     setSearchQuery(identifier);
     await handleSearchBySerial(identifier);
+  };
+
+  const handleLoadMoreDevices = async () => {
+    if (loadingMoreDevices || !hasMoreDevices) return;
+    await fetchAllDevices({ page: devicesPage + 1, append: true });
   };
 
   const getFormattedHistory = () => {
@@ -507,18 +526,14 @@ const TrackDevice = () => {
                   )}
 
                   <p className="text-xs text-gray-500 mt-3">
-                    Filtered results: {filteredAllDevices.length}
+                    Showing {filteredAllDevices.length} of {totalDevices || filteredAllDevices.length} devices
                   </p>
                 </div>
               )}
               <p className="text-sm text-gray-500 mb-2">Active devices are listed first. Replaced devices are shown in a separate section below.</p>
-              {isManagement && !showAllDevices && allDevices.length >= 1000 && (
-                <div className="mb-3">
-                  <Button variant="secondary" onClick={() => setShowAllDevices(true)}>
-                    Show All Devices
-                  </Button>
-                </div>
-              )}
+              <p className="text-xs text-gray-500 mb-3">
+                Loaded: {filteredAllDevices.length} / {totalDevices || filteredAllDevices.length}
+              </p>
 
               <h3 className="text-sm font-semibold text-gray-700 mt-2">Active Devices</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -577,6 +592,19 @@ const TrackDevice = () => {
                   </div>
                 )}
               </div>
+
+              {hasMoreDevices && (
+                <div className="pt-4 mt-4 border-t border-gray-200 flex justify-center">
+                  <Button
+                    variant="secondary"
+                    onClick={handleLoadMoreDevices}
+                    disabled={loadingMoreDevices}
+                    icon={ChevronDown}
+                  >
+                    {loadingMoreDevices ? 'Loading next 30...' : 'Load Next 30 Devices'}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </Card>

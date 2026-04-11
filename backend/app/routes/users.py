@@ -123,6 +123,7 @@ async def get_users(
     role: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     parent_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
@@ -198,6 +199,7 @@ async def get_users(
             role=normalized_role_filter,
             status=status_filter,
             search=search,
+            search_by=search_by,
             parent_id=parent_id_filter,
             parent_ids_in=parent_ids_in_filter,
         )

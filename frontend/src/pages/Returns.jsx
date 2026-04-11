@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import DataTable from '../components/ui/DataTable';
 import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
@@ -9,38 +9,172 @@ import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { returnsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { Eye, RotateCcw, Loader2, PackageCheck, AlertTriangle } from 'lucide-react';
+import { Eye, RotateCcw, Loader2, PackageCheck, AlertTriangle, Search } from 'lucide-react';
+
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
+const TABLE_SEARCH_BY_OPTIONS = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'return_id', label: 'Return ID' },
+  { value: 'device_serial', label: 'Device Serial' },
+  { value: 'requested_by_name', label: 'Initiated By' },
+  { value: 'reason', label: 'Reason' },
+  { value: 'status', label: 'Status' },
+];
+
+const RETURN_STATUS_CARD_CONFIG = ['pending', 'under-review', 'approved', 'rejected'];
 
 const Returns = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const [returnRequests, setReturnRequests] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [statusCounts, setStatusCounts] = useState({
+    pending: 0,
+    'under-review': 0,
+    approved: 0,
+    rejected: 0,
+  });
+  const [tablePage, setTablePage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedReturn, setSelectedReturn] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [actionComment, setActionComment] = useState('');
+  const [tableSearchBy, setTableSearchBy] = useState('all');
+  const [tableSearchInput, setTableSearchInput] = useState('');
+  const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const queryVersionRef = useRef(0);
 
-  const fetchReturns = async () => {
+  const buildReturnParams = (windowPage) => {
+    const params = {
+      page: windowPage,
+      page_size: TABLE_WINDOW_SIZE,
+    };
+    if (appliedTableSearch.query) {
+      params.search = appliedTableSearch.query;
+      if (appliedTableSearch.by && appliedTableSearch.by !== 'all') {
+        params.search_by = appliedTableSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const buildReturnCountParams = (status) => {
+    const params = {
+      page: 1,
+      page_size: 1,
+      status,
+    };
+    if (appliedTableSearch.query) {
+      params.search = appliedTableSearch.query;
+      if (appliedTableSearch.by && appliedTableSearch.by !== 'all') {
+        params.search_by = appliedTableSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const loadReturnStatusCounts = async () => {
+    const queryVersion = queryVersionRef.current;
     try {
-      setLoading(true);
-      const response = await returnsAPI.getReturns();
-      setReturnRequests(response.data || []);
+      const responses = await Promise.all(
+        RETURN_STATUS_CARD_CONFIG.map((status) => returnsAPI.getReturns(buildReturnCountParams(status)))
+      );
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const nextCounts = RETURN_STATUS_CARD_CONFIG.reduce((acc, status, index) => {
+        const total = Number(responses[index]?.pagination?.total || 0);
+        acc[status] = Number.isFinite(total) ? total : 0;
+        return acc;
+      }, {});
+
+      setStatusCounts(nextCounts);
+    } catch (error) {
+      console.error('Failed to load return status counts:', error);
+    }
+  };
+
+  const loadReturnWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = queryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setLoading(true);
+
+    try {
+      const response = await returnsAPI.getReturns(buildReturnParams(windowPage));
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || rows.length);
+
+      setReturnRequests((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || row?._id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setTableTotalCount(total);
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
     } catch (error) {
       console.error('Failed to fetch returns:', error);
       showToast('Failed to load return requests', 'error');
     } finally {
-      setLoading(false);
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setLoading(false);
+    }
+  };
+
+  const resetAndLoadReturns = async () => {
+    queryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setReturnRequests([]);
+    setTableTotalCount(0);
+    setStatusCounts({ pending: 0, 'under-review': 0, approved: 0, rejected: 0 });
+    setTablePage(1);
+    await Promise.all([
+      loadReturnWindow(1, { reset: true, withLoading: true }),
+      loadReturnStatusCounts(),
+    ]);
+  };
+
+  const handleSearchSubmit = () => {
+    const nextQuery = tableSearchInput.trim();
+    setAppliedTableSearch({ by: tableSearchBy, query: nextQuery });
+  };
+
+  const handleSearchReset = () => {
+    setTableSearchBy('all');
+    setTableSearchInput('');
+    setAppliedTableSearch({ by: 'all', query: '' });
+  };
+
+  const handleTablePageChange = async (nextPage) => {
+    setTablePage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(returnRequests.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && returnRequests.length < tableTotalCount;
+    if (needsNextWindow) {
+      await loadReturnWindow(loadedWindowRef.current + 1, { withLoading: true });
     }
   };
 
   useEffect(() => {
-    fetchReturns();
-  }, []);
+    resetAndLoadReturns();
+  }, [appliedTableSearch]);
 
   const canConfirmReceipt = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
-
-  const pendingReceiptReturns = returnRequests.filter((r) => ['pending', 'approved'].includes(r.status));
+  const pendingReceiptCount = statusCounts.pending + statusCounts.approved;
 
   const columns = [
     {
@@ -113,7 +247,7 @@ const Returns = () => {
       showToast('Device receipt confirmed — ownership transferred back to PDIC', 'success');
       setShowReceiptModal(false);
       setActionComment('');
-      fetchReturns();
+      resetAndLoadReturns();
     } catch (error) {
       showToast(error.message || 'Failed to confirm receipt', 'error');
     }
@@ -159,16 +293,16 @@ const Returns = () => {
 
   return (
     <div className="space-y-6">
-      {canConfirmReceipt && pendingReceiptReturns.length > 0 && (
+      {canConfirmReceipt && pendingReceiptCount > 0 && (
         <div className="space-y-3">
-          {pendingReceiptReturns.length > 0 && (
+          {pendingReceiptCount > 0 && (
             <div className="p-4 rounded-xl border border-amber-300 bg-amber-50">
               <div className="flex items-center gap-2 mb-2">
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
                 <p className="font-semibold text-amber-900">PDIC Receipt Confirmation Pending</p>
               </div>
               <p className="text-sm text-amber-800">
-                {pendingReceiptReturns.length} return requests are waiting for device reached confirmation at PDIC.
+                {pendingReceiptCount} return requests are waiting for device reached confirmation at PDIC.
               </p>
             </div>
           )}
@@ -186,33 +320,72 @@ const Returns = () => {
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Total</p>
-          <p className="text-2xl font-bold text-gray-800">{returnRequests.length}</p>
+          <p className="text-2xl font-bold text-gray-800">{tableTotalCount || returnRequests.length}</p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Pending</p>
           <p className="text-2xl font-bold text-yellow-600">
-            {returnRequests.filter(r => r.status === 'pending').length}
+            {statusCounts.pending}
           </p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Under Review</p>
           <p className="text-2xl font-bold text-blue-600">
-            {returnRequests.filter(r => r.status === 'under-review').length}
+            {statusCounts['under-review']}
           </p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Approved</p>
           <p className="text-2xl font-bold text-green-600">
-            {returnRequests.filter(r => r.status === 'approved').length}
+            {statusCounts.approved}
           </p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Rejected</p>
           <p className="text-2xl font-bold text-red-600">
-            {returnRequests.filter(r => r.status === 'rejected').length}
+            {statusCounts.rejected}
           </p>
         </Card>
       </div>
+
+      <Card className="!p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Search className="w-4 h-4 text-blue-600" />
+          <h3 className="text-sm font-semibold text-gray-800">Search Returns</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="md:col-span-3">
+            <select
+              value={tableSearchBy}
+              onChange={(e) => setTableSearchBy(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              {TABLE_SEARCH_BY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-6">
+            <input
+              type="text"
+              value={tableSearchInput}
+              onChange={(e) => setTableSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSearchSubmit();
+                }
+              }}
+              placeholder="Enter pattern to search..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+          </div>
+          <div className="md:col-span-3 flex gap-2">
+            <Button onClick={handleSearchSubmit} className="w-full">Search</Button>
+            <Button variant="secondary" onClick={handleSearchReset}>Reset</Button>
+          </div>
+        </div>
+      </Card>
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -223,6 +396,11 @@ const Returns = () => {
         <DataTable
           columns={columns}
           data={returnRequests}
+          searchable={false}
+          pageSize={TABLE_PAGE_SIZE}
+          totalItems={tableTotalCount || returnRequests.length}
+          currentPage={tablePage}
+          onPageChange={handleTablePageChange}
           onRowClick={(row) => {
             setSelectedReturn(row);
             setShowModal(true);

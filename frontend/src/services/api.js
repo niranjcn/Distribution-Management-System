@@ -260,6 +260,11 @@ export const devicesAPI = {
     return response;
   },
 
+  getManagementHolderInsights: async () => {
+    const response = await apiRequest('/devices/management-holder-insights');
+    return response;
+  },
+
   trackDeviceBySerial: async (serialNumber) => {
     log('[devicesAPI] Tracking device by serial:', serialNumber);
     try {
