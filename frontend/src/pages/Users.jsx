@@ -538,10 +538,10 @@ const Users = () => {
         ))}
       </div>
 
-      {/* Main content: hierarchical view for sub_distributor, table for everyone else */}
-      {isSubDist ? (
+      {/* Main content: hierarchical view for sub_distributor and sub_distribution_manager, table for everyone else */}
+      {(isSubDist || isSdm) ? (
         <div className="space-y-4">
-          {(loading || loadingOps) ? (
+          {(loading || (isSubDist && loadingOps) || (isSdm && loadingSdmOps)) ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
               <span className="ml-3 text-gray-500">Loading...</span>
@@ -550,89 +550,132 @@ const Users = () => {
             <Card>
               <div className="text-center py-10">
                 <Network className="w-14 h-14 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500">No clusters found under your sub-distribution.</p>
+                <p className="text-gray-500">
+                  {isSdm ? 'No clusters found under your assigned sub-distribution.' : 'No clusters found under your sub-distribution.'}
+                </p>
               </div>
             </Card>
           ) : (
-            users.map(cluster => {
-              const clusterOps = clusterOperatorsMap[String(cluster.id)] || [];
-              const isCollapsed = !!collapsedClusters[cluster.id];
-              return (
-                <Card key={cluster.id} className="overflow-hidden">
-                  {/* Cluster header row */}
-                  <div
-                    className="flex items-center justify-between cursor-pointer select-none"
-                    onClick={() => setCollapsedClusters(prev => ({ ...prev, [cluster.id]: !prev[cluster.id] }))}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center">
-                        <Network className="w-5 h-5 text-teal-600" />
+            <>
+              {/* SDM only: show assigned sub-distributor details as root anchor */}
+              {isSdm && sdmParentSubDist && (
+                <Card className="border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      <Building className="w-6 h-6 text-indigo-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-base font-bold text-indigo-900">{sdmParentSubDist.name}</p>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">Sub Distributor</span>
+                        <StatusBadge status={sdmParentSubDist.status} size="sm" />
+                        <span className="ml-auto text-xs text-indigo-500 font-medium">Your Assigned Sub-Distribution</span>
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-gray-800">{cluster.name}</p>
-                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">Cluster</span>
-                          <StatusBadge status={cluster.status} size="sm" />
-                        </div>
-                        <p className="text-xs text-gray-500">{cluster.email}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                        {sdmParentSubDist.email && (<span className="text-xs text-gray-500">{sdmParentSubDist.email}</span>)}
+                        {sdmParentSubDist.phone && (<span className="text-xs text-gray-500">{sdmParentSubDist.phone}</span>)}
+                        {sdmParentSubDist.location && (<span className="text-xs text-gray-500">{sdmParentSubDist.location}</span>)}
+                        {sdmParentSubDist.digital_id && (<span className="text-xs text-gray-500">Digital ID: {sdmParentSubDist.digital_id}</span>)}
+                        {sdmParentSubDist.broadband_id && (<span className="text-xs text-gray-500">Broadband ID: {sdmParentSubDist.broadband_id}</span>)}
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-sm text-gray-500">{clusterOps.length} operator{clusterOps.length !== 1 ? 's' : ''}</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={e => { e.stopPropagation(); setSelectedUser(cluster); setShowViewModal(true); }}
-                          className="p-1.5 hover:bg-gray-100 rounded"
-                          title="View cluster"
-                        >
-                          <Eye className="w-4 h-4 text-gray-500" />
-                        </button>
-                        {isCollapsed
-                          ? <ChevronRight className="w-4 h-4 text-gray-400" />
-                          : <ChevronDown className="w-4 h-4 text-gray-400" />}
-                      </div>
-                    </div>
+                    <button
+                      onClick={() => { setSelectedUser(sdmParentSubDist); setShowViewModal(true); }}
+                      className="p-1.5 hover:bg-indigo-100 rounded ml-2 flex-shrink-0"
+                      title="View sub-distributor details"
+                    >
+                      <Eye className="w-4 h-4 text-indigo-500" />
+                    </button>
                   </div>
-
-                  {/* Operators under this cluster */}
-                  {!isCollapsed && (
-                    <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
-                      {clusterOps.length === 0 ? (
-                        <p className="text-xs text-gray-400 italic ml-12">No operators in this cluster yet.</p>
-                      ) : (
-                        clusterOps.map(op => (
-                          <div key={op.id} className="flex items-center justify-between ml-10 pl-3 border-l-2 border-gray-100 py-1">
-                            <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 bg-green-100 rounded-full flex items-center justify-center">
-                                <span className="text-xs font-medium text-green-600">
-                                  {(op.name || '').split(' ').filter(Boolean).map(n => n[0]).join('') || '?'}
-                                </span>
-                              </div>
-                              <div>
-                                <p className="text-sm font-medium text-gray-800">{op.name}</p>
-                                <p className="text-xs text-gray-500">{op.email}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <StatusBadge status={op.status} size="sm" />
-                              <button
-                                onClick={() => { setSelectedUser(op); setShowViewModal(true); }}
-                                className="p-1 hover:bg-gray-100 rounded"
-                                title="View operator"
-                              >
-                                <Eye className="w-3.5 h-3.5 text-gray-500" />
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-3 ml-6 border-l-2 border-indigo-200 pl-4 pt-1">
+                    <p className="text-xs text-indigo-400 font-medium">{users.length} cluster{users.length !== 1 ? 's' : ''} under this sub-distribution</p>
+                  </div>
                 </Card>
-              );
-            })
+              )}
+
+              {users.map(cluster => {
+                const clusterOps = isSdm
+                  ? (sdmClusterOperatorsMap[String(cluster.id)] || [])
+                  : (clusterOperatorsMap[String(cluster.id)] || []);
+                const isCollapsed = !!collapsedClusters[cluster.id];
+                return (
+                  <Card key={cluster.id} className="overflow-hidden">
+                    {/* Cluster header row */}
+                    <div
+                      className="flex items-center justify-between cursor-pointer select-none"
+                      onClick={() => setCollapsedClusters(prev => ({ ...prev, [cluster.id]: !prev[cluster.id] }))}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center">
+                          <Network className="w-5 h-5 text-teal-600" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-gray-800">{cluster.name}</p>
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">Cluster</span>
+                            <StatusBadge status={cluster.status} size="sm" />
+                          </div>
+                          <p className="text-xs text-gray-500">{cluster.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm text-gray-500">{clusterOps.length} operator{clusterOps.length !== 1 ? 's' : ''}</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={e => { e.stopPropagation(); setSelectedUser(cluster); setShowViewModal(true); }}
+                            className="p-1.5 hover:bg-gray-100 rounded"
+                            title="View cluster"
+                          >
+                            <Eye className="w-4 h-4 text-gray-500" />
+                          </button>
+                          {isCollapsed
+                            ? <ChevronRight className="w-4 h-4 text-gray-400" />
+                            : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Operators under this cluster */}
+                    {!isCollapsed && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                        {clusterOps.length === 0 ? (
+                          <p className="text-xs text-gray-400 italic ml-12">No operators in this cluster yet.</p>
+                        ) : (
+                          clusterOps.map(op => (
+                            <div key={op.id} className="flex items-center justify-between ml-10 pl-3 border-l-2 border-gray-100 py-1">
+                              <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 bg-green-100 rounded-full flex items-center justify-center">
+                                  <span className="text-xs font-medium text-green-600">
+                                    {(op.name || '').split(' ').filter(Boolean).map(n => n[0]).join('') || '?'}
+                                  </span>
+                                </div>
+                                <div>
+                                  <p className="text-sm font-medium text-gray-800">{op.name}</p>
+                                  <p className="text-xs text-gray-500">{op.email}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <StatusBadge status={op.status} size="sm" />
+                                <button
+                                  onClick={() => { setSelectedUser(op); setShowViewModal(true); }}
+                                  className="p-1 hover:bg-gray-100 rounded"
+                                  title="View operator"
+                                >
+                                  <Eye className="w-3.5 h-3.5 text-gray-500" />
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </>
           )}
         </div>
+
       ) : (
         /* Standard table view for all other roles */
         <>
