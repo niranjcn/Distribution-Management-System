@@ -15,19 +15,19 @@ from app.utils.roles import (
 
 PERMISSIONS = {
     "users:read": [SUPER_ADMIN, MD_DIRECTOR, MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER],
-    "users:create": [SUPER_ADMIN, MANAGER, SUB_DISTRIBUTION_MANAGER],
-    "users:update": [SUPER_ADMIN, MANAGER, SUB_DISTRIBUTION_MANAGER],
+    "users:create": [SUPER_ADMIN, MANAGER],
+    "users:update": [SUPER_ADMIN, MANAGER],
     "users:delete": [SUPER_ADMIN],
     "users:set_permissions": [SUPER_ADMIN],
 
     "devices:read": [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
     "devices:create": [SUPER_ADMIN, MANAGER, PDIC_STAFF],
-    "devices:update": [SUPER_ADMIN, MANAGER, SUB_DISTRIBUTION_MANAGER],
+    "devices:update": [SUPER_ADMIN, MANAGER],
     "devices:delete": [SUPER_ADMIN],
 
     "distributions:read": [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
     "distributions:create": [SUPER_ADMIN, MANAGER, PDIC_STAFF, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
-    "distributions:update": [SUPER_ADMIN, MANAGER, SUB_DISTRIBUTION_MANAGER],
+    "distributions:update": [SUPER_ADMIN, MANAGER],
     "distributions:delete": [SUPER_ADMIN],
     "distributions:approve": [SUPER_ADMIN, MANAGER, PDIC_STAFF],
 

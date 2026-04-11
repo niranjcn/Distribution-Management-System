@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 ALLOWED_CREATE_BY_ROLE = {
     SUPER_ADMIN: [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
     MANAGER: [PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
-    SUB_DISTRIBUTION_MANAGER: [CLUSTER, OPERATOR],
 }
 
 
@@ -132,6 +131,7 @@ async def get_users(
 
     parent_id_filter = None
     parent_ids_in_filter = None
+    roles_in_filter = None
 
     if actor_role in {SUPER_ADMIN, MD_DIRECTOR, MANAGER}:
         parent_id_filter = parent_id
@@ -158,23 +158,35 @@ async def get_users(
     elif actor_role == SUB_DISTRIBUTION_MANAGER:
         scope_root = str(current_user.get("parent_id") or current_user["id"])
         parent_id_filter = scope_root
-        if normalized_role_filter in {CLUSTER, OPERATOR}:
+        if normalized_role_filter in {CLUSTER, OPERATOR} or normalized_role_filter is None:
             manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=scope_root, page_size=1_000_000)
             manager_ids = [int(m["id"]) for m in manager_result["data"]]
             candidate_parent_ids = [int(scope_root)] + manager_ids if str(scope_root).isdigit() else manager_ids
+            candidate_parent_ids = list(dict.fromkeys(candidate_parent_ids))
+
+            cluster_parent_scope = candidate_parent_ids
+            operator_parent_scope = candidate_parent_ids
+            cluster_ids = []
+            if cluster_parent_scope:
+                clusters_result = await user_service.get_users(
+                    role=CLUSTER,
+                    parent_ids_in=cluster_parent_scope,
+                    page_size=1_000_000,
+                )
+                cluster_ids = [int(c["id"]) for c in clusters_result["data"]]
+                operator_parent_scope = list(dict.fromkeys(cluster_ids + candidate_parent_ids))
 
             if normalized_role_filter == CLUSTER:
                 parent_ids_in_filter = candidate_parent_ids
                 parent_id_filter = None
+            elif normalized_role_filter == OPERATOR:
+                parent_ids_in_filter = operator_parent_scope
+                parent_id_filter = None
             else:
-                if not candidate_parent_ids:
-                    parent_ids_in_filter = []
-                    parent_id_filter = None
-                else:
-                    clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=candidate_parent_ids, page_size=1_000_000)
-                    cluster_ids = [int(c["id"]) for c in clusters_result["data"]]
-                    parent_ids_in_filter = cluster_ids + candidate_parent_ids
-                    parent_id_filter = None
+                # Read-only default: sub distribution managers see only clusters/operators in their sub-distribution branch.
+                roles_in_filter = [CLUSTER, OPERATOR]
+                parent_ids_in_filter = operator_parent_scope
+                parent_id_filter = None
     elif actor_role == SUB_DISTRIBUTOR:
         parent_id_filter = str(current_user["id"])
         if normalized_role_filter == OPERATOR:
@@ -197,6 +209,7 @@ async def get_users(
             page=page,
             page_size=page_size,
             role=normalized_role_filter,
+            roles_in=roles_in_filter,
             status=status_filter,
             search=search,
             search_by=search_by,
@@ -342,8 +355,11 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
 async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = Depends(get_current_user)):
     try:
         actor_role = normalize_role(current_user.get("role"))
-        if actor_role == MD_DIRECTOR:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="MD/Director has read-only access to users")
+        if actor_role in {MD_DIRECTOR, SUB_DISTRIBUTION_MANAGER}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This role has read-only access to users",
+            )
 
         target_user = await user_service.get_user_by_id(user_id)
         if not target_user:
@@ -390,7 +406,7 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
 async def delete_user(request: Request, user_id: str, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
 
-    if actor_role not in {SUPER_ADMIN, SUB_DISTRIBUTION_MANAGER}:
+    if actor_role not in {SUPER_ADMIN}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     if str(current_user.get("id")) == str(user_id):
@@ -444,7 +460,7 @@ async def update_user_status(
     current_user: dict = Depends(get_current_user),
 ):
     actor_role = normalize_role(current_user.get("role"))
-    if actor_role not in {SUPER_ADMIN, MANAGER, SUB_DISTRIBUTION_MANAGER}:
+    if actor_role not in {SUPER_ADMIN, MANAGER}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     status_value = status_update.get("status")

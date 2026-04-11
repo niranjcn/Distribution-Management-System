@@ -32,6 +32,14 @@ def _ensure_distribution_create_access(current_user: dict) -> None:
         )
 
 
+def _ensure_sub_distribution_manager_read_only(current_user: dict) -> None:
+    if current_user.get("role") == "sub_distribution_manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sub Distribution MD/Manager has read-only access to distributions",
+        )
+
+
 def _is_likely_text(content: bytes) -> bool:
     if not content:
         return True
@@ -463,6 +471,7 @@ async def confirm_distribution_receipt(
     - received=false -> Distribution becomes DISPUTED; admin/manager + sender are notified
     """
     _ensure_not_md_director(current_user)
+    _ensure_sub_distribution_manager_read_only(current_user)
 
     try:
         distribution = await distribution_service.confirm_receipt(
@@ -535,6 +544,7 @@ async def update_distribution_status(
 ):
     """Update distribution status"""
     _ensure_not_md_director(current_user)
+    _ensure_sub_distribution_manager_read_only(current_user)
 
     try:
         before = await distribution_service.get_distribution_by_id(distribution_id)
@@ -600,6 +610,7 @@ async def cancel_distribution(
 ):
     """Cancel a distribution (only by creator)"""
     _ensure_not_md_director(current_user)
+    _ensure_sub_distribution_manager_read_only(current_user)
 
     try:
         success = await distribution_service.cancel_distribution(

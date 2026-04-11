@@ -17,6 +17,7 @@ async def get_users(
     page: int = 1,
     page_size: int = 20,
     role: Optional[str] = None,
+    roles_in: Optional[List[str]] = None,
     status: Optional[str] = None,
     search: Optional[str] = None,
     search_by: Optional[str] = None,
@@ -26,13 +27,26 @@ async def get_users(
     """Get all users with pagination and filters"""
     # Short-circuit: if empty IN list, no results possible
     if parent_ids_in is not None and len(parent_ids_in) == 0:
-        return {"data": [], "pagination": get_pagination(page, 20, 0)}
+        return {"data": [], "pagination": get_pagination(page, page_size, 0)}
 
     async with get_db() as db:
         conditions = []
         params = []
         
-        if role:
+        if roles_in is not None:
+            normalized_roles = []
+            for item in roles_in:
+                normalized = normalize_role(item)
+                if normalized and normalized not in normalized_roles:
+                    normalized_roles.append(normalized)
+
+            if not normalized_roles:
+                return {"data": [], "pagination": get_pagination(page, page_size, 0)}
+
+            placeholders = ",".join(["?"] * len(normalized_roles))
+            conditions.append(f"role IN ({placeholders})")
+            params.extend(normalized_roles)
+        elif role:
             conditions.append("role = ?")
             params.append(role)
         if status:

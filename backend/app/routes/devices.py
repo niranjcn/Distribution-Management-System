@@ -1314,6 +1314,11 @@ async def update_device_status(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="MD/Director has read-only access to devices"
             )
+        if current_user.get("role") == "sub_distribution_manager":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Sub Distribution MD/Manager has read-only access to devices"
+            )
 
         before = await device_service.get_device_by_id(device_id)
 

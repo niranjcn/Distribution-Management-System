@@ -35,6 +35,39 @@ def _ensure_not_md_director(current_user: dict) -> None:
         )
 
 
+def _get_defect_activity_device_identifier(defect: dict) -> str:
+    device_type = str(defect.get("device_type") or "").strip().lower()
+    normalized_type = device_type.replace("-", " ")
+    is_set_top_box = normalized_type in {"set top box", "setup box", "sb", "stb"}
+
+    nuid = str(defect.get("device_nuid") or defect.get("nuid") or "").strip()
+    serial_number = str(defect.get("device_serial") or "").strip()
+
+    if is_set_top_box and nuid:
+        return nuid
+    if serial_number:
+        return serial_number
+    if nuid:
+        return nuid
+    return str(defect.get("device_id") or "unknown").strip()
+
+
+def _get_device_identifier_for_activity(device: dict, *, fallback: str = "unknown") -> str:
+    device_type = str(device.get("device_type") or "").strip().lower().replace("-", " ")
+    is_set_top_box = device_type in {"set top box", "setup box", "sb", "stb"}
+
+    serial_number = str(device.get("serial_number") or "").strip()
+    nuid = str(device.get("nuid") or device.get("device_nuid") or "").strip()
+
+    if is_set_top_box and nuid:
+        return nuid
+    if serial_number:
+        return serial_number
+    if nuid:
+        return nuid
+    return str(fallback or "unknown").strip() or "unknown"
+
+
 @router.get("/replacements")
 async def get_replacement_defects(
     page: int = Query(1, ge=1),
@@ -322,12 +355,13 @@ async def create_defect(
         )
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"
+        device_identifier = _get_defect_activity_device_identifier(defect)
         await log_business_activity(
             user=current_user,
             path="/activity/defects/create",
             description=(
                 f"{actor_name} reported defect {defect.get('report_id') or defect.get('id')} "
-                f"for device {defect.get('device_serial') or defect.get('device_id')}"
+                f"for device {device_identifier}"
             ),
         )
 
@@ -672,8 +706,19 @@ async def replace_defect_device(
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         defective_device = defect.get("defective_device") or {}
         replacement_device = defect.get("replacement_device") or {}
-        old_ref = defective_device.get("device_id") or defective_device.get("serial_number") or defect.get("device_serial") or "unknown"
-        new_ref = replacement_device.get("device_id") or replacement_device.get("serial_number") or defect.get("replacement_device_id") or "unknown"
+        old_ref = _get_device_identifier_for_activity(
+            defective_device,
+            fallback=(defect.get("device_serial") or defect.get("device_id") or "unknown"),
+        )
+        new_ref = _get_device_identifier_for_activity(
+            replacement_device,
+            fallback=(
+                defect.get("replacement_device_serial")
+                or defect.get("replacement_device_nuid")
+                or defect.get("replacement_device_id")
+                or "unknown"
+            ),
+        )
         amount = float(defect.get("return_amount") or 0)
         amount_note = f"; bill amount {amount:.2f}" if amount > 0 else ""
         await log_business_activity(

@@ -344,6 +344,13 @@ async def get_admin_activities(
             conditions.append("action != ?")
             params.append("bulk_registered")
 
+            # Replacement workflow already writes a curated API business activity.
+            # Hide matching device-history rows so replacement appears as a single activity.
+            conditions.append("(notes IS NULL OR notes NOT LIKE ?)")
+            params.append("Device replaced by % for defect %")
+            conditions.append("(notes IS NULL OR notes NOT LIKE ?)")
+            params.append("Device serviced and reassigned for defect %")
+
             if actor:
                 conditions.append("performed_by_name LIKE ?")
                 params.append(f"%{actor}%")

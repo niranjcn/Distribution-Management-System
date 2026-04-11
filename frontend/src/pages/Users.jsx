@@ -17,7 +17,6 @@ import {
 const ALLOWED_ROLES_BY_CREATOR = {
   super_admin:     ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
   manager:         ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
-  sub_distribution_manager: ['cluster', 'operator'],
 };
 
 const ROLE_LABELS = {
@@ -293,7 +292,7 @@ const Users = () => {
           >
             <Eye className="w-4 h-4 text-gray-500" />
           </button>
-          {['super_admin', 'sub_distribution_manager'].includes(currentUser?.role) && (
+          {['super_admin'].includes(currentUser?.role) && (
             <button
               onClick={() => { setDetailUser(row); setDetailForm({ ...row }); setNewPassword(''); }}
               className="p-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200"
@@ -302,7 +301,7 @@ const Users = () => {
               <Edit className="w-4 h-4" />
             </button>
           )}
-          {['super_admin', 'sub_distribution_manager'].includes(currentUser?.role) && (
+          {['super_admin'].includes(currentUser?.role) && (
             <>
               {String(row.id) !== String(currentUser.id) && (
                 <button

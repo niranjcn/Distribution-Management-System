@@ -44,6 +44,35 @@ def _augment_device_record(device: Optional[Dict[str, Any]]) -> Optional[Dict[st
     return device
 
 
+async def _get_descendant_user_ids(db, root_user_id: str) -> set:
+    descendants = set()
+    if not root_user_id or not str(root_user_id).isdigit():
+        return descendants
+
+    pending = [int(root_user_id)]
+    visited = set()
+
+    while pending:
+        current_parent_id = pending.pop()
+        if current_parent_id in visited:
+            continue
+        visited.add(current_parent_id)
+
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE parent_id = ?",
+            (current_parent_id,),
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            child_id = int(row["id"])
+            child_id_str = str(child_id)
+            if child_id_str not in descendants:
+                descendants.add(child_id_str)
+                pending.append(child_id)
+
+    return descendants
+
+
 async def get_devices(
     page: int = 1,
     page_size: int = 20,
@@ -622,49 +651,50 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
             subordinate_devices = cluster_devices + operator_devices
 
         elif user_role == "sub_distribution_manager":
-            # Devices held by clusters directly under this sub-distribution manager
-            cursor = await db.execute(
-                """SELECT d.* FROM devices d
-                   JOIN users u ON CAST(d.current_holder_id AS TEXT) = CAST(u.id AS TEXT)
-                   WHERE u.parent_id = ? AND u.role = 'cluster'""",
-                (uid,)
-            )
-            cluster_devices = rows_to_list(await cursor.fetchall())
-            cluster_device_ids = {str(d["id"]) for d in cluster_devices}
+            # Sub distribution managers are scoped to the sub distributor root they belong to.
+            cursor = await db.execute("SELECT parent_id FROM users WHERE id = ?", (uid,))
+            manager_row = await cursor.fetchone()
+            scope_root_id = str(uid)
+            if manager_row and manager_row["parent_id"] is not None:
+                scope_root_id = str(manager_row["parent_id"])
 
-            # Devices held by operators under the manager's clusters
-            cursor = await db.execute(
-                """SELECT d.* FROM devices d
-                   JOIN users op ON CAST(d.current_holder_id AS TEXT) = CAST(op.id AS TEXT)
-                   JOIN users cl ON op.parent_id = cl.id
-                   WHERE cl.parent_id = ? AND op.role = 'operator'""",
-                (uid,)
-            )
-            operator_devices = rows_to_list(await cursor.fetchall())
-            operator_device_ids = {str(d["id"]) for d in operator_devices}
+            scope_user_ids = {scope_root_id}
+            scope_user_ids.update(await _get_descendant_user_ids(db, scope_root_id))
+            scope_user_ids.discard(str(user_id))
 
-            # Include defective devices reported by clusters/operators in this manager chain
-            cursor = await db.execute(
-                """SELECT DISTINCT d.* FROM devices d
-                   JOIN defects def ON CAST(def.device_id AS TEXT) = CAST(d.id AS TEXT)
-                   JOIN users reporter ON CAST(def.reported_by AS TEXT) = CAST(reporter.id AS TEXT)
-                   LEFT JOIN users cl ON reporter.parent_id = cl.id
-                   WHERE (
-                     (reporter.role = 'cluster' AND reporter.parent_id = ?)
-                     OR (reporter.role = 'operator' AND cl.parent_id = ?)
-                   )
-                   AND d.status = 'defective'""",
-                (uid, uid)
-            )
-            defective_subordinate = rows_to_list(await cursor.fetchall())
+            scoped_user_list = sorted(scope_user_ids)
+            if scoped_user_list:
+                placeholders = ",".join(["?"] * len(scoped_user_list))
+                cursor = await db.execute(
+                    f"""SELECT * FROM devices
+                        WHERE CAST(current_holder_id AS TEXT) IN ({placeholders})
+                        ORDER BY updated_at DESC""",
+                    tuple(scoped_user_list),
+                )
+                subordinate_devices = rows_to_list(await cursor.fetchall())
+            else:
+                subordinate_devices = []
 
-            all_sub_ids = cluster_device_ids | operator_device_ids
+            subordinate_device_ids = {str(d["id"]) for d in subordinate_devices}
+
+            if scoped_user_list:
+                placeholders = ",".join(["?"] * len(scoped_user_list))
+                cursor = await db.execute(
+                    f"""SELECT DISTINCT d.* FROM devices d
+                        JOIN defects def ON CAST(def.device_id AS TEXT) = CAST(d.id AS TEXT)
+                        WHERE CAST(def.reported_by AS TEXT) IN ({placeholders})
+                          AND d.status = 'defective'""",
+                    tuple(scoped_user_list),
+                )
+                defective_subordinate = rows_to_list(await cursor.fetchall())
+            else:
+                defective_subordinate = []
+
             for d in defective_subordinate:
-                if str(d["id"]) not in all_sub_ids and str(d["id"]) not in held_device_ids:
-                    operator_devices.append(d)
-                    all_sub_ids.add(str(d["id"]))
-
-            subordinate_devices = cluster_devices + operator_devices
+                did = str(d["id"])
+                if did not in subordinate_device_ids and did not in held_device_ids:
+                    subordinate_devices.append(d)
+                    subordinate_device_ids.add(did)
 
         elif user_role == "cluster":
             # Devices held by operators directly under this cluster

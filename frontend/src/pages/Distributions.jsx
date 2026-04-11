@@ -290,6 +290,7 @@ const Distributions = () => {
   };
 
   const canCreate = ['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator'].includes(user?.role);
+  const isSubDistributionManager = user?.role === 'sub_distribution_manager';
   const canConfirmDisputedReturn = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canRecipientIdentifierDownload =
     (
@@ -406,7 +407,7 @@ const Distributions = () => {
           >
             <Eye className="w-4 h-4" />
           </button>
-          {row.status === 'pending_receipt' && String(row.to_user_id) === String(user?.id) && (
+          {row.status === 'pending_receipt' && String(row.to_user_id) === String(user?.id) && !isSubDistributionManager && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
