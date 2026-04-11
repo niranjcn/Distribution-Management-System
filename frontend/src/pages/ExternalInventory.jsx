@@ -14,6 +14,7 @@ import {
   Eye,
   PackagePlus,
   RefreshCw,
+  Trash2,
   Upload,
   Download,
 } from 'lucide-react';
@@ -23,6 +24,8 @@ const initialItemForm = {
   name: '',
   serial_number: '',
   mac_id: '',
+  identifier_type: '',
+  identifier: '',
   device_type: '',
   custom_device_type: '',
   price: 0,
@@ -33,6 +36,10 @@ const initialItemForm = {
 };
 
 const ITEM_TYPE_OPTIONS = ['OTT Box', 'OLT', 'Remote', 'SB', 'Adapter', 'Others'];
+const IDENTIFIER_TYPE_OPTIONS = ['NU ID', 'IMEI', 'Asset Tag', 'Serial Ref', 'Other'];
+
+const normalizeType = (value) => String(value || '').trim().toLowerCase().replace(/[-_\s]+/g, '');
+const isMacType = (value) => ['olt', 'adapter'].includes(normalizeType(value));
 
 const toTypeLabel = (value) => {
   const normalized = String(value || '').trim().toLowerCase().replace(/[-_\s]+/g, '');
@@ -44,7 +51,8 @@ const defaultPOLine = { item_inventory_id: '' };
 const ExternalInventory = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
-  const canManage = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
+  const normalizedRole = String(user?.role || '').trim().toLowerCase();
+  const canManage = ['super_admin', 'manager', 'pdic_staff', 'staff'].includes(normalizedRole);
   const canConfirmPO = canManage;
 
   const [dashboard, setDashboard] = useState(null);
@@ -61,17 +69,19 @@ const ExternalInventory = () => {
   const [itemImageFile, setItemImageFile] = useState(null);
   const [itemImagePreview, setItemImagePreview] = useState('');
   const [importingItems, setImportingItems] = useState(false);
+  const [deletingInventoryId, setDeletingInventoryId] = useState('');
   const [downloadingReceiptPoId, setDownloadingReceiptPoId] = useState('');
   const importInputRef = useRef(null);
 
   const [itemForm, setItemForm] = useState(initialItemForm);
   const [editingInventoryId, setEditingInventoryId] = useState('');
 
-  const normalizedItemType = String(itemForm.device_type || '').trim().toLowerCase().replace(/[-_\s]+/g, '');
+  const normalizedItemType = normalizeType(itemForm.device_type);
   const isSetTopBoxType = ['settopbox', 'setupbox', 'sb', 'stb'].includes(normalizedItemType);
+  const isMacIdType = isMacType(itemForm.device_type);
   const isOtherType = normalizedItemType === 'others';
   const idFieldLabel = isSetTopBoxType ? 'NU ID' : 'MAC ID';
-  const isIdRequired = !isOtherType;
+  const identifierRequired = !isMacIdType;
 
   const [poForm, setPoForm] = useState({
     name: '',
@@ -170,6 +180,8 @@ const ExternalInventory = () => {
 
   const handleCreateItem = async () => {
     const normalizedMacOrNuId = String(itemForm.mac_id || '').trim();
+    const normalizedIdentifierType = String(itemForm.identifier_type || '').trim();
+    const normalizedIdentifier = String(itemForm.identifier || '').trim();
     if (
       !itemForm.item_id.trim() ||
       !itemForm.name.trim() ||
@@ -180,8 +192,13 @@ const ExternalInventory = () => {
       return;
     }
 
-    if (isIdRequired && !normalizedMacOrNuId) {
-      showToast(`${idFieldLabel} is required for the selected type`, 'error');
+    if (isMacIdType && !normalizedMacOrNuId) {
+      showToast(`${idFieldLabel} is required for OLT and Adapter`, 'error');
+      return;
+    }
+
+    if (identifierRequired && (!normalizedIdentifierType || !normalizedIdentifier)) {
+      showToast('Identifier Type and Identifier are required for non-OLT/Adapter types', 'error');
       return;
     }
 
@@ -189,7 +206,9 @@ const ExternalInventory = () => {
       setSubmitting(true);
       const payload = {
         ...itemForm,
-        mac_id: normalizedMacOrNuId,
+        mac_id: isMacIdType ? normalizedMacOrNuId : '',
+        identifier_type: isMacIdType ? '' : normalizedIdentifierType,
+        identifier: isMacIdType ? '' : normalizedIdentifier,
         price: Number(itemForm.price),
       };
 
@@ -318,10 +337,11 @@ const ExternalInventory = () => {
       'name',
       'serial_number',
       'mac_id',
+      'identifier_type',
+      'identifier',
       'device_type',
       'custom_device_type',
       'price',
-      'unit',
       'supplier_name',
       'location',
       'notes',
@@ -330,29 +350,31 @@ const ExternalInventory = () => {
     const sampleRows = [
       {
         item_id: 'ITEM-EX-1001',
-        name: 'Sample OTT Device',
+        name: 'Sample OLT Device',
         serial_number: 'SN-EX-1001',
         mac_id: 'MAC-EX-1001',
-        device_type: 'OTT Box',
+        identifier_type: '',
+        identifier: '',
+        device_type: 'OLT',
         custom_device_type: '',
         price: '2799',
-        unit: 'pcs',
         supplier_name: 'Sample Supplier',
         location: 'Warehouse A',
-        notes: 'Sample row',
+        notes: 'For OLT/Adapter, fill mac_id',
       },
       {
         item_id: 'ITEM-EX-1002',
-        name: 'Custom Device Sample',
+        name: 'Sample Remote Device',
         serial_number: 'SN-EX-1002',
         mac_id: '',
-        device_type: 'Others',
-        custom_device_type: 'Media Converter',
+        identifier_type: 'NU ID',
+        identifier: 'NU-EX-1002',
+        device_type: 'Remote',
+        custom_device_type: '',
         price: '1599',
-        unit: 'pcs',
         supplier_name: 'Sample Supplier',
         location: 'Warehouse B',
-        notes: 'MAC/NU ID optional for Others',
+        notes: 'For non-OLT/Adapter, fill identifier_type and identifier',
       },
     ];
 
@@ -489,6 +511,61 @@ const ExternalInventory = () => {
     }
   };
 
+  const startEditItem = (item) => {
+    if (!item) return;
+    setEditingInventoryId(item.inventory_id || '');
+    const selectedType = String(item.device_type || '').trim();
+    const normalizedSelectedType = selectedType.toLowerCase();
+    const isKnownType = ITEM_TYPE_OPTIONS.some((typeOption) => typeOption.toLowerCase() === normalizedSelectedType);
+    const rowUsesMac = isMacType(selectedType);
+    setItemForm({
+      item_id: item.item_id || '',
+      name: item.name || '',
+      serial_number: item.serial_number || '',
+      mac_id: rowUsesMac ? (item.mac_id || '') : '',
+      identifier_type: rowUsesMac ? '' : (item.identifier_type || ''),
+      identifier: rowUsesMac ? '' : (item.identifier || ''),
+      device_type: isKnownType ? selectedType : 'Others',
+      custom_device_type: isKnownType ? '' : selectedType,
+      price: Number(item.price ?? 0),
+      unit: item.unit || 'pcs',
+      supplier_name: item.supplier_name || '',
+      location: item.location || '',
+      notes: item.notes || '',
+    });
+    setItemImageFile(null);
+    setItemImagePreview(item.image_url ? toAssetUrl(item.image_url) : '');
+    setSelectedItem(null);
+    setShowAddItemModal(true);
+  };
+
+  const handleDeleteItem = async (item) => {
+    if (!item?.inventory_id) {
+      showToast('Item reference is missing', 'error');
+      return;
+    }
+
+    const serialRef = item.serial_number || item.inventory_id;
+    const confirmed = window.confirm(`Delete external inventory item ${serialRef}?`);
+    if (!confirmed) return;
+
+    try {
+      setDeletingInventoryId(item.inventory_id);
+      await externalInventoryAPI.deleteItem(item.inventory_id);
+      showToast('External inventory item deleted', 'success');
+
+      if (selectedItem?.inventory_id === item.inventory_id) {
+        setSelectedItem(null);
+      }
+
+      await loadData();
+    } catch (error) {
+      showToast(error.message || 'Failed to delete item', 'error');
+    } finally {
+      setDeletingInventoryId('');
+    }
+  };
+
   const managementItemColumns = [
     {
       key: 'image_url',
@@ -512,12 +589,18 @@ const ExternalInventory = () => {
     { key: 'serial_number', label: 'Serial Number' },
     {
       key: 'mac_id',
+      label: 'MAC ID',
+      render: (value, row) => (isMacType(row?.device_type) ? (value || '-') : '-'),
+    },
+    {
+      key: 'identifier_type',
+      label: 'Identifier Type',
+      render: (value, row) => (!isMacType(row?.device_type) ? (value || '-') : '-'),
+    },
+    {
+      key: 'identifier',
       label: 'Identifier',
-      render: (value, row) => {
-        const normalizedType = String(row?.device_type || '').trim().toLowerCase().replace(/[-_\s]+/g, '');
-        const isSetTop = ['settopbox', 'setupbox', 'sb', 'stb'].includes(normalizedType);
-        return `${isSetTop ? 'NU ID' : 'MAC ID'}: ${value || '-'}`;
-      },
+      render: (value, row) => (!isMacType(row?.device_type) ? (value || '-') : '-'),
     },
     { key: 'device_type', label: 'Type', render: (value) => toTypeLabel(value) },
     {
@@ -529,6 +612,37 @@ const ExternalInventory = () => {
       key: 'created_at',
       label: 'Added At',
       render: (value) => formatDateTime(value),
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      sortable: false,
+      render: (_, row) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={(event) => {
+              event.stopPropagation();
+              startEditItem(row);
+            }}
+          >
+            Edit
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            icon={Trash2}
+            loading={deletingInventoryId === row.inventory_id}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleDeleteItem(row);
+            }}
+          >
+            Delete
+          </Button>
+        </div>
+      ),
     },
   ];
 
@@ -682,15 +796,18 @@ const ExternalInventory = () => {
         </div>
       )}
 
-      <Card title="Import Guide" subtitle="How to prepare the model sheet for upload">
-        <div className="space-y-2 text-sm text-gray-700">
-          <p>1. Click Download Model to get the CSV template (opens in Excel).</p>
-          <p>2. Fill required columns: item_id, name, serial_number, device_type.</p>
-          <p>3. For device_type = Others, custom_device_type is optional and MAC/NU ID can be blank.</p>
-          <p>4. Keep the same header names and column order for smooth import.</p>
-          <p>5. Save as CSV UTF-8 and upload using Import.</p>
-        </div>
-      </Card>
+      {canManage && (
+        <Card title="Import Guide" subtitle="How to prepare the model sheet for upload">
+          <div className="space-y-2 text-sm text-gray-700">
+            <p>1. Click Download Model to get the CSV template (opens in Excel).</p>
+            <p>2. Fill required columns: item_id, name, serial_number, device_type.</p>
+            <p>3. For OLT and Adapter, MAC ID is required.</p>
+            <p>4. For all other types, identifier_type and identifier are required.</p>
+            <p>5. Keep the same header names and column order for smooth import.</p>
+            <p>6. Save as CSV UTF-8 and upload using Import.</p>
+          </div>
+        </Card>
+      )}
 
       <Card title="Inventory Items" subtitle="Standalone external device inventory" padding={false}>
         <DataTable
@@ -798,15 +915,42 @@ const ExternalInventory = () => {
           <label className="space-y-1">
             <span className="text-sm font-medium text-gray-700">
               {idFieldLabel}
-              {isIdRequired ? ' *' : ' (Optional)'}
+              {isMacIdType ? ' *' : ' (Not used)'}
             </span>
             <input
               className="w-full rounded-lg border border-gray-300 px-3 py-2"
               value={itemForm.mac_id}
               onChange={(e) => setItemForm((p) => ({ ...p, mac_id: e.target.value }))}
               placeholder={isSetTopBoxType ? 'Enter NU ID' : 'Enter MAC ID'}
+              disabled={!isMacIdType}
             />
           </label>
+          {!isMacIdType && (
+            <>
+              <label className="space-y-1">
+                <span className="text-sm font-medium text-gray-700">Identifier Type *</span>
+                <select
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                  value={itemForm.identifier_type}
+                  onChange={(e) => setItemForm((p) => ({ ...p, identifier_type: e.target.value }))}
+                >
+                  <option value="">Select identifier type</option>
+                  {IDENTIFIER_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-sm font-medium text-gray-700">Identifier *</span>
+                <input
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                  value={itemForm.identifier}
+                  onChange={(e) => setItemForm((p) => ({ ...p, identifier: e.target.value }))}
+                  placeholder="Enter identifier"
+                />
+              </label>
+            </>
+          )}
           <label className="space-y-1">
             <span className="text-sm font-medium text-gray-700">Type</span>
             <select
@@ -903,31 +1047,20 @@ const ExternalInventory = () => {
               <Button
                 variant="secondary"
                 onClick={() => {
-                  if (!selectedItem) return;
-                  setEditingInventoryId(selectedItem.inventory_id || '');
-                  const selectedType = String(selectedItem.device_type || '').trim();
-                  const normalizedSelectedType = selectedType.toLowerCase();
-                  const isKnownType = ITEM_TYPE_OPTIONS.some((typeOption) => typeOption.toLowerCase() === normalizedSelectedType);
-                  setItemForm({
-                    item_id: selectedItem.item_id || '',
-                    name: selectedItem.name || '',
-                    serial_number: selectedItem.serial_number || '',
-                    mac_id: selectedItem.mac_id || '',
-                    device_type: isKnownType ? selectedType : 'Others',
-                    custom_device_type: isKnownType ? '' : selectedType,
-                    price: Number(selectedItem.price ?? 0),
-                    unit: selectedItem.unit || 'pcs',
-                    supplier_name: selectedItem.supplier_name || '',
-                    location: selectedItem.location || '',
-                    notes: selectedItem.notes || '',
-                  });
-                  setItemImageFile(null);
-                  setItemImagePreview(selectedItem.image_url ? toAssetUrl(selectedItem.image_url) : '');
-                  setSelectedItem(null);
-                  setShowAddItemModal(true);
+                  startEditItem(selectedItem);
                 }}
               >
                 Edit Item
+              </Button>
+            )}
+            {canManage && (
+              <Button
+                variant="danger"
+                icon={Trash2}
+                loading={deletingInventoryId === selectedItem?.inventory_id}
+                onClick={() => handleDeleteItem(selectedItem)}
+              >
+                Delete Item
               </Button>
             )}
             <Button onClick={() => setSelectedItem(null)}>Close</Button>
@@ -957,15 +1090,9 @@ const ExternalInventory = () => {
                 <p><span className="font-semibold text-gray-700">Name:</span> {selectedItem.name}</p>
                 <p><span className="font-semibold text-gray-700">Type:</span> {toTypeLabel(selectedItem.device_type)}</p>
                 <p><span className="font-semibold text-gray-700">Serial:</span> {selectedItem.serial_number || '-'}</p>
-                <p>
-                  <span className="font-semibold text-gray-700">
-                    {(() => {
-                      const normalizedType = String(selectedItem.device_type || '').trim().toLowerCase().replace(/[-_\s]+/g, '');
-                      return ['settopbox', 'setupbox', 'sb', 'stb'].includes(normalizedType) ? 'NU ID' : 'MAC ID';
-                    })()}:
-                  </span>{' '}
-                  {selectedItem.mac_id || '-'}
-                </p>
+                <p><span className="font-semibold text-gray-700">MAC ID:</span> {isMacType(selectedItem.device_type) ? (selectedItem.mac_id || '-') : '-'}</p>
+                <p><span className="font-semibold text-gray-700">Identifier Type:</span> {!isMacType(selectedItem.device_type) ? (selectedItem.identifier_type || '-') : '-'}</p>
+                <p><span className="font-semibold text-gray-700">Identifier:</span> {!isMacType(selectedItem.device_type) ? (selectedItem.identifier || '-') : '-'}</p>
                 <p><span className="font-semibold text-gray-700">Price:</span> {formatCurrency(selectedItem.price || 0)}</p>
                 <p><span className="font-semibold text-gray-700">Supplier:</span> {selectedItem.supplier_name || '-'}</p>
                 <p><span className="font-semibold text-gray-700">Location:</span> {selectedItem.location || '-'}</p>
@@ -1038,10 +1165,9 @@ const ExternalInventory = () => {
                   <option value="">Select device item</option>
                   {items.map((item) => (
                     <option key={item.inventory_id} value={item.inventory_id}>
-                      {item.item_id} | {item.name} | SN {item.serial_number} | {(() => {
-                        const normalizedType = String(item.device_type || '').trim().toLowerCase().replace(/[-_\s]+/g, '');
-                        return ['settopbox', 'setupbox', 'sb', 'stb'].includes(normalizedType) ? 'NU' : 'MAC';
-                      })()} {item.mac_id}
+                      {item.item_id} | {item.name} | SN {item.serial_number} | {isMacType(item.device_type)
+                        ? `MAC ${item.mac_id || '-'}`
+                        : `${item.identifier_type || 'Identifier'} ${item.identifier || '-'}`}
                     </option>
                   ))}
                 </select>

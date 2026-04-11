@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Response, UploadFile, File
 from app.services import report_service
 from app.middleware.auth_middleware import require_admin_or_manager_or_md_or_staff
+from app.core.activity_logger import log_business_activity
 
 router = APIRouter()
 
@@ -202,6 +203,12 @@ async def download_device_backup(
     """Download full device backup including each device journey path."""
     try:
         export_data = await report_service.get_device_backup_export(file_format=format)
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/reports/device-backup",
+            description=f"{actor_name} initiated device backup download ({format})",
+        )
         return Response(
             content=export_data["content"],
             media_type=export_data["media_type"],
@@ -232,6 +239,12 @@ async def download_returns_defects_backup(
     """Download backup for returned devices and defect reports."""
     try:
         export_data = await report_service.get_returns_defects_backup_export(file_format=format)
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/reports/returns-defects-backup",
+            description=f"{actor_name} initiated returns and defects backup download ({format})",
+        )
         return Response(
             content=export_data["content"],
             media_type=export_data["media_type"],
@@ -323,6 +336,13 @@ async def upload_backup_document(
         stored_name = f"{uuid4().hex[:12]}__{safe_original_name}"
         file_path = BACKUP_DOCUMENTS_DIR / stored_name
         file_path.write_bytes(content)
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/reports/backup-vault-upload",
+            description=f"{actor_name} uploaded backup vault document {safe_original_name}",
+        )
 
         return {
             "success": True,

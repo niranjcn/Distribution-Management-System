@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.models.distribution import DistributionCreate, DistributionStatusUpdate
 from app.services import distribution_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager, require_management
+from app.core.activity_logger import build_field_change_summary, log_business_activity
 
 router = APIRouter()
 
@@ -171,6 +172,19 @@ async def bulk_upload_distribution(
             from_user=current_user,
             notes=notes,
         )
+
+        if result.get("created") and result.get("distribution"):
+            distribution = result["distribution"]
+            actor_name = current_user.get("name") or current_user.get("email") or "User"
+            await log_business_activity(
+                user=current_user,
+                path="/activity/distributions/bulk-create",
+                description=(
+                    f"{actor_name} created distribution {distribution.get('distribution_id')} "
+                    f"to {distribution.get('to_user_name') or distribution.get('to_user_id')} "
+                    f"via bulk upload ({result.get('created_count', 0)} device(s))"
+                ),
+            )
 
         if result["created"]:
             message = (
@@ -403,6 +417,17 @@ async def create_distribution(
             from_user=current_user
         )
 
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/distributions/create",
+            description=(
+                f"{actor_name} created distribution {distribution.get('distribution_id')} "
+                f"to {distribution.get('to_user_name') or distribution.get('to_user_id')} "
+                f"({distribution.get('device_count', 0)} device(s))"
+            ),
+        )
+
         return {
             "success": True,
             "message": "Distribution created successfully",
@@ -508,6 +533,7 @@ async def update_distribution_status(
     _ensure_not_md_director(current_user)
 
     try:
+        before = await distribution_service.get_distribution_by_id(distribution_id)
         distribution = await distribution_service.update_distribution_status(
             distribution_id=distribution_id,
             status=status_update.status.value,
@@ -520,6 +546,23 @@ async def update_distribution_status(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Distribution not found"
             )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        change_summary = build_field_change_summary(
+            before=before or {},
+            after=distribution or {},
+            fields=["status"],
+            exclude_fields={"updated_at"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/distributions/status-update",
+            description=(
+                f"{actor_name} updated distribution status for "
+                f"{distribution.get('distribution_id') or (before or {}).get('distribution_id') or distribution_id}; "
+                f"changes: {change_summary}"
+            ),
+        )
 
         return {
             "success": True,

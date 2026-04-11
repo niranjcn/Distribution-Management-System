@@ -7,6 +7,7 @@ from app.models.user import UserCreate, UserUpdate
 from app.services import user_service
 from app.middleware.auth_middleware import get_current_user
 from app.core.audit import audit_logger
+from app.core.activity_logger import build_field_change_summary, log_business_activity
 from app.utils.roles import (
     SUPER_ADMIN,
     MD_DIRECTOR,
@@ -316,6 +317,15 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
 
     try:
         user = await user_service.create_user(user_data, creator_role=actor_role)
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/create",
+            description=(
+                f"{actor_name} created user {user.get('name') or user.get('email') or user.get('id')} "
+                f"({user.get('role') or 'unknown role'})"
+            ),
+        )
         return {"success": True, "message": "User created successfully", "data": user}
     except HTTPException:
         raise
@@ -347,6 +357,23 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot change account status")
 
         user = await user_service.update_user(user_id, user_data)
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        edited_fields = list(user_data.model_dump(exclude_unset=True).keys())
+        change_summary = build_field_change_summary(
+            before=target_user or {},
+            after=user or {},
+            fields=edited_fields,
+            exclude_fields={"updated_at", "password_hash"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/update",
+            description=(
+                f"{actor_name} updated user "
+                f"{user.get('name') or user.get('email') or user_id}; "
+                f"changes: {change_summary}"
+            ),
+        )
         return {"success": True, "message": "User updated successfully", "data": user}
     except HTTPException:
         raise
@@ -382,6 +409,14 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
         success = await user_service.delete_user(user_id)
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        target_name = target_user.get("name") or target_user.get("email") or user_id
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/delete",
+            description=f"{actor_name} deleted user {target_name}",
+        )
 
         audit_logger.warning(
             "USER_DELETE | actor_id=%s | actor_email=%s | target_user_id=%s | ip=%s",
@@ -426,6 +461,22 @@ async def update_user_status(
 
     try:
         user = await user_service.update_user_status(user_id, status_value)
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        change_summary = build_field_change_summary(
+            before=target_user or {},
+            after=user or {},
+            fields=["status"],
+            exclude_fields={"updated_at"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/status-update",
+            description=(
+                f"{actor_name} updated user status for "
+                f"{user.get('name') or user.get('email') or user_id}; "
+                f"changes: {change_summary}"
+            ),
+        )
         audit_logger.info(
             "USER_STATUS_UPDATE | actor_id=%s | actor_email=%s | target_user_id=%s | status=%s | ip=%s",
             current_user.get("id"),

@@ -928,6 +928,13 @@ export const externalInventoryAPI = {
     return response;
   },
 
+  deleteItem: async (inventoryId) => {
+    const response = await apiRequest(`/external-inventory/items/${inventoryId}`, {
+      method: 'DELETE',
+    });
+    return response;
+  },
+
   uploadItemImage: async (inventoryId, file) => {
     const formData = new FormData();
     formData.append('image', file);

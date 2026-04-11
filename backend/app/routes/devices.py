@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, Iterable, List
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceType
 from app.services import device_service, notification_service, defect_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager,require_management
+from app.core.activity_logger import build_field_change_summary, log_business_activity
 from app.utils.roles import normalize_role
 from app.database import get_db
 
@@ -542,6 +543,18 @@ async def bulk_upload_devices(
             detail="Only Excel (.xlsx, .xls) or CSV (.csv) files are supported"
         )
 
+    actor_name = current_user.get("name") or current_user.get("email") or "User"
+
+    async def _log_bulk_upload_summary(created_count: int, skipped_count: int, error_count: int) -> None:
+        await log_business_activity(
+            user=current_user,
+            path="/activity/devices/bulk-upload",
+            description=(
+                f"{actor_name} used bulk upload for devices: "
+                f"{created_count} created, {skipped_count} skipped, {error_count} errors"
+            ),
+        )
+
     try:
         import io
 
@@ -711,6 +724,7 @@ async def bulk_upload_devices(
             })
 
         if not prepared_rows:
+            await _log_bulk_upload_summary(0, len(skipped), len(errors))
             return {
                 "success": True,
                 "message": f"Bulk upload complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
@@ -753,6 +767,7 @@ async def bulk_upload_devices(
                 insertable_rows.append(item)
 
             if not insertable_rows:
+                await _log_bulk_upload_summary(0, len(skipped), len(errors))
                 return {
                     "success": True,
                     "message": f"Bulk upload complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
@@ -828,7 +843,7 @@ async def bulk_upload_devices(
                             continue
                         history_payload.append((
                             numeric_id,
-                            "registered",
+                            "bulk_registered",
                             None,
                             None,
                             None,
@@ -859,7 +874,7 @@ async def bulk_upload_devices(
                                 history_sql,
                                 (
                                     new_numeric_id,
-                                    "registered",
+                                    "bulk_registered",
                                     None,
                                     None,
                                     None,
@@ -908,6 +923,8 @@ async def bulk_upload_devices(
                     detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."
                 )
 
+        await _log_bulk_upload_summary(len(created), len(skipped), len(errors))
+
         return {
             "success": True,
             "message": f"Bulk upload complete: {len(created)} created, {len(skipped)} skipped, {len(errors)} errors",
@@ -951,6 +968,16 @@ async def create_device(
             created_by_name=(current_user.get("name") or current_user.get("email") or "PDIC Staff")
         )
 
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/devices/create",
+            description=(
+                f"{actor_name} added device {device.get('device_id') or device.get('id')} "
+                f"({device.get('device_type') or 'Unknown type'})"
+            ),
+        )
+
         return {
             "success": True,
             "message": "Device registered successfully",
@@ -979,6 +1006,7 @@ async def update_device(
 ):
     """Update device"""
     try:
+        before = await device_service.get_device_by_id(device_id)
         device = await device_service.update_device(device_id, device_data)
 
         if not device:
@@ -986,6 +1014,24 @@ async def update_device(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Device not found"
             )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        edited_fields = list(device_data.model_dump(exclude_unset=True).keys())
+        change_summary = build_field_change_summary(
+            before=before or {},
+            after=device or {},
+            fields=edited_fields,
+            exclude_fields={"updated_at"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/devices/update",
+            description=(
+                f"{actor_name} updated device "
+                f"{device.get('device_id') or before.get('device_id') if before else device_id}; "
+                f"changes: {change_summary}"
+            ),
+        )
 
         return {
             "success": True,
@@ -1014,6 +1060,7 @@ async def delete_device(
 ):
     """Delete device"""
     try:
+        device = await device_service.get_device_by_id(device_id)
         success = await device_service.delete_device(device_id)
 
         if not success:
@@ -1021,6 +1068,14 @@ async def delete_device(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Device not found"
             )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        device_ref = (device or {}).get("device_id") or device_id
+        await log_business_activity(
+            user=current_user,
+            path="/activity/devices/delete",
+            description=f"{actor_name} deleted device {device_ref}",
+        )
 
         return {
             "success": True,
@@ -1064,6 +1119,8 @@ async def update_device_status(
                 detail="MD/Director has read-only access to devices"
             )
 
+        before = await device_service.get_device_by_id(device_id)
+
         device = await device_service.update_device_status(
             device_id=device_id,
             status=status_value,
@@ -1084,6 +1141,23 @@ async def update_device_status(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Device not found"
             )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        change_summary = build_field_change_summary(
+            before=before or {},
+            after=device or {},
+            fields=["status"],
+            exclude_fields={"updated_at"},
+        )
+        await log_business_activity(
+            user=current_user,
+            path="/activity/devices/status-update",
+            description=(
+                f"{actor_name} updated device status for "
+                f"{device.get('device_id') or (before or {}).get('device_id') or device_id}; "
+                f"changes: {change_summary}"
+            ),
+        )
 
         return {
             "success": True,
