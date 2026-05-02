@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { returnsAPI } from '../../services/api';
+import { KeyRound } from 'lucide-react';
+import kvLogo from '../../kv_logo.webp';
 import {
   LayoutDashboard,
   Box,
@@ -326,16 +328,15 @@ const Sidebar = ({ isOpen, onClose }) => {
     if (item.children) {
       const isExpanded = expandedMenus[item.key];
       const hasActiveChild = isParentActive(item.children);
-      
+
       return (
         <div key={item.key}>
           <button
             onClick={() => toggleMenu(item.key)}
-            className={`w-full flex items-center justify-between px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-              hasActiveChild
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100'
-            }`}
+            className={`w-full flex items-center justify-between px-4 py-3 text-sm font-medium rounded-lg transition-colors ${hasActiveChild
+              ? 'bg-green-50 text-green-700'
+              : 'text-gray-600 hover:bg-gray-100'
+              }`}
           >
             <div className="flex items-center gap-3">
               <item.icon className="w-5 h-5" />
@@ -347,7 +348,7 @@ const Sidebar = ({ isOpen, onClose }) => {
               <ChevronRight className="w-4 h-4" />
             )}
           </button>
-          
+
           {isExpanded && (
             <div className="ml-4 mt-1 space-y-1 border-l-2 border-gray-200 pl-4">
               {item.children.map((child) => (
@@ -355,11 +356,10 @@ const Sidebar = ({ isOpen, onClose }) => {
                   key={child.path}
                   to={child.path}
                   onClick={onClose}
-                  className={`block px-3 py-2 text-sm rounded-lg transition-colors ${
-                    isActive(child.path)
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
+                  className={`block px-3 py-2 text-sm rounded-lg transition-colors ${isActive(child.path)
+                    ? 'bg-green-700 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                    }`}
                 >
                   {child.label}
                 </Link>
@@ -375,17 +375,19 @@ const Sidebar = ({ isOpen, onClose }) => {
         key={item.path}
         to={item.path}
         onClick={onClose}
-        className={`flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-          isActive(item.path)
-            ? 'bg-blue-600 text-white'
-            : 'text-gray-700 hover:bg-gray-100'
-        }`}
+        className={`flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors ${isActive(item.path)
+          ? 'bg-green-50 text-green-700'
+          : 'text-gray-600 hover:bg-gray-100'
+          }`}
       >
         <item.icon className="w-5 h-5" />
         <span>{item.label}</span>
       </Link>
     );
   };
+
+  const userInitial = user?.name?.charAt(0)?.toUpperCase() || 'U';
+  const userRole = ROLE_LABELS[normalizeRole(user?.role)] || normalizeRole(user?.role);
 
   return (
     <>
@@ -399,41 +401,69 @@ const Sidebar = ({ isOpen, onClose }) => {
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 h-full w-64 glass-panel border-r border-gray-200 z-50 transform transition-transform duration-300 ease-in-out ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        } lg:translate-x-0`}
+        className={`fixed top-0 left-0 h-full w-64 bg-white border-r border-gray-200 shadow-sm z-50 transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'
+          } lg:translate-x-0`}
       >
         <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
-            <Link to="/" className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-gradient-to-br from-cyan-500 to-orange-500 shadow-lg">
-                <Truck className="w-6 h-6 text-white" />
-              </div>
-              <span className="text-xl font-bold text-gray-800">DMS</span>
+
+          {/* Logo block — matches KannurVision image */}
+          <div className="flex items-start justify-between px-2 pt-1 pb-1 border-b border-gray-200">
+            <Link to="/" className="flex flex-col items-center w-full gap-0.5">
+              {/* KannurVision logo image — bigger, no gap */}
+              <img
+                src={kvLogo}
+                alt="KannurVision"
+                className="w-40 h-auto object-contain"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                }}
+              />
+              {/* PDIC text — flush below logo */}
+              <span className="text-base font-bold text-gray-800 tracking-widest leading-none -mt-2">PDIC</span>
+              {/* NETWORK MANAGER subtitle */}
+              <span className="text-[10px] font-medium text-gray-400 tracking-widest uppercase mt-0">Network Manager</span>
             </Link>
             <button
               onClick={onClose}
-              className="lg:hidden p-2 hover:bg-gray-100 rounded-lg"
+              className="lg:hidden p-1 hover:bg-gray-100 rounded-lg mt-1 flex-shrink-0"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4 text-gray-500" />
             </button>
           </div>
 
+          {/* Navigation section label */}
+          <div className="px-4 pt-4 pb-1">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-widest">Navigation</span>
+          </div>
+
           {/* Navigation */}
-          <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+          <nav className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5">
             {menuItems.map(renderMenuItem)}
           </nav>
 
-          {/* User role badge */}
-          <div className="p-4 border-t border-gray-200">
-            <div className="glass-panel rounded-lg p-3">
-              <div className="text-xs text-gray-500 uppercase tracking-wider">Logged in as</div>
-              <div className="text-sm font-medium text-gray-800 capitalize mt-1">
-                {ROLE_LABELS[normalizeRole(user?.role)] || normalizeRole(user?.role)}
+          {/* User info block at bottom — matches KannurVision image */}
+          <div className="border-t border-gray-200 p-4">
+            <div className="flex items-center gap-3 mb-3">
+              {/* Avatar circle with initial */}
+              <div className="w-9 h-9 rounded-full bg-green-700 flex items-center justify-center flex-shrink-0">
+                <span className="text-white text-sm font-bold">{userInitial}</span>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-800 truncate">{user?.name || 'User'}</p>
+                <p className="text-xs text-gray-400 uppercase tracking-wide truncate">{userRole}</p>
               </div>
             </div>
+            {/* My Profile link */}
+            <Link
+              to="/profile"
+              onClick={onClose}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-yellow-500" />
+              My Profile
+            </Link>
           </div>
+
         </div>
       </aside>
     </>

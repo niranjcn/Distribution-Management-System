@@ -10,13 +10,13 @@ const Button = ({
   className = '',
 }) => {
   const variants = {
-    primary: 'bg-gradient-to-r from-cyan-600 to-sky-700 hover:from-cyan-500 hover:to-sky-600 text-white shadow-lg shadow-cyan-900/30',
-    secondary: 'bg-slate-800/70 hover:bg-slate-700/80 text-slate-100 border border-slate-500/40 backdrop-blur',
-    success: 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white shadow-lg shadow-emerald-900/30',
-    danger: 'bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white shadow-lg shadow-rose-900/30',
-    warning: 'bg-gradient-to-r from-amber-600 to-orange-700 hover:from-amber-500 hover:to-orange-600 text-white shadow-lg shadow-orange-900/30',
-    outline: 'border border-slate-400/40 hover:bg-slate-700/35 text-slate-100 backdrop-blur',
-    ghost: 'hover:bg-slate-700/35 text-slate-200',
+    primary: 'bg-green-700 hover:bg-green-800 text-white shadow-sm',
+    secondary: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 shadow-sm',
+    success: 'bg-green-700 hover:bg-green-800 text-white shadow-sm',
+    danger: 'bg-red-700 hover:bg-red-800 text-white shadow-sm',
+    warning: 'bg-orange-600 hover:bg-orange-700 text-white shadow-sm',
+    outline: 'border border-gray-300 hover:bg-gray-50 text-gray-700',
+    ghost: 'hover:bg-gray-100 text-gray-600',
   };
 
   const sizes = {
@@ -30,7 +30,7 @@ const Button = ({
       type={type}
       onClick={onClick}
       disabled={disabled || loading}
-      className={`inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
     >
       {loading ? (
         <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />

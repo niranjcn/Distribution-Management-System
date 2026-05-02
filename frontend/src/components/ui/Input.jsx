@@ -8,14 +8,14 @@ const Input = ({
   return (
     <div className={className}>
       {label && (
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-gray-600 mb-1.5">
           {label}
           {props.required && <span className="text-red-500 ml-1">*</span>}
         </label>
       )}
       <input
-        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-          error ? 'border-red-300/70 bg-red-900/20 text-red-100' : 'border-gray-300 bg-slate-900/55 text-slate-100'
+        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition-colors ${
+          error ? 'border-red-300 bg-red-50 text-red-900' : 'border-gray-300 bg-white text-gray-800'
         }`}
         {...props}
       />
@@ -23,7 +23,7 @@ const Input = ({
         <p className="mt-1 text-sm text-red-600">{error}</p>
       )}
       {helperText && !error && (
-        <p className="mt-1 text-sm text-gray-500">{helperText}</p>
+        <p className="mt-1 text-sm text-gray-400">{helperText}</p>
       )}
     </div>
   );

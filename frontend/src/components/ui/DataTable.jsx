@@ -23,9 +23,9 @@ const DataTable = ({
   const PROGRESSIVE_STEP_PAGES = 25;
 
   const [internalCurrentPage, setInternalCurrentPage] = useState(1);
-    const currentPage = typeof controlledCurrentPage === 'number'
-      ? controlledCurrentPage
-      : internalCurrentPage;
+  const currentPage = typeof controlledCurrentPage === 'number'
+    ? controlledCurrentPage
+    : internalCurrentPage;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
@@ -164,7 +164,7 @@ const DataTable = ({
   };
 
   return (
-    <div className="glass-panel rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 border-b border-gray-200">
         {searchable && (
@@ -188,7 +188,7 @@ const DataTable = ({
           {exportable && (
             <button
               onClick={handleExport}
-              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-100 bg-slate-700/70 hover:bg-slate-600/80 rounded-lg transition-colors border border-slate-500/40"
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 bg-white hover:bg-gray-50 rounded-lg transition-colors border border-gray-300"
             >
               <Download className="w-4 h-4" />
               Export
@@ -222,17 +222,15 @@ const DataTable = ({
                 <th
                   key={col.key}
                   onClick={() => col.sortable !== false && handleSort(col.key)}
-                  className={`px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider ${
-                    col.sortable !== false ? 'cursor-pointer hover:bg-gray-100' : ''
-                  }`}
+                  className={`px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider ${col.sortable !== false ? 'cursor-pointer hover:bg-gray-100' : ''
+                    }`}
                 >
                   <div className="flex items-center gap-1">
                     {col.label}
                     {sortConfig.key === col.key && (
                       <ChevronDown
-                        className={`w-4 h-4 transition-transform ${
-                          sortConfig.direction === 'desc' ? 'rotate-180' : ''
-                        }`}
+                        className={`w-4 h-4 transition-transform ${sortConfig.direction === 'desc' ? 'rotate-180' : ''
+                          }`}
                       />
                     )}
                   </div>
@@ -255,9 +253,8 @@ const DataTable = ({
                 <tr
                   key={row.id}
                   onClick={() => onRowClick?.(row)}
-                  className={`hover:brightness-95 transition-colors ${
-                    onRowClick ? 'cursor-pointer' : ''
-                  } ${selectedRows.includes(row.id) ? 'bg-blue-50' : getRowClassName ? getRowClassName(row) : ''}`}
+                  className={`hover:brightness-95 transition-colors ${onRowClick ? 'cursor-pointer' : ''
+                    } ${selectedRows.includes(row.id) ? 'bg-blue-50' : getRowClassName ? getRowClassName(row) : ''}`}
                 >
                   {selectable && (
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -294,7 +291,7 @@ const DataTable = ({
             const actionCol = columns.find(c => c.key === 'actions');
             const otherCols = columns.filter(c => c !== primaryCol && c !== secondaryCol && c.key !== 'actions');
             const isExpanded = expandedRow === row.id;
-            
+
             return (
               <div
                 key={row.id}
@@ -313,7 +310,7 @@ const DataTable = ({
                       </div>
                     )}
                   </div>
-                  
+
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {actionCol && (
                       <div onClick={(e) => e.stopPropagation()}>
@@ -330,7 +327,7 @@ const DataTable = ({
                     )}
                   </div>
                 </div>
-                
+
                 {/* Expanded details */}
                 {isExpanded && otherCols.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-3">
@@ -396,11 +393,10 @@ const DataTable = ({
                 <button
                   key={pageNum}
                   onClick={() => setPage(pageNum)}
-                  className={`w-8 h-8 text-sm font-medium rounded-lg ${
-                    currentPage === pageNum
-                      ? 'bg-blue-600 text-white'
+                  className={`w-8 h-8 text-sm font-medium rounded-lg ${currentPage === pageNum
+                      ? 'bg-green-700 text-white'
                       : 'text-gray-600 hover:bg-gray-100'
-                  }`}
+                    }`}
                 >
                   {pageNum}
                 </button>

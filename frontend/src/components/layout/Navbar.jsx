@@ -69,7 +69,7 @@ const Navbar = ({ onMenuClick }) => {
   };
 
   return (
-    <header className="sticky top-0 z-30 glass-shell border-b border-gray-200">
+    <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
       <div className="flex items-center justify-between h-16 px-4 lg:px-6">
         {/* Left side */}
         <div className="flex items-center gap-4">
@@ -89,7 +89,7 @@ const Navbar = ({ onMenuClick }) => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search by MAC address..."
-                className="w-64 lg:w-80 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                className="w-64 lg:w-80 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500/20 focus:border-green-600 text-sm"
               />
             </div>
           </form>
@@ -118,7 +118,7 @@ const Navbar = ({ onMenuClick }) => {
               onClick={() => setShowProfile(!showProfile)}
               className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded-lg"
             >
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium shadow-sm">
+              <div className="w-8 h-8 bg-green-700 rounded-full flex items-center justify-center text-white text-sm font-medium shadow-sm">
                 {user?.avatar || user?.name?.charAt(0) || 'U'}
               </div>
               <div className="hidden sm:block text-left">
@@ -129,7 +129,7 @@ const Navbar = ({ onMenuClick }) => {
             </button>
 
             {showProfile && (
-              <div className="absolute right-0 mt-2 w-56 glass-panel rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+              <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b border-gray-100">
                   <p className="text-sm font-medium text-gray-800">{user?.name}</p>
                   <p className="text-sm text-gray-500">{user?.email}</p>

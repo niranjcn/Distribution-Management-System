@@ -53,30 +53,30 @@ const chartOptions = {
   plugins: {
     legend: {
       labels: {
-        color: '#d1d5db',
+        color: '#5F6368',
         boxWidth: 12,
         font: {
-          family: 'Segoe UI',
+          family: 'Inter, Segoe UI, sans-serif',
           size: 11,
         },
       },
     },
     tooltip: {
-      backgroundColor: '#101827',
-      titleColor: '#f9fafb',
-      bodyColor: '#e5e7eb',
-      borderColor: '#374151',
+      backgroundColor: '#FFFFFF',
+      titleColor: '#1A1A1A',
+      bodyColor: '#5F6368',
+      borderColor: '#E0E0E0',
       borderWidth: 1,
     },
   },
   scales: {
     x: {
-      ticks: { color: '#9ca3af' },
-      grid: { color: 'rgba(148, 163, 184, 0.12)' },
+      ticks: { color: '#5F6368' },
+      grid: { color: 'rgba(0, 0, 0, 0.06)' },
     },
     y: {
-      ticks: { color: '#9ca3af' },
-      grid: { color: 'rgba(148, 163, 184, 0.12)' },
+      ticks: { color: '#5F6368' },
+      grid: { color: 'rgba(0, 0, 0, 0.06)' },
     },
   },
 };
@@ -130,7 +130,7 @@ const AdminDashboard = () => {
     datasets: [{
       data: [charts.device_active_split?.active || 0, charts.device_active_split?.inactive || 0],
       backgroundColor: ['#10b981', '#ef4444'],
-      borderColor: ['#064e3b', '#7f1d1d'],
+      borderColor: ['#065F46', '#7F1D1D'],
       borderWidth: 1,
     }],
   }), [charts.device_active_split]);
@@ -147,7 +147,7 @@ const AdminDashboard = () => {
       ],
       backgroundColor: ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#a855f7'],
       borderWidth: 1,
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
     }],
   }), [charts.device_status]);
 
@@ -164,7 +164,7 @@ const AdminDashboard = () => {
         charts.user_roles?.super_admin ?? charts.user_roles?.admin ?? 0,
       ],
       backgroundColor: ['#f97316', '#14b8a6', '#8b5cf6', '#3b82f6', '#facc15', '#ef4444'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.user_roles]);
@@ -179,7 +179,7 @@ const AdminDashboard = () => {
         charts.defect_severity?.low || 0,
       ],
       backgroundColor: ['#dc2626', '#ea580c', '#f59e0b', '#10b981'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.defect_severity]);
@@ -239,7 +239,7 @@ const AdminDashboard = () => {
         charts.replacement_pipeline?.pending_confirmation || 0,
       ],
       backgroundColor: ['#38bdf8', '#10b981', '#f59e0b'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.replacement_pipeline]);
@@ -255,7 +255,7 @@ const AdminDashboard = () => {
         charts.returns_by_status?.rejected || 0,
       ],
       backgroundColor: ['#f59e0b', '#3b82f6', '#10b981', '#ef4444'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.returns_by_status]);
@@ -318,7 +318,7 @@ const AdminDashboard = () => {
         charts.pending_action_queue?.returns || 0,
       ],
       backgroundColor: ['#6366f1', '#f59e0b', '#ef4444'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.pending_action_queue, kpis.pending_approvals, kpis.pending_receipts]);
@@ -329,18 +329,18 @@ const AdminDashboard = () => {
         <div className="absolute right-0 top-0 h-20 w-20 rounded-full bg-orange-400/20 blur-2xl" />
         <div className="absolute left-8 bottom-0 h-16 w-16 rounded-full bg-red-500/20 blur-2xl" />
         <div className="relative z-10 flex flex-col gap-2">
-          <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-wide">Operations Command Center</h1>
-          <p className="text-slate-200 text-sm sm:text-base">Industrial Ops overview of fleet health, defects, replacements, and workforce distribution.</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-green-900 tracking-wide">Operations Command Center</h1>
+          <p className="text-green-700 text-sm sm:text-base">Overview of fleet health, defects, replacements, and workforce distribution.</p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 animate-slideUp">
-        <StatCard title="Total Devices" value={kpis.total_devices ?? stats.total_devices ?? 0} icon={Boxes} color="blue" />
-        <StatCard title="Active Devices" value={kpis.active_devices ?? stats.active_devices ?? 0} icon={Cpu} color="green" />
-        <StatCard title="Inactive Devices" value={kpis.inactive_devices ?? 0} icon={AlertTriangle} color="red" />
-        <StatCard title="Defects (Month)" value={kpis.defects_this_month ?? 0} icon={HardHat} color="yellow" />
-        <StatCard title="Defects (Year)" value={kpis.defects_this_year ?? 0} icon={Radar} color="indigo" />
-        <StatCard title="Replacements" value={kpis.replacements_total ?? 0} icon={Wrench} color="purple" />
+        <StatCard title="Total Devices" value={kpis.total_devices ?? stats.total_devices ?? 0} description="Registered devices" icon={Boxes} color="total" />
+        <StatCard title="Active Devices" value={kpis.active_devices ?? stats.active_devices ?? 0} description="Currently active" icon={Cpu} color="online" />
+        <StatCard title="Inactive Devices" value={kpis.inactive_devices ?? 0} description="Not responding" icon={AlertTriangle} color="offline" />
+        <StatCard title="Defects (Month)" value={kpis.defects_this_month ?? 0} description="This month" icon={HardHat} color="yellow" />
+        <StatCard title="Defects (Year)" value={kpis.defects_this_year ?? 0} description="This year" icon={Radar} color="indigo" />
+        <StatCard title="Replacements" value={kpis.replacements_total ?? 0} description="Total" icon={Wrench} color="purple" />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 animate-slideUp">
@@ -365,10 +365,10 @@ const AdminDashboard = () => {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-slideUp">
-        <div className="industrial-mini-card"><p className="text-xs text-slate-300">Operators</p><p className="text-xl font-bold text-white">{kpis.total_operators ?? 0}</p></div>
-        <div className="industrial-mini-card"><p className="text-xs text-slate-300">Sub Distributors</p><p className="text-xl font-bold text-white">{kpis.total_sub_distributors ?? 0}</p></div>
-        <div className="industrial-mini-card"><p className="text-xs text-slate-300">Clusters</p><p className="text-xl font-bold text-white">{kpis.total_clusters ?? 0}</p></div>
-        <div className="industrial-mini-card"><p className="text-xs text-slate-300">Staff</p><p className="text-xl font-bold text-white">{kpis.total_staff ?? 0}</p></div>
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"><p className="text-xs text-gray-400 uppercase tracking-wide">Operators</p><p className="text-xl font-bold text-gray-800 mt-1">{kpis.total_operators ?? 0}</p></div>
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"><p className="text-xs text-gray-400 uppercase tracking-wide">Sub Distributors</p><p className="text-xl font-bold text-gray-800 mt-1">{kpis.total_sub_distributors ?? 0}</p></div>
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"><p className="text-xs text-gray-400 uppercase tracking-wide">Clusters</p><p className="text-xl font-bold text-gray-800 mt-1">{kpis.total_clusters ?? 0}</p></div>
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"><p className="text-xs text-gray-400 uppercase tracking-wide">Staff</p><p className="text-xl font-bold text-gray-800 mt-1">{kpis.total_staff ?? 0}</p></div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-slideUp">
