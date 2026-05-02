@@ -50,26 +50,26 @@ const chartOptions = {
   plugins: {
     legend: {
       labels: {
-        color: '#d1d5db',
+        color: '#5F6368',
         boxWidth: 12,
       },
     },
     tooltip: {
-      backgroundColor: '#101827',
-      titleColor: '#f9fafb',
-      bodyColor: '#e5e7eb',
-      borderColor: '#374151',
+      backgroundColor: '#FFFFFF',
+      titleColor: '#1A1A1A',
+      bodyColor: '#5F6368',
+      borderColor: '#E0E0E0',
       borderWidth: 1,
     },
   },
   scales: {
     x: {
-      ticks: { color: '#9ca3af' },
-      grid: { color: 'rgba(148, 163, 184, 0.12)' },
+      ticks: { color: '#5F6368' },
+      grid: { color: 'rgba(0, 0, 0, 0.06)' },
     },
     y: {
-      ticks: { color: '#9ca3af' },
-      grid: { color: 'rgba(148, 163, 184, 0.12)' },
+      ticks: { color: '#5F6368' },
+      grid: { color: 'rgba(0, 0, 0, 0.06)' },
     },
   },
 };
@@ -113,7 +113,7 @@ const ManagerDashboard = () => {
     datasets: [{
       data: [charts.device_active_split?.active || 0, charts.device_active_split?.inactive || 0],
       backgroundColor: ['#10b981', '#ef4444'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.device_active_split]);
@@ -164,7 +164,7 @@ const ManagerDashboard = () => {
         charts.replacement_pipeline?.pending_confirmation || 0,
       ],
       backgroundColor: ['#10b981', '#f59e0b'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.replacement_pipeline]);
@@ -180,7 +180,7 @@ const ManagerDashboard = () => {
         charts.returns_by_status?.rejected || 0,
       ],
       backgroundColor: ['#f59e0b', '#3b82f6', '#10b981', '#ef4444'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.returns_by_status]);
@@ -243,7 +243,7 @@ const ManagerDashboard = () => {
         charts.pending_action_queue?.returns || 0,
       ],
       backgroundColor: ['#6366f1', '#f59e0b', '#ef4444'],
-      borderColor: '#111827',
+      borderColor: '#FFFFFF',
       borderWidth: 1,
     }],
   }), [charts.pending_action_queue, kpis.pending_approvals, kpis.pending_receipts]);
@@ -253,18 +253,18 @@ const ManagerDashboard = () => {
       <div className="industrial-hero relative overflow-hidden rounded-2xl p-5 sm:p-6 animate-fadeIn">
         <div className="absolute right-0 top-0 h-20 w-20 rounded-full bg-orange-400/20 blur-2xl" />
         <div className="relative z-10">
-          <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-wide">Management Ops Console</h1>
-          <p className="text-slate-200 mt-1">Role-scoped analytics for throughput, defects, replacements, and return control.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-green-900 tracking-wide">Management Ops Console</h1>
+          <p className="text-green-700 mt-1">Role-scoped analytics for throughput, defects, replacements, and return control.</p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 animate-slideUp">
-        <StatCard title="Total Devices" value={kpis.total_devices || stats.total_devices || 0} icon={Boxes} color="blue" />
-        <StatCard title="Active Devices" value={kpis.active_devices || stats.active_devices || 0} icon={Cpu} color="green" />
-        <StatCard title="Defects (Month)" value={kpis.defects_this_month || 0} icon={HardHat} color="red" />
-        <StatCard title="Defects (Year)" value={kpis.defects_this_year || 0} icon={Radar} color="indigo" />
-        <StatCard title="Awaiting Receipt" value={kpis.pending_receipts || stats.pending_receipts || 0} icon={CheckSquare} color="yellow" />
-        <StatCard title="Replacements" value={kpis.replacements_total || 0} icon={Wrench} color="purple" />
+        <StatCard title="Total Devices" value={kpis.total_devices || stats.total_devices || 0} description="Registered devices" icon={Boxes} color="total" />
+        <StatCard title="Active Devices" value={kpis.active_devices || stats.active_devices || 0} description="Currently active" icon={Cpu} color="online" />
+        <StatCard title="Defects (Month)" value={kpis.defects_this_month || 0} description="This month" icon={HardHat} color="offline" />
+        <StatCard title="Defects (Year)" value={kpis.defects_this_year || 0} description="This year" icon={Radar} color="indigo" />
+        <StatCard title="Awaiting Receipt" value={kpis.pending_receipts || stats.pending_receipts || 0} description="Pending receipt" icon={CheckSquare} color="pending" />
+        <StatCard title="Replacements" value={kpis.replacements_total || 0} description="Total" icon={Wrench} color="purple" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

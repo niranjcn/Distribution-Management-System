@@ -1,20 +1,20 @@
-const Card = ({ 
-  children, 
-  className = '', 
-  title, 
-  subtitle, 
-  icon: Icon, 
+const Card = ({
+  children,
+  className = '',
+  title,
+  subtitle,
+  icon: Icon,
   action,
-  padding = true 
+  padding = true
 }) => {
   return (
-    <div className={`glass-panel rounded-xl shadow-sm border border-gray-200 ${className}`}>
+    <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${className}`}>
       {(title || action) && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
           <div className="flex items-center gap-3">
             {Icon && (
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 border border-slate-500/30">
-                <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-green-50 rounded-lg flex items-center justify-center flex-shrink-0 border border-green-200">
+                <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-green-700" />
               </div>
             )}
             <div className="min-w-0">
