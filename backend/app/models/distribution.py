@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 
 
@@ -27,6 +27,7 @@ class DistributionBase(BaseModel):
     to_user_id: str
     device_ids: List[str]
     notes: Optional[str] = None
+    date_of_distribution: Optional[date] = None
 
 
 class DistributionCreate(DistributionBase):
@@ -51,6 +52,7 @@ class Distribution(BaseModel):
     to_user_type: UserType
     status: DistributionStatus = DistributionStatus.PENDING
     request_date: datetime
+    date_of_distribution: Optional[date] = None
     approval_date: Optional[datetime] = None
     delivery_date: Optional[datetime] = None
     notes: Optional[str] = None
@@ -79,6 +81,7 @@ class DistributionResponse(BaseModel):
     to_user_type: UserType
     status: DistributionStatus
     request_date: datetime
+    date_of_distribution: Optional[date] = None
     approval_date: Optional[datetime] = None
     delivery_date: Optional[datetime] = None
     notes: Optional[str] = None
