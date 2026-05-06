@@ -49,6 +49,7 @@ const CreateDistribution = () => {
   const [filterSubDistId, setFilterSubDistId] = useState('');
   const [filterClusterId, setFilterClusterId] = useState('');
   const [formData, setFormData] = useState({ toDistributor: '', notes: '' });
+  const [distributionDate, setDistributionDate] = useState('');
 
   const role = user?.role;
   const isManagement = ['super_admin', 'manager', 'pdic_staff'].includes(role);
@@ -250,7 +251,8 @@ const CreateDistribution = () => {
       await distributionsAPI.createDistribution({
         device_ids: selectedDevices.map(d => d._id || d.id),
         to_user_id: formData.toDistributor,
-        notes: formData.notes
+        notes: formData.notes,
+        ...(distributionDate ? { date_of_distribution: distributionDate } : {})
       });
       showToast('Distribution created successfully!', 'success');
       setShowConfirmModal(false);
@@ -575,6 +577,22 @@ const CreateDistribution = () => {
           </div>
         </Card>
 
+        {/* Distribution Date */}
+        <Card title="Distribution Date">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date of Distribution</label>
+            <input
+              type="date"
+              value={distributionDate}
+              onChange={(e) => setDistributionDate(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Leave blank to use today's date.
+            </p>
+          </div>
+        </Card>
+
         {/* Notes */}
         <Card title="Notes">
           <textarea
@@ -635,6 +653,7 @@ const CreateDistribution = () => {
             <p><span className="font-medium text-gray-700">Recipient:</span> {selectedRecipient?.name || 'N/A'}</p>
             <p><span className="font-medium text-gray-700">Recipient Role:</span> {selectedRecipient?.role || 'N/A'}</p>
             <p><span className="font-medium text-gray-700">Selection Mode:</span> {confirmSelectionSummary}</p>
+            <p><span className="font-medium text-gray-700">Distribution Date:</span> {distributionDate || 'Today'}</p>
           </div>
           <p className="text-xs text-gray-500">
             Ownership changes are finalized when the recipient confirms receipt in the distribution workflow.

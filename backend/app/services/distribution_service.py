@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Optional, List, Dict, Any, Set
 import json
 import io
@@ -302,11 +302,31 @@ async def get_distribution_by_id(distribution_id: str) -> Optional[Dict[str, Any
         return None
 
 
+async def get_distribution_by_code(distribution_code: str) -> Optional[Dict[str, Any]]:
+    """Get distribution by its public distribution_id code."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT * FROM distributions WHERE distribution_id = ?",
+            (str(distribution_code),),
+        )
+        row = await cursor.fetchone()
+        if row:
+            d = row_to_dict(row)
+            if d.get("device_ids"):
+                try:
+                    d["device_ids"] = json.loads(d["device_ids"])
+                except (json.JSONDecodeError, TypeError):
+                    d["device_ids"] = []
+            return d
+        return None
+
+
 async def create_distribution_from_identifiers(
     to_user_id: str,
     identifier_rows: List[Dict[str, Any]],
     from_user: Dict[str, Any],
     notes: Optional[str] = None,
+    date_of_distribution: Optional[date] = None,
 ) -> Dict[str, Any]:
     """Create a distribution from uploaded rows containing MAC, serial number, and/or NUID.
 
@@ -433,6 +453,7 @@ async def create_distribution_from_identifiers(
         to_user_id=str(to_user_id),
         device_ids=resolved_device_ids,
         notes=notes,
+        date_of_distribution=date_of_distribution,
     )
     distribution = await create_distribution(dist_data=dist_data, from_user=from_user)
 
@@ -569,22 +590,24 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
             "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
         }
         
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now_dt.isoformat()
+        distribution_date = dist_data.date_of_distribution.isoformat() if dist_data.date_of_distribution else now_dt.date().isoformat()
         dist_id = generate_distribution_id()
         
         cursor = await db.execute(
             """INSERT INTO distributions (distribution_id, device_ids, device_count,
                 from_user_id, from_user_name, from_user_type, to_user_id, to_user_name, to_user_type,
-                status, request_date, approval_date, approved_by, approved_by_name,
+                status, request_date, date_of_distribution, approval_date, approved_by, approved_by_name,
                 notes, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 dist_id, json.dumps(dist_data.device_ids),
                 len(dist_data.device_ids), from_user_id, from_user["name"],
                 role_to_type.get(from_user["role"], "noc"),
                 str(to_user["id"]), to_user["name"],
                 role_to_type.get(to_user["role"], "pdic_staff"),
-                DistributionStatus.PENDING_RECEIPT.value, now, now,
+                DistributionStatus.PENDING_RECEIPT.value, now, distribution_date, now,
                 from_user_id, from_user["name"],
                 dist_data.notes, from_user_id, now, now
             )
@@ -626,7 +649,10 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
         link="/delivery-confirmations"
     )
     
-    return await get_distribution_by_id(new_id)
+    distribution = await get_distribution_by_id(new_id)
+    if not distribution:
+        distribution = await get_distribution_by_code(dist_id)
+    return distribution
 
 
 async def update_distribution_status(

@@ -654,12 +654,18 @@ const Distributions = () => {
                 <label className="text-xs text-gray-500 uppercase tracking-wider">Transferred By</label>
                 <p className="font-medium text-gray-800">{selectedDist.approved_by_name || selectedDist.from_user_name || 'N/A'}</p>
               </div>
-              {selectedDist.approval_date && (
-                <div>
-                  <label className="text-xs text-gray-500 uppercase tracking-wider">Transfer Date</label>
-                  <p className="font-medium text-gray-800">{new Date(selectedDist.approval_date).toLocaleDateString()}</p>
-                </div>
-              )}
+              <div>
+                <label className="text-xs text-gray-500 uppercase tracking-wider">Transfer Date</label>
+                <p className="font-medium text-gray-800">
+                  {selectedDist.date_of_distribution
+                    ? new Date(selectedDist.date_of_distribution).toLocaleDateString()
+                    : selectedDist.request_date
+                      ? new Date(selectedDist.request_date).toLocaleDateString()
+                      : selectedDist.created_at
+                        ? new Date(selectedDist.created_at).toLocaleDateString()
+                        : 'N/A'}
+                </p>
+              </div>
             </div>
 
             {selectedDist.notes && (

@@ -402,10 +402,11 @@ The distribution flow is the core operational workflow. Devices move from sender
 #### Bulk Distribution via File Upload
 
 1. Upload CSV/XLSX with columns `mac_address` and/or `nuid`
-2. System resolves each row to a device record via MAC or NUID lookup (case-insensitive)
-3. If MAC and NUID both present and resolve to **different** devices → row error
-4. If **any** row has an error → **entire upload is rejected** with per-row error list
-5. If all rows valid → distribution created as above
+2. Optional column `date_of_distribution` (format: `YYYY-MM-DD`) sets the distribution date (not the record creation timestamp)
+3. System resolves each row to a device record via MAC or NUID lookup (case-insensitive)
+4. If MAC and NUID both present and resolve to **different** devices → row error
+5. If **any** row has an error → **entire upload is rejected** with per-row error list
+6. If all rows valid → distribution created as above
 
 ---
 
@@ -1154,9 +1155,12 @@ Content-Type: application/json
 {
   "device_ids": ["101", "102", "103"],
   "to_user_id": "42",
+  "date_of_distribution": "2026-04-01",
   "notes": "Q1 2026 modem deployment"
 }
 ```
+
+If `date_of_distribution` is provided, it is used as the distribution date instead of the record creation timestamp.
 
 **Sample Response:**
 ```json
