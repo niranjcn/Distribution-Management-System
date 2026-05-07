@@ -47,6 +47,7 @@ const isSetupBoxType = (deviceType) => normalizeDeviceType(deviceType) === 'SB';
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+const EXPORT_PAGE_SIZE = 1000;
 
 const TABLE_SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -110,10 +111,10 @@ const DefectReports = () => {
   const loadingWindowsRef = useRef(new Set());
   const queryVersionRef = useRef(0);
 
-  const buildDefectParams = (windowPage) => {
+  const buildDefectParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       page: windowPage,
-      page_size: TABLE_WINDOW_SIZE,
+      page_size: pageSize,
     };
     if (appliedTableSearch.query) {
       params.search = appliedTableSearch.query;
@@ -324,15 +325,38 @@ const DefectReports = () => {
     }
   };
 
-  const filteredDefectReports = defectReports.filter((defect) => {
+  const applyReplacementFilter = (rows) => {
     if (replacementFilter === 'pending') {
-      return defect.status === 'approved' || defect.status === 'replacement_pending_confirmation';
+      return rows.filter((defect) => defect.status === 'approved' || defect.status === 'replacement_pending_confirmation');
     }
     if (replacementFilter === 'replaced') {
-      return defect.status === 'resolved' && Boolean(defect.replacement_device_id);
+      return rows.filter((defect) => defect.status === 'resolved' && Boolean(defect.replacement_device_id));
     }
-    return true;
-  });
+    return rows;
+  };
+
+  const getExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await defectsAPI.getDefects(buildDefectParams(page, EXPORT_PAGE_SIZE));
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return applyReplacementFilter(collected);
+  };
+
+  const filteredDefectReports = applyReplacementFilter(defectReports);
 
   const selectableReplacementDevices = availableDevices.filter((device) => {
     if (
@@ -883,6 +907,7 @@ const DefectReports = () => {
           totalItems={replacementFilter === 'all' ? (tableTotalCount || filteredDefectReports.length) : filteredDefectReports.length}
           currentPage={tablePage}
           onPageChange={handleTablePageChange}
+          getExportRows={getExportRows}
           actions={
             <div className="flex items-center gap-2">
               <button

@@ -14,6 +14,7 @@ import { Eye, RotateCcw, Loader2, PackageCheck, AlertTriangle, Search } from 'lu
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+const EXPORT_PAGE_SIZE = 1000;
 
 const TABLE_SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -50,10 +51,10 @@ const Returns = () => {
   const loadingWindowsRef = useRef(new Set());
   const queryVersionRef = useRef(0);
 
-  const buildReturnParams = (windowPage) => {
+  const buildReturnParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       page: windowPage,
-      page_size: TABLE_WINDOW_SIZE,
+      page_size: pageSize,
     };
     if (appliedTableSearch.query) {
       params.search = appliedTableSearch.query;
@@ -62,6 +63,27 @@ const Returns = () => {
       }
     }
     return params;
+  };
+
+  const getExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await returnsAPI.getReturns(buildReturnParams(page, EXPORT_PAGE_SIZE));
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
   };
 
   const buildReturnCountParams = (status) => {
@@ -401,6 +423,7 @@ const Returns = () => {
           totalItems={tableTotalCount || returnRequests.length}
           currentPage={tablePage}
           onPageChange={handleTablePageChange}
+          getExportRows={getExportRows}
           onRowClick={(row) => {
             setSelectedReturn(row);
             setShowModal(true);

@@ -13,6 +13,7 @@ import { Plus, Eye, Truck, CheckCircle, Loader2, AlertTriangle, PackageCheck, XC
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+const EXPORT_PAGE_SIZE = 1000;
 
 const SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -67,10 +68,10 @@ const Distributions = () => {
   const loadingWindowsRef = useRef(new Set());
   const queryVersionRef = useRef(0);
 
-  const buildDistributionParams = (windowPage) => {
+  const buildDistributionParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       page: windowPage,
-      page_size: TABLE_WINDOW_SIZE,
+      page_size: pageSize,
     };
     if (appliedSearch.query) {
       params.search = appliedSearch.query;
@@ -79,6 +80,27 @@ const Distributions = () => {
       }
     }
     return params;
+  };
+
+  const getExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await distributionsAPI.getDistributions(buildDistributionParams(page, EXPORT_PAGE_SIZE));
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
   };
 
   const buildDistributionCountParams = (status) => {
@@ -578,6 +600,7 @@ const Distributions = () => {
           totalItems={tableTotalCount || distributions.length}
           currentPage={tablePage}
           onPageChange={handleTablePageChange}
+          getExportRows={getExportRows}
           onRowClick={(row) => {
             setSelectedDist(row);
             setShowModal(true);

@@ -44,6 +44,7 @@ const extractBoxType = (device) => {
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+const EXPORT_PAGE_SIZE = 1000;
 
 const SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -168,11 +169,11 @@ const Devices = () => {
     setHolderInsights(response?.data || { sub_distributors: [], clusters: [] });
   };
 
-  const buildTableQueryParams = (windowPage) => {
+  const buildTableQueryParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       paginate: true,
       page: windowPage,
-      page_size: TABLE_WINDOW_SIZE,
+      page_size: pageSize,
       scope: hasHierarchy ? activeTab : 'all',
     };
 
@@ -192,6 +193,28 @@ const Devices = () => {
     }
 
     return params;
+  };
+
+  const getExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await devicesAPI.getMyOverview(buildTableQueryParams(page, EXPORT_PAGE_SIZE));
+      const rows = Array.isArray(response?.data?.all_under_me) ? response.data.all_under_me : [];
+      const meta = response?.data?.meta || {};
+      total = Number(meta.total_count || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
   };
 
   const loadTableWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
@@ -1029,6 +1052,7 @@ const Devices = () => {
             totalItems={tableTotalCount || tableData.length}
             currentPage={tablePage}
             onPageChange={handleTablePageChange}
+            getExportRows={getExportRows}
             selectable={canRegister}
             getRowClassName={getRowClassName}
             onRowClick={(row) => {

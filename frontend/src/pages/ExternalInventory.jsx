@@ -52,6 +52,7 @@ const defaultPOLine = { item_inventory_id: '' };
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+const EXPORT_PAGE_SIZE = 1000;
 
 const ITEM_SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -193,10 +194,10 @@ const ExternalInventory = () => {
       maximumFractionDigits: 2,
     }).format(Number(value || 0));
 
-  const buildItemsParams = (windowPage) => {
+  const buildItemsParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       page: windowPage,
-      page_size: TABLE_WINDOW_SIZE,
+      page_size: pageSize,
       status: 'active',
     };
     if (appliedItemSearch.query) {
@@ -208,10 +209,10 @@ const ExternalInventory = () => {
     return params;
   };
 
-  const buildPOParams = (windowPage) => {
+  const buildPOParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       page: windowPage,
-      page_size: TABLE_WINDOW_SIZE,
+      page_size: pageSize,
     };
     if (appliedPOSearch.query) {
       params.search = appliedPOSearch.query;
@@ -222,10 +223,10 @@ const ExternalInventory = () => {
     return params;
   };
 
-  const buildMovementParams = (windowPage) => {
+  const buildMovementParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       page: windowPage,
-      page_size: TABLE_WINDOW_SIZE,
+      page_size: pageSize,
     };
     if (appliedMovementSearch.query) {
       params.search = appliedMovementSearch.query;
@@ -234,6 +235,70 @@ const ExternalInventory = () => {
       }
     }
     return params;
+  };
+
+  const getItemsExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await externalInventoryAPI.getItems(buildItemsParams(page, EXPORT_PAGE_SIZE));
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
+  };
+
+  const getPOExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await externalInventoryAPI.getPurchaseOrders(buildPOParams(page, EXPORT_PAGE_SIZE));
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
+  };
+
+  const getMovementsExportRows = async () => {
+    if (!canManage) return [];
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await externalInventoryAPI.getMovements(buildMovementParams(page, EXPORT_PAGE_SIZE));
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
   };
 
   const loadItemsWindow = async (windowPage, { reset = false } = {}) => {
@@ -1126,6 +1191,7 @@ const ExternalInventory = () => {
           totalItems={itemsTotalCount || items.length}
           currentPage={itemsPage}
           onPageChange={handleItemsPageChange}
+          getExportRows={getItemsExportRows}
           emptyMessage="No external inventory items yet"
           onRowClick={canManage ? (row) => setSelectedItem(row) : undefined}
           actions={canManage ? (
@@ -1208,6 +1274,7 @@ const ExternalInventory = () => {
             totalItems={purchaseOrdersTotalCount || purchaseOrders.length}
             currentPage={purchaseOrdersPage}
             onPageChange={handlePOPageChange}
+            getExportRows={getPOExportRows}
             emptyMessage="No purchase orders yet"
           />
       </Card>
@@ -1263,6 +1330,7 @@ const ExternalInventory = () => {
               totalItems={movementsTotalCount || movements.length}
               currentPage={movementsPage}
               onPageChange={handleMovementsPageChange}
+              getExportRows={getMovementsExportRows}
               emptyMessage="No stock movements yet"
             />
           </Card>

@@ -10,6 +10,7 @@ import { useNotifications } from '../context/NotificationContext';
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+const EXPORT_PAGE_SIZE = 1000;
 
 const Activities = () => {
   const navigate = useNavigate();
@@ -55,6 +56,43 @@ const Activities = () => {
     if (appliedFilters.end_date) params.end_date = appliedFilters.end_date;
 
     return params;
+  };
+
+  const buildActivityExportParams = (page) => {
+    const params = {
+      page,
+      page_size: EXPORT_PAGE_SIZE,
+      category: appliedFilters.category,
+    };
+
+    if (appliedFilters.actor.trim()) params.actor = appliedFilters.actor.trim();
+    if (appliedFilters.search.trim()) params.search = appliedFilters.search.trim();
+    if (appliedFilters.start_date) params.start_date = appliedFilters.start_date;
+    if (appliedFilters.end_date) params.end_date = appliedFilters.end_date;
+
+    return params;
+  };
+
+  const getExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await dashboardAPI.getActivities(buildActivityExportParams(page));
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const pagination = response?.pagination || {};
+      total = Number(pagination.total || rows.length);
+      collected = collected.concat(rows);
+
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
   };
 
   const loadActivityWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
@@ -240,6 +278,7 @@ const Activities = () => {
           totalItems={totalActivities || activities.length}
           currentPage={tablePage}
           onPageChange={handleTablePageChange}
+          getExportRows={getExportRows}
           onRowClick={(row) => {
             if (row?.link) {
               navigate(row.link);
