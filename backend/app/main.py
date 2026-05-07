@@ -142,10 +142,13 @@ async def lifespan(app: FastAPI):
     # Seed initial data
     from app.services.seed_service import seed_initial_data
     from app.services.backup_scheduler import monthly_backup_scheduler_loop
+    from app.services.db_backup_scheduler import start_db_backup_scheduler, shutdown_db_backup_scheduler
     await seed_initial_data()
 
     backup_task = asyncio.create_task(monthly_backup_scheduler_loop())
     app.state.monthly_backup_task = backup_task
+
+    app.state.db_backup_scheduler = await start_db_backup_scheduler()
     
     yield
     
@@ -157,6 +160,10 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+
+    scheduler = getattr(app.state, "db_backup_scheduler", None)
+    if scheduler:
+        shutdown_db_backup_scheduler()
 
     await close_pool()
 

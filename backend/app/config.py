@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     DB_USER: str = os.getenv("DB_USER", "dms_user")
     DB_PASSWORD: str = os.getenv("DB_PASSWORD", "dms_password")
     DB_NAME: str = os.getenv("DB_NAME", "distribution_management_system")
+
+    # Database backup
+    DB_BACKUP_TIME: str = os.getenv("DB_BACKUP_TIME", "02:00")
+    RCLONE_REMOTE: str = os.getenv("RCLONE_REMOTE", "DMS")
+    RCLONE_DEST_DIR: str = os.getenv("DMS_RCLONE_DEST_DIR", "dms-db-backups")
+    RCLONE_VAULT_DIR: str = os.getenv("DMS_RCLONE_VAULT_DIR", "Backup Document Vault")
+    RCLONE_CONFIG_SEED: str = os.getenv("RCLONE_CONFIG_SEED", "/app/rclone/rclone.conf")
+    RCLONE_CONFIG: str = os.getenv("RCLONE_CONFIG", "/tmp/rclone.conf")
     
     # Security
     SECRET_KEY: str = secrets.token_urlsafe(64)
