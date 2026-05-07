@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from typing import Optional
 from pydantic import BaseModel
+from datetime import date
 from app.models.distribution import DistributionCreate, DistributionStatusUpdate
 from app.services import distribution_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager, require_management
@@ -86,6 +87,7 @@ async def bulk_upload_distribution(
     file: UploadFile = File(...),
     to_user_id: str = Form(...),
     notes: Optional[str] = Form(None),
+    date_of_distribution: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user)
 ):
     """Create a distribution from uploaded CSV/Excel rows using mac_address, serial_number, and/or nuid."""
@@ -146,6 +148,7 @@ async def bulk_upload_distribution(
             )
 
         identifier_rows = []
+        date_values = set()
         for row_idx, row in enumerate(iter_data_rows(), start=2):
             row_data = {
                 headers[i]: (str(row[i]).strip() if i < len(row) and row[i] is not None else "")
@@ -155,6 +158,10 @@ async def bulk_upload_distribution(
             mac_address = row_data.get("mac_address", "")
             serial_number = row_data.get("serial_number", "")
             nuid = row_data.get("nuid", "")
+            row_date = row_data.get("date_of_distribution", "")
+
+            if row_date:
+                date_values.add(row_date)
 
             if not mac_address and not serial_number and not nuid:
                 # Skip fully empty lines, otherwise keep for validation.
@@ -174,11 +181,41 @@ async def bulk_upload_distribution(
                 detail="No identifier rows found in file"
             )
 
+        def _parse_distribution_date(value: str) -> date:
+            try:
+                return date.fromisoformat(value.strip())
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="date_of_distribution must be in YYYY-MM-DD format",
+                )
+
+        normalized_form_date = _parse_distribution_date(date_of_distribution) if date_of_distribution else None
+        normalized_file_date = None
+
+        if date_values:
+            normalized_dates = {_parse_distribution_date(value).isoformat() for value in date_values if value}
+            if len(normalized_dates) > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Multiple date_of_distribution values found in file; provide a single date",
+                )
+            normalized_file_date = _parse_distribution_date(next(iter(normalized_dates)))
+
+        if normalized_form_date and normalized_file_date and normalized_form_date != normalized_file_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date_of_distribution in form and file do not match",
+            )
+
+        final_distribution_date = normalized_file_date or normalized_form_date
+
         result = await distribution_service.create_distribution_from_identifiers(
             to_user_id=to_user_id,
             identifier_rows=identifier_rows,
             from_user=current_user,
             notes=notes,
+            date_of_distribution=final_distribution_date,
         )
 
         if result.get("created") and result.get("distribution"):
@@ -428,6 +465,12 @@ async def create_distribution(
             dist_data=dist_data,
             from_user=current_user
         )
+
+        if not distribution:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Distribution created but could not be loaded. Please try again."
+            )
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         await log_business_activity(

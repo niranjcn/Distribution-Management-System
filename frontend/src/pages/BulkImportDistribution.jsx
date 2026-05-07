@@ -30,7 +30,7 @@ const ALLOWED_RECIPIENT_TYPES = {
   operator: ['operator'],
 };
 
-const TEMPLATE_HEADERS = ['mac_address', 'serial_number', 'nuid'];
+const TEMPLATE_HEADERS = ['mac_address', 'serial_number', 'nuid', 'date_of_distribution'];
 
 const BulkImportDistribution = () => {
   const navigate = useNavigate();
@@ -43,6 +43,7 @@ const BulkImportDistribution = () => {
 
   const [file, setFile] = useState(null);
   const [notes, setNotes] = useState('');
+  const [distributionDate, setDistributionDate] = useState('');
   const [result, setResult] = useState(null);
 
   const [recipientType, setRecipientType] = useState('');
@@ -191,7 +192,7 @@ const BulkImportDistribution = () => {
     setUploading(true);
     setResult(null);
     try {
-      const response = await distributionsAPI.bulkUpload(file, toUserId, notes);
+      const response = await distributionsAPI.bulkUpload(file, toUserId, notes, distributionDate);
       setResult(response.data || null);
 
       if (response.data?.created) {
@@ -219,10 +220,10 @@ const BulkImportDistribution = () => {
 
     const rows = [
       TEMPLATE_HEADERS.join(','),
-      'AA:BB:CC:DD:EE:01,,',
-      ',SN-ONT-2001,',
-      ',,NUID-00021',
-      'AA:BB:CC:DD:EE:99,SN-ONT-2999,NUID-00099',
+      'AA:BB:CC:DD:EE:01,,,2026-04-01',
+      ',SN-ONT-2001,,2026-04-01',
+      ',,NUID-00021,2026-04-01',
+      'AA:BB:CC:DD:EE:99,SN-ONT-2999,NUID-00099,2026-04-01',
     ];
 
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
@@ -258,7 +259,8 @@ const BulkImportDistribution = () => {
             <p className="text-sm text-gray-500 mb-3">
               Required file columns: <span className="font-medium text-gray-700">mac_address</span>,{' '}
               <span className="font-medium text-gray-700">serial_number</span>, or{' '}
-              <span className="font-medium text-gray-700">nuid</span>. You can provide any one per row.
+              <span className="font-medium text-gray-700">nuid</span>. You can provide any one per row. Optional:{' '}
+              <span className="font-medium text-gray-700">date_of_distribution</span> (YYYY-MM-DD).
             </p>
             <Button variant="outline" icon={Download} onClick={downloadTemplate}>
               Download CSV Template
@@ -411,6 +413,19 @@ const BulkImportDistribution = () => {
             placeholder="Add optional notes for this distribution"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Date of Distribution (optional)</label>
+          <input
+            type="date"
+            value={distributionDate}
+            onChange={(event) => setDistributionDate(event.target.value)}
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Leave blank to use today's date, or provide a single date in the file.
+          </p>
         </div>
 
         <div className="mt-4 flex gap-3 justify-end">

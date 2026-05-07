@@ -385,7 +385,7 @@ export const distributionsAPI = {
     return response;
   },
 
-  bulkUpload: async (file, toUserId, notes = '') => {
+  bulkUpload: async (file, toUserId, notes = '', dateOfDistribution = '') => {
     if (!file) {
       throw new Error('No file selected for upload');
     }
@@ -400,6 +400,9 @@ export const distributionsAPI = {
     formData.append('to_user_id', toUserId);
     if (notes) {
       formData.append('notes', notes);
+    }
+    if (dateOfDistribution) {
+      formData.append('date_of_distribution', dateOfDistribution);
     }
 
     const response = await fetch(`${API_BASE_URL}/distributions/bulk-upload`, {
