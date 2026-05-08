@@ -10,8 +10,8 @@ services:
       MYSQL_PASSWORD: dms_password
       TZ: Asia/Kolkata
     command: ["--default-time-zone=+05:30"]
-    ports:
-      - "3306:3306"
+    expose:
+      - "3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -19,6 +19,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 15
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.2
 
   backend:
     build:
@@ -45,14 +48,17 @@ services:
       RCLONE_CONFIG_SEED: /app/rclone/rclone.conf
       RCLONE_CONFIG: /tmp/rclone.conf
       TZ: Asia/Kolkata
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./backend/distribution_manifests:/app/distribution_manifests
       - ./backend/monthly_backups:/app/monthly_backups
       - ./backend/db_backups:/app/db_backups
       - ./backend/uploads:/app/uploads
       - ${HOME}/.config/rclone/rclone.conf:/app/rclone/rclone.conf
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.3
 
   frontend:
     build:
@@ -63,10 +69,38 @@ services:
     depends_on:
       - backend
     environment:
-      VITE_API_URL: http://localhost:8080/api
+      VITE_API_URL: https://10.0.0.1/api
       TZ: Asia/Kolkata
+    expose:
+      - "5173"
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.4
+
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    container_name: dms-reverse-proxy
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
     ports:
-      - "5173:5173"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.5
 
 volumes:
   mysql_data:
+
+networks:
+  dms_net:
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
