@@ -8,6 +8,8 @@ services:
       MYSQL_DATABASE: distribution_management_system
       MYSQL_USER: dms_user
       MYSQL_PASSWORD: dms_password
+      TZ: Asia/Kolkata
+    command: ["--default-time-zone=+05:30"]
     ports:
       - "3306:3306"
     volumes:
@@ -37,12 +39,20 @@ services:
       DB_NAME: distribution_management_system
       HOST: 0.0.0.0
       PORT: 8080
+      DB_BACKUP_TIME: "02:00"
+      RCLONE_REMOTE: DMS
+      DMS_RCLONE_DEST_DIR: dms-db-backups
+      RCLONE_CONFIG_SEED: /app/rclone/rclone.conf
+      RCLONE_CONFIG: /tmp/rclone.conf
+      TZ: Asia/Kolkata
     ports:
       - "8080:8080"
     volumes:
       - ./backend/distribution_manifests:/app/distribution_manifests
       - ./backend/monthly_backups:/app/monthly_backups
+      - ./backend/db_backups:/app/db_backups
       - ./backend/uploads:/app/uploads
+      - ${HOME}/.config/rclone/rclone.conf:/app/rclone/rclone.conf
 
   frontend:
     build:
@@ -54,6 +64,7 @@ services:
       - backend
     environment:
       VITE_API_URL: http://localhost:8080/api
+      TZ: Asia/Kolkata
     ports:
       - "5173:5173"
 

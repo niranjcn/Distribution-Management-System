@@ -14,6 +14,26 @@ const Backup = () => {
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [dbSchedule, setDbSchedule] = useState({
+    frequency: 'daily',
+    day_of_week: 0,
+    day_of_month: 1,
+    time_of_day: '02:00',
+    last_run_at: null,
+  });
+  const [loadingDbSchedule, setLoadingDbSchedule] = useState(false);
+  const [savingDbSchedule, setSavingDbSchedule] = useState(false);
+
+  const weekDays = [
+    { value: 0, label: 'Monday' },
+    { value: 1, label: 'Tuesday' },
+    { value: 2, label: 'Wednesday' },
+    { value: 3, label: 'Thursday' },
+    { value: 4, label: 'Friday' },
+    { value: 5, label: 'Saturday' },
+    { value: 6, label: 'Sunday' },
+  ];
+  const monthDays = Array.from({ length: 31 }, (_, index) => index + 1);
 
   const extractFilename = (contentDisposition, fallback) => {
     const match = /filename="?([^\";]+)"?/i.exec(contentDisposition || '');
@@ -46,6 +66,53 @@ const Backup = () => {
       showToast(error.message || 'Failed to load backup documents', 'error');
     } finally {
       setLoadingDocuments(false);
+    }
+  };
+
+  const loadDbSchedule = async () => {
+    setLoadingDbSchedule(true);
+    try {
+      const response = await reportsAPI.getDbBackupSchedule();
+      if (response?.data) {
+        setDbSchedule({
+          frequency: response.data.frequency || 'daily',
+          day_of_week: response.data.day_of_week ?? 0,
+          day_of_month: response.data.day_of_month ?? 1,
+          time_of_day: response.data.time_of_day || '02:00',
+          last_run_at: response.data.last_run_at || null,
+        });
+      }
+    } catch (error) {
+      showToast(error.message || 'Failed to load database backup schedule', 'error');
+    } finally {
+      setLoadingDbSchedule(false);
+    }
+  };
+
+  const handleSaveDbSchedule = async () => {
+    setSavingDbSchedule(true);
+    try {
+      const payload = {
+        frequency: dbSchedule.frequency,
+        day_of_week: dbSchedule.frequency === 'weekly' ? dbSchedule.day_of_week : null,
+        day_of_month: dbSchedule.frequency === 'monthly' ? dbSchedule.day_of_month : null,
+        time_of_day: dbSchedule.time_of_day,
+      };
+      const response = await reportsAPI.updateDbBackupSchedule(payload);
+      if (response?.data) {
+        setDbSchedule({
+          frequency: response.data.frequency || 'daily',
+          day_of_week: response.data.day_of_week ?? 0,
+          day_of_month: response.data.day_of_month ?? 1,
+          time_of_day: response.data.time_of_day || '02:00',
+          last_run_at: response.data.last_run_at || null,
+        });
+      }
+      showToast('Database backup schedule updated', 'success');
+    } catch (error) {
+      showToast(error.message || 'Failed to update database backup schedule', 'error');
+    } finally {
+      setSavingDbSchedule(false);
     }
   };
 
@@ -113,6 +180,7 @@ const Backup = () => {
 
   useEffect(() => {
     loadDocuments();
+    loadDbSchedule();
   }, []);
 
   return (
@@ -191,6 +259,121 @@ const Backup = () => {
               {downloadingTracking ? 'Generating Tracking Backup...' : 'Download Returns + Defects Backup'}
             </Button>
           </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="space-y-5">
+          <div className="flex items-start gap-3 text-gray-700">
+            <Database className="w-5 h-5 mt-0.5 text-emerald-600" />
+            <div>
+              <p className="font-medium">MySQL database backup</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Schedule full database dumps and upload them to Google Drive via rclone. Time uses the backend container clock.
+              </p>
+            </div>
+          </div>
+
+          {loadingDbSchedule ? (
+            <p className="text-sm text-gray-500">Loading backup schedule...</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-2">Frequency</p>
+                  <select
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={dbSchedule.frequency}
+                    onChange={(event) =>
+                      setDbSchedule((prev) => ({
+                        ...prev,
+                        frequency: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-2">Time of day</p>
+                  <input
+                    type="time"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={dbSchedule.time_of_day}
+                    onChange={(event) =>
+                      setDbSchedule((prev) => ({
+                        ...prev,
+                        time_of_day: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+
+                {dbSchedule.frequency === 'weekly' && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-2">Day of week</p>
+                    <select
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={dbSchedule.day_of_week}
+                      onChange={(event) =>
+                        setDbSchedule((prev) => ({
+                          ...prev,
+                          day_of_week: Number(event.target.value),
+                        }))
+                      }
+                    >
+                      {weekDays.map((day) => (
+                        <option key={day.value} value={day.value}>
+                          {day.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {dbSchedule.frequency === 'monthly' && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-2">Day of month</p>
+                    <select
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={dbSchedule.day_of_month}
+                      onChange={(event) =>
+                        setDbSchedule((prev) => ({
+                          ...prev,
+                          day_of_month: Number(event.target.value),
+                        }))
+                      }
+                    >
+                      {monthDays.map((day) => (
+                        <option key={day} value={day}>
+                          {day}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  icon={RefreshCw}
+                  loading={savingDbSchedule}
+                  onClick={handleSaveDbSchedule}
+                  disabled={savingDbSchedule}
+                >
+                  {savingDbSchedule ? 'Saving...' : 'Save Schedule'}
+                </Button>
+                <p className="text-xs text-gray-500">
+                  {dbSchedule.last_run_at
+                    ? `Last run: ${new Date(dbSchedule.last_run_at).toLocaleString()}`
+                    : 'Last run: Not yet'}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 

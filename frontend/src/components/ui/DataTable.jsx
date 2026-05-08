@@ -15,6 +15,7 @@ const DataTable = ({
   searchPlaceholder = "Search...",
   getRowClassName,
   exportTableName,
+  getExportRows,
   totalItems,
   currentPage: controlledCurrentPage,
   onPageChange,
@@ -61,14 +62,19 @@ const DataTable = ({
     [data, renderCount, currentPage, pageSize]
   );
 
+  const filterRowsBySearch = (rows) => {
+    if (!searchQuery) return rows;
+    const needle = searchQuery.toLowerCase();
+    return rows.filter((row) => (
+      columns.some((col) => {
+        const value = row[col.key];
+        return value?.toString().toLowerCase().includes(needle);
+      })
+    ));
+  };
+
   // Filter data based on search
-  const filteredData = renderWindow.filter((row) => {
-    if (!searchQuery) return true;
-    return columns.some((col) => {
-      const value = row[col.key];
-      return value?.toString().toLowerCase().includes(searchQuery.toLowerCase());
-    });
-  });
+  const filteredData = filterRowsBySearch(renderWindow);
 
   // Sort data
   const sortedData = [...filteredData].sort((a, b) => {
@@ -140,10 +146,25 @@ const DataTable = ({
       .filter(Boolean)
       .join(' ');
 
+    let exportRows = [];
+    try {
+      if (typeof getExportRows === 'function') {
+        const result = await getExportRows();
+        exportRows = Array.isArray(result) ? result : [];
+      } else {
+        exportRows = Array.isArray(data) ? data : [];
+      }
+    } catch (error) {
+      console.error('Failed to fetch export rows:', error);
+      exportRows = Array.isArray(data) ? data : [];
+    }
+
+    const exportRowsFiltered = filterRowsBySearch(exportRows);
+
     try {
       await dashboardAPI.trackActivity({
         action: 'table_export',
-        description: `Exported ${normalizedTableName} table with ${filteredData.length} row(s)`,
+        description: `Exported ${normalizedTableName} table with ${exportRowsFiltered.length} row(s)`,
         context: normalizedTableName.toLowerCase().replace(/\s+/g, '_'),
       });
     } catch {
@@ -151,7 +172,7 @@ const DataTable = ({
     }
 
     const headers = columns.map((col) => col.label).join(',');
-    const rows = filteredData.map((row) =>
+    const rows = exportRowsFiltered.map((row) =>
       columns.map((col) => row[col.key]).join(',')
     );
     const csv = [headers, ...rows].join('\n');

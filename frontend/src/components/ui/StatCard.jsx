@@ -91,25 +91,25 @@ const StatCard = ({ title, value, description, icon: Icon, color = 'blue' }) => 
   return (
     <div
       className={`
-        relative bg-white rounded-2xl border border-gray-200 border-l-4 ${cfg.border}
+        stat-card relative bg-white rounded-2xl border border-gray-200 border-l-4 ${cfg.border}
         shadow-sm hover:shadow-md transition-shadow duration-200
         px-5 py-4 flex items-center justify-between gap-3 min-w-0
         overflow-hidden
       `}
     >
       {/* Subtle background glow */}
-      <div className={`absolute inset-0 bg-gradient-to-br ${cfg.glow} to-white opacity-60 pointer-events-none`} />
+      <div className={`stat-card-glow absolute inset-0 bg-gradient-to-br ${cfg.glow} to-white opacity-60 pointer-events-none`} />
 
       {/* Left — text stack */}
       <div className="relative flex flex-col gap-0.5 min-w-0">
-        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest truncate">
+        <span className="stat-card-title text-[11px] font-semibold text-gray-400 uppercase tracking-widest truncate">
           {title}
         </span>
-        <span className={`text-3xl sm:text-4xl font-bold leading-none ${cfg.value}`}>
+        <span className={`stat-card-value text-3xl sm:text-4xl font-bold leading-none ${cfg.value}`}>
           {value}
         </span>
         {description && (
-          <span className="text-xs text-gray-400 mt-1">{description}</span>
+          <span className="stat-card-desc text-xs text-gray-400 mt-1">{description}</span>
         )}
       </div>
 

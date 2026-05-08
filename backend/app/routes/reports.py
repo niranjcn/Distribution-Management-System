@@ -5,15 +5,19 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Response, UploadFile, File
 from app.services import report_service
-from app.middleware.auth_middleware import require_admin_or_manager_or_md_or_staff
+from app.services.backup_vault_service import (
+    list_vault_documents,
+    upload_vault_document,
+    download_vault_document,
+)
+from app.services.db_backup_scheduler import get_db_backup_schedule, update_db_backup_schedule
+from app.middleware.auth_middleware import require_admin_or_manager_or_md_or_staff, require_admin_or_manager_or_md
 from app.core.activity_logger import log_business_activity
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-BACKUP_DOCUMENTS_DIR = Path(__file__).resolve().parents[2] / "uploads" / "backup_documents"
-BACKUP_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 MAX_BACKUP_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024
 
 
@@ -267,35 +271,61 @@ async def download_returns_defects_backup(
         )
 
 
+@router.get("/db-backup-schedule")
+async def fetch_db_backup_schedule(
+    current_user: dict = Depends(require_admin_or_manager_or_md)
+):
+    """Get current MySQL backup schedule settings."""
+    try:
+        schedule = await get_db_backup_schedule()
+        return {
+            "success": True,
+            "message": "Database backup schedule fetched successfully",
+            "data": schedule,
+        }
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
+@router.put("/db-backup-schedule")
+async def save_db_backup_schedule(
+    payload: dict,
+    current_user: dict = Depends(require_admin_or_manager_or_md)
+):
+    """Update MySQL backup schedule settings."""
+    try:
+        schedule = await update_db_backup_schedule(payload)
+        return {
+            "success": True,
+            "message": "Database backup schedule updated successfully",
+            "data": schedule,
+        }
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
 @router.get("/backup-documents")
 async def list_backup_documents(
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """List uploaded backup documents available for download."""
     try:
-        files = []
-        for entry in BACKUP_DOCUMENTS_DIR.iterdir():
-            if not entry.is_file():
-                continue
-
-            if "__" in entry.name:
-                _, original_name = entry.name.split("__", 1)
-            else:
-                original_name = entry.name
-
-            stat = entry.stat()
-            files.append(
-                {
-                    "stored_name": entry.name,
-                    "file_name": original_name,
-                    "size": stat.st_size,
-                    "uploaded_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
-                    .replace(tzinfo=None)
-                    .isoformat(),
-                }
-            )
-
-        files.sort(key=lambda item: item["uploaded_at"], reverse=True)
+        files = await list_vault_documents()
 
         return {
             "success": True,
@@ -334,8 +364,7 @@ async def upload_backup_document(
             )
 
         stored_name = f"{uuid4().hex[:12]}__{safe_original_name}"
-        file_path = BACKUP_DOCUMENTS_DIR / stored_name
-        file_path.write_bytes(content)
+        await upload_vault_document(stored_name, content)
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         await log_business_activity(
@@ -376,20 +405,20 @@ async def download_backup_document(
     """Download one uploaded backup document by stored name."""
     try:
         safe_stored_name = _sanitize_filename(stored_name)
-        file_path = (BACKUP_DOCUMENTS_DIR / safe_stored_name).resolve()
-        if BACKUP_DOCUMENTS_DIR.resolve() not in file_path.parents:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-        if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="File not found"
-            )
-
         original_name = safe_stored_name.split("__", 1)[1] if "__" in safe_stored_name else safe_stored_name
-        content = file_path.read_bytes()
+        try:
+            content = await download_vault_document(safe_stored_name)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "not found" in message.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to download file"
+            ) from exc
 
         return Response(
             content=content,

@@ -1086,6 +1086,19 @@ export const reportsAPI = {
     };
   },
 
+  getDbBackupSchedule: async () => {
+    const response = await apiRequest('/reports/db-backup-schedule');
+    return response;
+  },
+
+  updateDbBackupSchedule: async (payload) => {
+    const response = await apiRequest('/reports/db-backup-schedule', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    return response;
+  },
+
   listBackupDocuments: async () => {
     const response = await apiRequest('/reports/backup-documents');
     return response;

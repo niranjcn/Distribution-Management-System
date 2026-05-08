@@ -31,7 +31,6 @@ const VALID_BASE_ROUTES = new Set([
   '/notifications',
   '/change-requests',
   '/profile',
-  '/settings',
 ]);
 
 const getRelatedId = (notification) => {

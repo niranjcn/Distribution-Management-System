@@ -74,6 +74,56 @@
   --font-size-2xl:  32px;
 }
 
+/* ===== KannurVision PDIC Dark Theme ===== */
+.ops-theme-dark {
+  /* Backgrounds */
+  --bg-page:          #0F1115;
+  --bg-sidebar:       #111722;
+  --bg-card:          #151B25;
+  --bg-card-hover:    #1C2431;
+  --bg-input:         #0F141C;
+  --bg-table-header:  #1A212E;
+  --bg-table-row-alt: #131A25;
+
+  /* Primary Brand */
+  --color-primary:        #58B368;
+  --color-primary-light:  #1E2B22;
+  --color-primary-dark:   #3E8F4B;
+  --color-primary-text:   #F8FAFC;
+
+  /* Accent */
+  --color-accent:         #CBD5E1;
+
+  /* Status Colors */
+  --color-online:         #5FD37A;
+  --color-online-bg:      #16301E;
+  --color-offline:        #F87171;
+  --color-offline-bg:     #3A1A1A;
+  --color-pending:        #F59E0B;
+  --color-pending-bg:     #3A2A10;
+  --color-escalated:      #F87171;
+  --color-escalated-bg:   #3A1A1A;
+  --color-resolved:       #5FD37A;
+  --color-resolved-bg:    #16301E;
+  --color-info:           #7DB5FF;
+  --color-info-bg:        #172538;
+
+  /* Text */
+  --text-primary:     #E8EDF3;
+  --text-secondary:   #B6BFCC;
+  --text-muted:       #8B95A7;
+  --text-link:        #7DB5FF;
+
+  /* Borders */
+  --border-color:         #2A3342;
+  --border-color-strong:  #3A475C;
+
+  /* Shadows */
+  --shadow-card:    0 1px 3px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-card-md: 0 6px 16px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.35);
+  --shadow-sidebar: 2px 0 12px rgba(0,0,0,0.45);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -451,6 +501,82 @@ html, body {
 
 .ops-theme .external-inventory-hero p {
   color: #2E7D32 !important;
+}
+
+/* ===== Dark theme overrides ===== */
+.ops-theme-dark .ops-theme .bg-gray-200 {
+  background: #1A212E !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .ops-theme .bg-white\/60,
+.ops-theme-dark .ops-theme .bg-white\/70,
+.ops-theme-dark .ops-theme .bg-white\/80,
+.ops-theme-dark .ops-theme .bg-white\/90,
+.ops-theme-dark .ops-theme .bg-slate-50,
+.ops-theme-dark .ops-theme .bg-blue-50,
+.ops-theme-dark .ops-theme .bg-blue-50\/60,
+.ops-theme-dark .ops-theme .bg-sky-50,
+.ops-theme-dark .ops-theme .bg-cyan-50,
+.ops-theme-dark .ops-theme .bg-green-50,
+.ops-theme-dark .ops-theme .bg-teal-50,
+.ops-theme-dark .ops-theme .bg-red-50,
+.ops-theme-dark .ops-theme .bg-yellow-50,
+.ops-theme-dark .ops-theme .bg-orange-50,
+.ops-theme-dark .ops-theme .bg-amber-50,
+.ops-theme-dark .ops-theme .bg-emerald-50,
+.ops-theme-dark .ops-theme .bg-purple-50,
+.ops-theme-dark .ops-theme .bg-indigo-50 {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .ops-theme .industrial-hero,
+.ops-theme-dark .industrial-hero {
+  background: linear-gradient(135deg, #0F1A14 0%, #14251C 50%, #1A2E23 100%) !important;
+  border: 1px solid #1E2B22 !important;
+  box-shadow: var(--shadow-card-md) !important;
+}
+
+.ops-theme-dark .ops-theme .industrial-hero h1,
+.ops-theme-dark .industrial-hero h1 {
+  color: var(--text-primary) !important;
+}
+
+.ops-theme-dark .ops-theme .industrial-hero p,
+.ops-theme-dark .industrial-hero p {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme-dark .ops-theme .external-inventory-hero {
+  background: linear-gradient(135deg, #0F1A14 0%, #16261D 100%) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .ops-theme .external-inventory-hero h1 {
+  color: var(--text-primary) !important;
+}
+
+.ops-theme-dark .ops-theme .external-inventory-hero p {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme-dark .stat-card {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .stat-card-glow {
+  background: linear-gradient(135deg, rgba(88, 179, 104, 0.12) 0%, rgba(21, 27, 37, 0) 70%) !important;
+  opacity: 0.9 !important;
+}
+
+.ops-theme-dark .stat-card-title {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme-dark .stat-card-desc {
+  color: var(--text-muted) !important;
 }
 
 /* ===== Scrollbar ===== */
