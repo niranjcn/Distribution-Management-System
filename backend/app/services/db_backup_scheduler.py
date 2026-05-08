@@ -288,6 +288,11 @@ async def run_db_backup_once() -> Dict[str, Any]:
 
     await _run_mysqldump(target_path)
     await _run_rclone(target_path)
+    try:
+        if target_path.exists():
+            target_path.unlink()
+    except Exception as exc:
+        logger.warning("Failed to delete local backup %s: %s", target_path, exc)
 
     return {
         "path": str(target_path),

@@ -21,7 +21,6 @@ import Activities from './pages/Activities';
 import Notifications from './pages/Notifications';
 import ExternalInventory from './pages/ExternalInventory';
 import Profile from './pages/Profile';
-import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
 import Unauthorized from './pages/Unauthorized';
 import ForcedCredentialUpdate from './pages/ForcedCredentialUpdate';
@@ -322,9 +321,8 @@ function AppRoutes() {
           }
         />
 
-        {/* Profile & Settings */}
+        {/* Profile */}
         <Route path="profile" element={<Profile />} />
-        <Route path="settings" element={<Settings />} />
       </Route>
 
       {/* 404 Not Found */}

@@ -8,9 +8,12 @@ import {
   Search,
   User,
   LogOut,
-  Settings,
+  Moon,
+  Sun,
   ChevronDown
 } from 'lucide-react';
+
+const THEME_STORAGE_KEY = 'dms-theme';
 
 const Navbar = ({ onMenuClick }) => {
   const { user, logout } = useAuth();
@@ -19,6 +22,12 @@ const Navbar = ({ onMenuClick }) => {
   const [showProfile, setShowProfile] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const profileRef = useRef(null);
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'light';
+    }
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+  });
 
   // Fetch notifications when user is logged in
   useEffect(() => {
@@ -53,6 +62,16 @@ const Navbar = ({ onMenuClick }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('ops-theme-dark');
+    } else {
+      root.classList.remove('ops-theme-dark');
+    }
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
   const handleLogout = () => {
     console.log('[Navbar] User logging out');
     logout();
@@ -66,6 +85,10 @@ const Navbar = ({ onMenuClick }) => {
       navigate(`/track-device?q=${encodeURIComponent(searchQuery)}`);
       setSearchQuery('');
     }
+  };
+
+  const toggleTheme = () => {
+    setTheme((prevTheme) => (prevTheme === 'dark' ? 'light' : 'dark'));
   };
 
   return (
@@ -112,6 +135,19 @@ const Navbar = ({ onMenuClick }) => {
             )}
           </button>
 
+          <button
+            onClick={toggleTheme}
+            className="p-2 hover:bg-gray-100 rounded-lg"
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            aria-label="Toggle dark mode"
+          >
+            {theme === 'dark' ? (
+              <Sun className="w-6 h-6 text-gray-600" />
+            ) : (
+              <Moon className="w-6 h-6 text-gray-600" />
+            )}
+          </button>
+
           {/* Profile dropdown */}
           <div className="relative" ref={profileRef}>
             <button
@@ -144,16 +180,6 @@ const Navbar = ({ onMenuClick }) => {
                   >
                     <User className="w-4 h-4" />
                     Profile
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowProfile(false);
-                      navigate('/settings');
-                    }}
-                    className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
-                  >
-                    <Settings className="w-4 h-4" />
-                    Settings
                   </button>
                 </div>
                 <div className="p-2 border-t border-gray-100">

@@ -10,7 +10,6 @@ import {
   Truck,
   Users,
   FileText,
-  Settings,
   Search,
   AlertTriangle,
   RotateCcw,
@@ -134,7 +133,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
-        { path: '/settings', icon: Settings, label: 'Settings' },
       ],
       [ROLES.MD_DIRECTOR]: [
         ...commonItems,
