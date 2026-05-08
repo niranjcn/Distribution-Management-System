@@ -405,8 +405,8 @@ const Sidebar = ({ isOpen, onClose }) => {
         <div className="flex flex-col h-full">
 
           {/* Logo block — matches KannurVision image */}
-          <div className="flex items-start justify-between px-2 pt-1 pb-1 border-b border-gray-200">
-            <Link to="/" className="flex flex-col items-center w-full gap-0.5">
+          <div className="flex items-start justify-between px-2 pt-2 pb-2 border-b border-gray-200">
+            <Link to="/" className="flex flex-col items-center w-full gap-1">
               {/* KannurVision logo image — bigger, no gap */}
               <img
                 src={kvLogo}
@@ -417,9 +417,9 @@ const Sidebar = ({ isOpen, onClose }) => {
                 }}
               />
               {/* PDIC text — flush below logo */}
-              <span className="text-base font-bold text-gray-800 tracking-widest leading-none -mt-2">PDIC</span>
+              <span className="text-base font-bold text-gray-800 tracking-widest leading-tight">PDIC</span>
               {/* NETWORK MANAGER subtitle */}
-              <span className="text-[10px] font-medium text-gray-400 tracking-widest uppercase mt-0">Network Manager</span>
+              <span className="text-[10px] font-medium text-gray-400 tracking-widest uppercase">Network Manager</span>
             </Link>
             <button
               onClick={onClose}
