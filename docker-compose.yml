@@ -4,16 +4,17 @@ services:
     container_name: dms-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: distribution_management_system
       MYSQL_USER: dms_user
-      MYSQL_PASSWORD: dms_password
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       TZ: Asia/Kolkata
     command: ["--default-time-zone=+05:30"]
     expose:
       - "3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
       interval: 10s
@@ -38,10 +39,12 @@ services:
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USER: dms_user
-      DB_PASSWORD: dms_password
+      DB_PASSWORD: ${MYSQL_PASSWORD}
       DB_NAME: distribution_management_system
       HOST: 0.0.0.0
       PORT: 8080
+      ENFORCE_HTTPS: "true"
+      CSRF_COOKIE_SECURE: "true"
       DB_BACKUP_TIME: "02:00"
       RCLONE_REMOTE: DMS
       DMS_RCLONE_DEST_DIR: dms-db-backups
@@ -55,7 +58,11 @@ services:
       - ./backend/monthly_backups:/app/monthly_backups
       - ./backend/db_backups:/app/db_backups
       - ./backend/uploads:/app/uploads
+      - ./backend/logs:/app/logs
       - ${HOME}/.config/rclone/rclone.conf:/app/rclone/rclone.conf
+    read_only: true
+    tmpfs:
+      - /tmp
     networks:
       dms_net:
         ipv4_address: 172.20.0.3
@@ -64,15 +71,21 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: https://localhost/api
     container_name: dms-frontend
     restart: unless-stopped
     depends_on:
       - backend
     environment:
-      VITE_API_URL: https://10.0.0.1/api
       TZ: Asia/Kolkata
     expose:
       - "5173"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/node_modules/.vite:rw,mode=1777,uid=1000,gid=1000
+      - /app/node_modules/.vite-temp:rw,mode=1777,uid=1000,gid=1000
     networks:
       dms_net:
         ipv4_address: 172.20.0.4

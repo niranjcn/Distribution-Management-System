@@ -8,12 +8,16 @@ Comprehensive seeding script for:
 
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
+import re
 from app.config import settings
 from app.database import get_db
 from app.utils.security import get_password_hash
 import uuid
 
 PASSWORD = "TempPass@1234"
+USERLIST_PATH = Path(__file__).resolve().parent / "UserList.txt"
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # Additional users to create
 ADDITIONAL_USERS = [
@@ -113,6 +117,181 @@ EXTERNAL_INVENTORY = [
     {"item_id": "EXT-SB-001", "name": "Set-top Box HD Local", "serial": "SB-EXT-001", "mac_id": "NU-ID-EXT-001", "device_type": "Set-top box", "price": 75.00, "supplier": "Local Manufacturer"},
     {"item_id": "EXT-SB-002", "name": "Set-top Box OTT Local", "serial": "SB-EXT-002", "mac_id": "NU-ID-EXT-002", "device_type": "Set-top box", "price": 80.00, "supplier": "Local Manufacturer"},
 ]
+
+
+def load_userlist(path: Path) -> tuple[list[str], str]:
+    """Load user emails and an optional password from a UserList file."""
+    if not path.exists():
+        print(f"User list file not found: {path}")
+        return [], PASSWORD
+
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    emails: list[str] = []
+    password = PASSWORD
+
+    for line in lines:
+        if not line:
+            continue
+        if EMAIL_PATTERN.match(line):
+            emails.append(line)
+        else:
+            password = line
+
+    return emails, password
+
+
+def _format_pair(digits: str) -> str:
+    if not digits:
+        return ""
+    if len(digits) == 1:
+        return digits
+    return f"{digits[0]}-{digits[1:]}"
+
+
+def infer_user_from_email(email: str) -> dict:
+    """Infer a minimal user record from an email prefix."""
+    prefix, domain = email.split("@", 1)
+    match = re.match(r"([a-z_]+?)(\d+)$", prefix)
+    base = match.group(1) if match else prefix
+    digits = match.group(2) if match else ""
+
+    role = "operator"
+    name = prefix.replace("_", " ").replace("-", " ").title()
+    parent_email = None
+
+    if base == "manager":
+        role = "manager"
+        name = f"Manager {digits}" if digits else "Manager"
+    elif base == "staff":
+        role = "pdic_staff"
+        name = f"Staff {digits}" if digits else "Staff"
+    elif base == "subdist":
+        role = "sub_distributor"
+        name = f"Subdistributor {digits}" if digits else "Subdistributor"
+    elif base == "cluster":
+        role = "cluster"
+        pair = _format_pair(digits)
+        name = f"Cluster {pair}" if pair else "Cluster"
+        if digits:
+            parent_email = f"subdist{digits[0]}@{domain}"
+    elif base == "operator":
+        role = "operator"
+        pair = _format_pair(digits)
+        name = f"Operator {pair}" if pair else "Operator"
+        if digits:
+            parent_email = f"cluster{digits}@{domain}"
+
+    return {
+        "email": email,
+        "name": name,
+        "role": role,
+        "phone": None,
+        "department": None,
+        "location": None,
+        "parent_id": parent_email,
+    }
+
+
+async def seed_userlist_users(path: Path = USERLIST_PATH):
+    """Seed users listed in UserList.txt."""
+    emails, password = load_userlist(path)
+    if not emails:
+        print("No user list entries found. Skipping UserList seed.")
+        return
+
+    async with get_db() as db:
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        created_count = 0
+        skipped_count = 0
+
+        cursor = await db.execute("SELECT id, email FROM users")
+        email_to_id = {row["email"]: row["id"] for row in await cursor.fetchall()}
+
+        role_order = {
+            "manager": 10,
+            "pdic_staff": 20,
+            "sub_distributor": 30,
+            "cluster": 40,
+            "operator": 50,
+        }
+
+        users = [infer_user_from_email(email) for email in emails]
+        users.sort(key=lambda item: role_order.get(item["role"], 90))
+
+        print("\n" + "=" * 60)
+        print("SEEDING USERLIST USERS")
+        print("=" * 60)
+        print(f"Using password from UserList.txt: {password}")
+
+        for user_data in users:
+            email = user_data["email"]
+
+            if email in email_to_id:
+                print(f"  [SKIP] {email} (already exists)")
+                skipped_count += 1
+                continue
+
+            parent_user_id = None
+            parent_email = user_data.get("parent_id")
+            if parent_email:
+                if parent_email in email_to_id:
+                    parent_user_id = email_to_id[parent_email]
+                else:
+                    cursor = await db.execute(
+                        "SELECT id FROM users WHERE email = ?",
+                        (parent_email,),
+                    )
+                    parent = await cursor.fetchone()
+                    if parent:
+                        parent_user_id = parent["id"]
+                        email_to_id[parent_email] = parent["id"]
+
+            cursor = await db.execute(
+                """INSERT INTO users
+                (email, password_hash, name, role, phone, department, location,
+                 parent_id, status, permissions, theme, compact_mode,
+                 email_notifications, push_notifications, is_verified,
+                 force_password_change, force_email_change, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    email,
+                    get_password_hash(password),
+                    user_data["name"],
+                    user_data["role"],
+                    user_data.get("phone"),
+                    user_data.get("department"),
+                    user_data.get("location"),
+                    parent_user_id,
+                    "active",
+                    "{}",
+                    "light",
+                    False,
+                    True,
+                    True,
+                    True,
+                    False,
+                    False,
+                    now,
+                    now,
+                ),
+            )
+
+            if cursor.rowcount > 0:
+                cursor = await db.execute(
+                    "SELECT id FROM users WHERE email = ?",
+                    (email,),
+                )
+                new_user = await cursor.fetchone()
+                if new_user:
+                    email_to_id[email] = new_user["id"]
+                print(f"  [OK] Created {email} ({user_data['role']})")
+                created_count += 1
+            else:
+                print(f"  [FAIL] Could not create {email}")
+
+        await db.commit()
+        print(f"\nUserList Users Created: {created_count}")
+        print(f"UserList Users Skipped: {skipped_count}")
 
 
 async def seed_additional_users():
@@ -313,9 +492,8 @@ async def main():
     print("╚" + "="*58 + "╝")
 
     try:
+        await seed_userlist_users()
         await seed_additional_users()
-        await seed_devices()
-        await seed_external_inventory()
 
         print("\n" + "="*60)
         print("✓ SEEDING COMPLETE!")

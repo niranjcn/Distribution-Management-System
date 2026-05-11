@@ -39,7 +39,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         docs_paths = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
         if request.url.path not in docs_paths:
-            response.headers["Content-Security-Policy"] = "default-src 'self'"
+            csp = (
+                "default-src 'self'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com data:"
+            )
+            response.headers["Content-Security-Policy"] = csp
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response

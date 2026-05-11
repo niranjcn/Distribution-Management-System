@@ -35,7 +35,7 @@ async def get_current_user(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token validation failed: {str(e)}",
+            detail="Token validation failed",
             headers={"WWW-Authenticate": "Bearer"}
         )
 

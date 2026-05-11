@@ -69,7 +69,7 @@ async def login(request: Request, response: Response, credentials: LoginRequest)
 
         # Backward-compatible auth hardening: keep response tokens while also setting
         # secure httpOnly cookies for cookie-based auth and CSRF-protected requests.
-        is_secure_cookie = settings.ENVIRONMENT == "production"
+        is_secure_cookie = settings.CSRF_COOKIE_SECURE
         response.set_cookie(
             key="access_token",
             value=token_data["access_token"],
@@ -134,8 +134,11 @@ async def logout(
     """User logout endpoint"""
     try:
         token = credentials.credentials if credentials else request.cookies.get("access_token")
+        refresh_token = request.cookies.get("refresh_token")
         if token:
             await auth_service.blacklist_token(token)
+        if refresh_token:
+            await auth_service.blacklist_token(refresh_token)
 
         response.delete_cookie("access_token", path="/")
         response.delete_cookie("refresh_token", path="/")

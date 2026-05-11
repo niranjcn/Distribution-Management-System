@@ -76,3 +76,8 @@ logs/
 
 # Local development
 .local/
+
+#certs
+nginx/certs/*
+ngninx/certs/fullchain.pem
+nginx/certs/privkey.pem
