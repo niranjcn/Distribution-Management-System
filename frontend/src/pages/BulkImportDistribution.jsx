@@ -30,7 +30,7 @@ const ALLOWED_RECIPIENT_TYPES = {
   operator: ['operator'],
 };
 
-const TEMPLATE_HEADERS = ['mac_address', 'serial_number', 'nuid', 'date_of_distribution'];
+const TEMPLATE_HEADERS = ['mac_address', 'serial_number', 'nuid'];
 
 const BulkImportDistribution = () => {
   const navigate = useNavigate();
@@ -154,7 +154,6 @@ const BulkImportDistribution = () => {
   const handleFileChange = (event) => {
     const selected = event.target.files[0];
     if (!selected) return;
-
     if (!validateFile(selected)) {
       showToast('Please select an Excel (.xlsx, .xls) or CSV (.csv) file', 'error');
       return;
@@ -181,11 +180,6 @@ const BulkImportDistribution = () => {
   const handleUpload = async () => {
     if (!toUserId) {
       showToast('Please select a recipient first', 'error');
-      return;
-    }
-
-    if (!file) {
-      showToast('Please choose an upload file', 'error');
       return;
     }
 
@@ -220,10 +214,10 @@ const BulkImportDistribution = () => {
 
     const rows = [
       TEMPLATE_HEADERS.join(','),
-      'AA:BB:CC:DD:EE:01,,,2026-04-01',
-      ',SN-ONT-2001,,2026-04-01',
-      ',,NUID-00021,2026-04-01',
-      'AA:BB:CC:DD:EE:99,SN-ONT-2999,NUID-00099,2026-04-01',
+      'AA:BB:CC:DD:EE:01,,',
+      ',SN-ONT-2001,',
+      ',,NUID-00021',
+      'AA:BB:CC:DD:EE:99,SN-ONT-2999,NUID-00099',
     ];
 
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
@@ -259,8 +253,8 @@ const BulkImportDistribution = () => {
             <p className="text-sm text-gray-500 mb-3">
               Required file columns: <span className="font-medium text-gray-700">mac_address</span>,{' '}
               <span className="font-medium text-gray-700">serial_number</span>, or{' '}
-              <span className="font-medium text-gray-700">nuid</span>. You can provide any one per row. Optional:{' '}
-              <span className="font-medium text-gray-700">date_of_distribution</span> (YYYY-MM-DD).
+              <span className="font-medium text-gray-700">nuid</span>. You can provide any one per row.
+              Use the date picker below to apply a single date to the upload.
             </p>
             <Button variant="outline" icon={Download} onClick={downloadTemplate}>
               Download CSV Template
@@ -424,7 +418,7 @@ const BulkImportDistribution = () => {
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Leave blank to use today's date, or provide a single date in the file.
+            Leave blank to use today's date for the distribution.
           </p>
         </div>
 

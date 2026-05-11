@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
@@ -11,11 +11,11 @@ RUN npm ci
 COPY . /app
 RUN npm run build
 
-RUN mkdir -p /app/node_modules/.vite /app/node_modules/.vite-temp \
-	&& chown -R node:node /app
+FROM nginx:1.27-alpine
 
-EXPOSE 5173
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-USER node
+EXPOSE 80
 
-CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "5173"]
+ENTRYPOINT ["nginx", "-g", "daemon off;"]

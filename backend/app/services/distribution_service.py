@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any, Set
 import json
 import io
 import csv
+import logging
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -12,6 +13,8 @@ from app.models.distribution import DistributionCreate, DistributionStatus
 from app.models.device import DeviceStatus
 from app.services import approval_service, device_service, notification_service
 from app.utils.helpers import get_pagination, generate_distribution_id
+
+logger = logging.getLogger(__name__)
 
 
 def _distribution_manifest_dir() -> Path:
@@ -142,6 +145,95 @@ def _sender_display_name(user: Dict[str, Any]) -> str:
     if role in {"super_admin", "manager", "pdic_staff"}:
         return "PDIC"
     return str(user.get("name") or "Unknown")
+
+
+async def _bulk_update_device_holders(
+    device_ids: List[Any],
+    holder_id: str,
+    holder_name: str,
+    holder_type: str,
+    location: str,
+    status: str,
+    performed_by: str,
+    performed_by_name: str,
+    from_user_id: Optional[str] = None,
+    from_user_name: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> List[str]:
+    if not device_ids:
+        return []
+
+    normalized_ids = []
+    for dev_id in device_ids:
+        try:
+            normalized_ids.append(int(dev_id))
+        except (TypeError, ValueError):
+            continue
+
+    if not normalized_ids:
+        return []
+
+    async with get_db() as db:
+        placeholders = ",".join(["?"] * len(normalized_ids))
+        cursor = await db.execute(
+            f"SELECT id, status FROM devices WHERE id IN ({placeholders})",
+            normalized_ids,
+        )
+        rows = await cursor.fetchall()
+        status_map = {str(row.get("id")): row.get("status") for row in rows if row.get("id") is not None}
+        if not status_map:
+            return []
+
+        existing_ids = [int(dev_id) for dev_id in status_map.keys()]
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+        update_placeholders = ",".join(["?"] * len(existing_ids))
+        await db.execute(
+            f"""UPDATE devices
+                SET current_holder_id = ?, current_holder_name = ?, current_holder_type = ?,
+                    current_location = ?, status = ?, updated_at = ?
+                WHERE id IN ({update_placeholders})""",
+            [
+                holder_id,
+                holder_name,
+                holder_type,
+                location,
+                status,
+                now,
+                *existing_ids,
+            ],
+        )
+
+        history_sql = """INSERT INTO device_history (
+                device_id, action, from_user_id, from_user_name,
+                to_user_id, to_user_name, status_before, status_after,
+                location, notes, performed_by, performed_by_name, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+        history_payload = [
+            (
+                dev_id,
+                "distributed",
+                from_user_id,
+                from_user_name,
+                holder_id,
+                holder_name,
+                status_map.get(str(dev_id)),
+                status,
+                location,
+                notes,
+                performed_by,
+                performed_by_name,
+                now,
+            )
+            for dev_id in existing_ids
+        ]
+
+        if history_payload:
+            await db.executemany(history_sql, history_payload)
+
+        await db.commit()
+        return [str(dev_id) for dev_id in existing_ids]
 
 
 async def _device_has_open_distribution_lock(db, device_id: str) -> bool:
@@ -438,7 +530,7 @@ async def create_distribution_from_identifiers(
             seen_device_ids.add(resolved_id)
             resolved_device_ids.append(resolved_id)
 
-    if errors:
+    if not resolved_device_ids:
         return {
             "created": False,
             "distribution": None,
@@ -461,8 +553,8 @@ async def create_distribution_from_identifiers(
         "created": True,
         "distribution": distribution,
         "created_count": len(resolved_device_ids),
-        "error_count": 0,
-        "errors": [],
+        "error_count": len(errors),
+        "errors": errors,
         "total_rows": len(identifier_rows),
         "valid_count": len(resolved_device_ids),
     }
@@ -744,6 +836,13 @@ async def confirm_receipt(
     if dist["status"] != DistributionStatus.PENDING_RECEIPT.value:
         raise ValueError("This distribution is not awaiting receipt confirmation")
 
+    device_ids = dist.get("device_ids") or []
+    if isinstance(device_ids, str):
+        try:
+            device_ids = json.loads(device_ids)
+        except (json.JSONDecodeError, TypeError):
+            device_ids = []
+
     now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
     role_to_type = {
@@ -819,24 +918,22 @@ async def confirm_receipt(
             DeviceStatus.IN_USE.value if to_user_role == "operator" else DeviceStatus.DISTRIBUTED.value
         )
         holder_type = role_to_type.get(to_user_role, "pdic_staff")
-        device_ids = dist.get("device_ids", [])
-        for dev_id in device_ids:
-            try:
-                await device_service.update_device_holder(
-                    device_id=str(dev_id),
-                    holder_id=dist["to_user_id"],
-                    holder_name=dist["to_user_name"],
-                    holder_type=holder_type,
-                    location=dist["to_user_name"],
-                    status=device_status_for_recipient,
-                    performed_by=user_id,
-                    performed_by_name=user["name"],
-                    from_user_id=dist["from_user_id"],
-                    from_user_name=dist["from_user_name"],
-                    notes=f"Receipt confirmed for distribution {dist['distribution_id']}"
-                )
-            except Exception:
-                pass  # Log but don't fail the confirmation
+        try:
+            await _bulk_update_device_holders(
+                device_ids=device_ids,
+                holder_id=dist["to_user_id"],
+                holder_name=dist["to_user_name"],
+                holder_type=holder_type,
+                location=dist["to_user_name"],
+                status=device_status_for_recipient,
+                performed_by=user_id,
+                performed_by_name=user["name"],
+                from_user_id=dist["from_user_id"],
+                from_user_name=dist["from_user_name"],
+                notes=f"Receipt confirmed for distribution {dist['distribution_id']}",
+            )
+        except Exception:
+            logger.exception("Failed bulk device holder update for distribution %s", dist.get("distribution_id"))
 
         # Notify sender: receipt confirmed
         await notification_service.create_notification(

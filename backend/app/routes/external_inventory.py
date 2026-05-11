@@ -17,6 +17,8 @@ from app.models.inventory import (
     ReceiptCreate,
     StockAdjustmentCreate,
 )
+from app.database import get_db
+from app.utils.helpers import generate_inventory_item_id
 from app.services import inventory_service
 
 router = APIRouter()
@@ -25,6 +27,44 @@ logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads" / "external_inventory"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _chunks(values, chunk_size: int):
+    for i in range(0, len(values), chunk_size):
+        yield values[i:i + chunk_size]
+
+
+def _uses_mac_id(device_type: Optional[str]) -> bool:
+    normalized = str(device_type or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    return normalized in {"olt", "adapter"}
+
+
+def _resolve_device_type(device_type: str, custom_device_type: str) -> str:
+    base = str(device_type or "").strip()
+    if base.lower() == "others":
+        custom = str(custom_device_type or "").strip()
+        if custom:
+            return custom
+    return base
+
+
+async def _fetch_existing_values(db, column: str, values: list[str]) -> set:
+    if not values:
+        return set()
+
+    existing = set()
+    for batch in _chunks(values, 500):
+        placeholders = ",".join(["?"] * len(batch))
+        cursor = await db.execute(
+            f"SELECT {column} FROM external_inventory_items WHERE {column} IN ({placeholders})",
+            batch,
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            value = row.get(column)
+            if value:
+                existing.add(str(value).strip())
+    return existing
 
 
 @router.get("/dashboard")
@@ -159,7 +199,13 @@ async def bulk_upload_external_inventory_items(
             )
 
         created = []
+        skipped = []
         errors = []
+        prepared_rows = []
+        seen_item_ids = set()
+        seen_serials = set()
+        seen_macs = set()
+        seen_identifiers = set()
 
         for row_idx, row in enumerate(data_rows, start=2):
             padded = row + [""] * (len(headers) - len(row))
@@ -171,46 +217,218 @@ async def bulk_upload_external_inventory_items(
             if not any(row_data.values()):
                 continue
 
-            try:
-                device_type_value = row_data.get("device_type", "")
-                custom_device_type = row_data.get("custom_device_type", "")
-                normalized_type = str(device_type_value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
-                mac_id_value = str(row_data.get("mac_id", "")).strip()
-                identifier_type_value = str(row_data.get("identifier_type", "")).strip()
-                identifier_value = str(row_data.get("identifier", "")).strip()
+            item_id = str(row_data.get("item_id", "")).strip()
+            name = str(row_data.get("name", "")).strip()
+            serial_number = str(row_data.get("serial_number", "")).strip()
+            device_type_value = str(row_data.get("device_type", "")).strip()
+            custom_device_type = str(row_data.get("custom_device_type", "")).strip()
+            effective_device_type = _resolve_device_type(device_type_value, custom_device_type)
 
-                if normalized_type in {"olt", "adapter"} and not mac_id_value:
-                    raise ValueError("mac_id is required when device_type is OLT or Adapter")
+            if not item_id:
+                errors.append({"row": row_idx, "item_id": "", "error": "Missing item_id"})
+                continue
+            if not name:
+                errors.append({"row": row_idx, "item_id": item_id, "error": "Missing name"})
+                continue
+            if not serial_number:
+                errors.append({"row": row_idx, "item_id": item_id, "error": "Missing serial_number"})
+                continue
+            if not effective_device_type:
+                errors.append({"row": row_idx, "item_id": item_id, "error": "Missing device_type"})
+                continue
 
-                if normalized_type not in {"olt", "adapter"} and (not identifier_type_value or not identifier_value):
-                    raise ValueError(
-                        "identifier_type and identifier are required for non-OLT/Adapter device_type"
-                    )
+            mac_id_value = str(row_data.get("mac_id", "")).strip()
+            identifier_type_value = str(row_data.get("identifier_type", "")).strip()
+            identifier_value = str(row_data.get("identifier", "")).strip()
 
-                item_payload = InventoryItemCreate(
-                    item_id=row_data.get("item_id", ""),
-                    name=row_data.get("name", ""),
-                    serial_number=row_data.get("serial_number", ""),
-                    mac_id=mac_id_value,
-                    identifier_type=identifier_type_value or None,
-                    identifier=identifier_value or None,
-                    device_type=device_type_value,
-                    custom_device_type=custom_device_type or None,
-                    price=float(row_data.get("price", "0") or 0),
-                    supplier_name=row_data.get("supplier_name") or None,
-                    location=row_data.get("location") or None,
-                    notes=row_data.get("notes") or None,
-                )
-                created_item = await inventory_service.create_item(item_data=item_payload, user=current_user)
-                created.append(created_item.get("inventory_id"))
-            except Exception as e:
-                errors.append(
-                    {
+            if _uses_mac_id(effective_device_type):
+                if not mac_id_value:
+                    errors.append({
                         "row": row_idx,
-                        "item_id": row_data.get("item_id", ""),
-                        "error": str(e),
-                    }
+                        "item_id": item_id,
+                        "error": "mac_id is required when device_type is OLT or Adapter",
+                    })
+                    continue
+                identifier_type_value = ""
+                identifier_value = ""
+            else:
+                if not identifier_type_value or not identifier_value:
+                    errors.append({
+                        "row": row_idx,
+                        "item_id": item_id,
+                        "error": "identifier_type and identifier are required for non-OLT/Adapter device_type",
+                    })
+                    continue
+                mac_id_value = ""
+
+            if item_id in seen_item_ids:
+                skipped.append({"row": row_idx, "item_id": item_id, "reason": "Duplicate item_id in file"})
+                continue
+            seen_item_ids.add(item_id)
+
+            if serial_number in seen_serials:
+                skipped.append({"row": row_idx, "item_id": item_id, "reason": "Duplicate serial_number in file"})
+                continue
+            seen_serials.add(serial_number)
+
+            if mac_id_value:
+                if mac_id_value in seen_macs:
+                    skipped.append({"row": row_idx, "item_id": item_id, "reason": "Duplicate mac_id in file"})
+                    continue
+                seen_macs.add(mac_id_value)
+
+            if identifier_value:
+                identifier_key = f"{identifier_type_value.lower()}::{identifier_value.lower()}"
+                if identifier_key in seen_identifiers:
+                    skipped.append({"row": row_idx, "item_id": item_id, "reason": "Duplicate identifier in file"})
+                    continue
+                seen_identifiers.add(identifier_key)
+
+            price_raw = str(row_data.get("price", "") or "").strip()
+            if price_raw:
+                try:
+                    price_value = float(price_raw)
+                except ValueError:
+                    errors.append({"row": row_idx, "item_id": item_id, "error": "Invalid price value"})
+                    continue
+            else:
+                price_value = 0.0
+
+            prepared_rows.append({
+                "row": row_idx,
+                "item_id": item_id,
+                "name": name,
+                "serial_number": serial_number,
+                "mac_id": mac_id_value,
+                "identifier_type": identifier_type_value,
+                "identifier": identifier_value,
+                "device_type": effective_device_type,
+                "price": price_value,
+                "unit": str(row_data.get("unit") or "pcs").strip() or "pcs",
+                "supplier_name": row_data.get("supplier_name") or None,
+                "location": row_data.get("location") or None,
+                "notes": row_data.get("notes") or None,
+            })
+
+        if not prepared_rows:
+            return {
+                "success": True,
+                "message": f"Import complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
+                "data": {
+                    "created_count": 0,
+                    "skipped_count": len(skipped),
+                    "error_count": len(errors),
+                    "created": created,
+                    "skipped": skipped,
+                    "errors": errors,
+                },
+            }
+
+        async with get_db() as db:
+            existing_item_ids = await _fetch_existing_values(db, "item_id", [row["item_id"] for row in prepared_rows])
+            existing_serials = await _fetch_existing_values(db, "serial_number", [row["serial_number"] for row in prepared_rows])
+            existing_macs = await _fetch_existing_values(db, "mac_id", [row["mac_id"] for row in prepared_rows if row["mac_id"]])
+            existing_identifiers = await _fetch_existing_values(
+                db, "identifier", [row["identifier"] for row in prepared_rows if row["identifier"]]
+            )
+
+            insertable_rows = []
+            for row in prepared_rows:
+                if row["item_id"] in existing_item_ids:
+                    skipped.append({"row": row["row"], "item_id": row["item_id"], "reason": "item_id already exists"})
+                    continue
+                if row["serial_number"] in existing_serials:
+                    skipped.append({
+                        "row": row["row"],
+                        "item_id": row["item_id"],
+                        "reason": "serial_number already exists",
+                    })
+                    continue
+                if row["mac_id"] and row["mac_id"] in existing_macs:
+                    skipped.append({"row": row["row"], "item_id": row["item_id"], "reason": "mac_id already exists"})
+                    continue
+                if row["identifier"] and row["identifier"] in existing_identifiers:
+                    skipped.append({"row": row["row"], "item_id": row["item_id"], "reason": "identifier already exists"})
+                    continue
+
+                insertable_rows.append(row)
+
+            if not insertable_rows:
+                return {
+                    "success": True,
+                    "message": f"Import complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
+                    "data": {
+                        "created_count": 0,
+                        "skipped_count": len(skipped),
+                        "error_count": len(errors),
+                        "created": created,
+                        "skipped": skipped,
+                        "errors": errors,
+                    },
+                }
+
+            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            actor_id = str(current_user.get("id") or current_user.get("_id") or current_user.get("user_id") or current_user.get("sub") or "")
+            if not actor_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authenticated user id is missing",
                 )
+            insert_sql = """INSERT INTO external_inventory_items (
+                inventory_id, item_id, name, serial_number, mac_id, identifier_type, identifier, device_type, price,
+                sku, category, unit, quantity_on_hand, reorder_level, unit_cost, supplier_name, location, status,
+                notes, image_url, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)"""
+
+            for batch in _chunks(insertable_rows, 500):
+                batch_payload = []
+                batch_inventory_ids = []
+                for item in batch:
+                    inventory_id = generate_inventory_item_id()
+                    batch_inventory_ids.append(inventory_id)
+                    batch_payload.append((
+                        inventory_id,
+                        item["item_id"],
+                        item["name"],
+                        item["serial_number"],
+                        item["mac_id"],
+                        item["identifier_type"],
+                        item["identifier"],
+                        item["device_type"],
+                        item["price"],
+                        item["item_id"],
+                        item["device_type"],
+                        item["unit"],
+                        1,
+                        0,
+                        item["price"],
+                        item["supplier_name"],
+                        item["location"],
+                        item["notes"],
+                        None,
+                        actor_id,
+                        now,
+                        now,
+                    ))
+
+                try:
+                    await db.executemany(insert_sql, batch_payload)
+                    created.extend(batch_inventory_ids)
+                except Exception as batch_error:
+                    for idx, item in enumerate(batch):
+                        inventory_id = batch_inventory_ids[idx]
+                        try:
+                            await db.execute(insert_sql, batch_payload[idx])
+                            created.append(inventory_id)
+                        except Exception as single_error:
+                            errors.append({
+                                "row": item["row"],
+                                "item_id": item["item_id"],
+                                "error": str(single_error),
+                            })
+                    logger.warning("External inventory bulk insert fallback triggered: %s", str(batch_error))
+
+            await db.commit()
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         await log_business_activity(
@@ -218,17 +436,19 @@ async def bulk_upload_external_inventory_items(
             path="/activity/external-inventory/item-bulk-import",
             description=(
                 f"{actor_name} imported external inventory items: "
-                f"{len(created)} created, {len(errors)} errors"
+                f"{len(created)} created, {len(skipped)} skipped, {len(errors)} errors"
             ),
         )
 
         return {
             "success": True,
-            "message": f"Import complete: {len(created)} created, {len(errors)} errors",
+            "message": f"Import complete: {len(created)} created, {len(skipped)} skipped, {len(errors)} errors",
             "data": {
                 "created_count": len(created),
+                "skipped_count": len(skipped),
                 "error_count": len(errors),
                 "created": created,
+                "skipped": skipped,
                 "errors": errors,
             },
         }

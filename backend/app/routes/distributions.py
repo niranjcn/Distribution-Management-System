@@ -232,9 +232,15 @@ async def bulk_upload_distribution(
             )
 
         if result["created"]:
-            message = (
-                f"Distribution created successfully with {result['created_count']} device(s)"
-            )
+            if result.get("error_count"):
+                message = (
+                    f"Distribution created with {result['created_count']} device(s); "
+                    f"{result['error_count']} row error(s)."
+                )
+            else:
+                message = (
+                    f"Distribution created successfully with {result['created_count']} device(s)"
+                )
         else:
             message = (
                 f"Upload validation failed: {result['error_count']} row error(s). "

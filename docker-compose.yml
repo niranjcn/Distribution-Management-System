@@ -80,12 +80,12 @@ services:
     environment:
       TZ: Asia/Kolkata
     expose:
-      - "5173"
+      - "80"
     read_only: true
     tmpfs:
-      - /tmp
-      - /app/node_modules/.vite:rw,mode=1777,uid=1000,gid=1000
-      - /app/node_modules/.vite-temp:rw,mode=1777,uid=1000,gid=1000
+      - /var/cache/nginx
+      - /var/run
+      - /var/log/nginx
     networks:
       dms_net:
         ipv4_address: 172.20.0.4
