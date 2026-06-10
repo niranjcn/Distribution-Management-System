@@ -1,0 +1,5 @@
+services:
+  backend:
+    volumes:
+      - ./backend/app:/app/app
+    read_only: false

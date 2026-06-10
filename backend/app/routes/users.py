@@ -1,11 +1,13 @@
+import csv
+import io
 import logging
-from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, File, UploadFile, Form
 from typing import Optional
 
 from app.database import get_db
 from app.models.user import UserCreate, UserUpdate
 from app.services import user_service
-from app.middleware.auth_middleware import get_current_user
+from app.middleware.auth_middleware import get_current_user, require_admin_or_manager_or_md
 from app.core.audit import audit_logger
 from app.core.activity_logger import build_field_change_summary, log_business_activity
 from app.utils.roles import (
@@ -602,6 +604,180 @@ async def get_users_by_role(role: str, current_user: dict = Depends(get_current_
         logger.exception("Unhandled route exception")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
+
+@router.post("/bulk-upload", status_code=status.HTTP_201_CREATED)
+async def bulk_upload_users(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    actor_role = normalize_role(current_user.get("role"))
+    if actor_role not in {SUPER_ADMIN, MANAGER}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in {"csv", "xlsx", "xls"}:
+        raise HTTPException(status_code=400, detail="Unsupported file format. Use .csv, .xlsx, or .xls")
+
+    try:
+        contents = await file.read()
+        rows = _parse_file(contents, ext)
+    except Exception as e:
+        logger.exception("File parse error")
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="File is empty or has no data rows")
+
+    from app.utils.security import get_password_hash as _hash
+    from app.models.user import UserRole
+    from datetime import datetime as _dt, timezone as _tz
+
+    created = []
+    errors = []
+    skipped = []
+    total = len(rows)
+
+    async with get_db() as db:
+        caches = {"cluster": {}, "sub_distributor": {}, "sub_distribution_manager": {}}
+
+        async def _resolve_parent(email: str, expected_role: str) -> Optional[int]:
+            if not email or not email.strip():
+                return None
+            cache_key = email.strip().lower()
+            if cache_key in caches.get(expected_role, {}):
+                return caches[expected_role][cache_key]
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE LOWER(email) = ? AND role = ?",
+                (cache_key, expected_role),
+            )
+            row = await cursor.fetchone()
+            if row:
+                uid = int(row["id"])
+                caches.setdefault(expected_role, {})[cache_key] = uid
+                return uid
+            return None
+
+        for idx, row in enumerate(rows):
+            row_num = idx + 2
+            try:
+                role_val = str(row.get("role") or "").strip().lower()
+                email = str(row.get("email") or "").strip().lower()
+                password = str(row.get("password") or "")
+                name = str(row.get("name") or "").strip()
+                digital_id = str(row.get("digital_id") or "").strip() or None
+                broadband_id = str(row.get("broadband_id") or "").strip() or None
+                phone = str(row.get("phone") or "").strip() or None
+                department = str(row.get("department") or "").strip() or None
+                location = str(row.get("location") or "").strip() or None
+
+                if not email or not password or not name:
+                    errors.append({"row": row_num, "email": email, "error": "Missing required fields (email, password, name)"})
+                    continue
+                if not role_val:
+                    errors.append({"row": row_num, "email": email, "error": "Missing role"})
+                    continue
+
+                normalized_role = normalize_role(role_val)
+                if not normalized_role or normalized_role not in {"sub_distributor", "sub_distribution_manager", "cluster", "operator"}:
+                    errors.append({"row": row_num, "email": email, "error": f"Invalid role '{role_val}'. Allowed: sub_distributor, sub_distribution_manager, cluster, operator"})
+                    continue
+
+                parent_id = None
+
+                if normalized_role in ("cluster", "sub_distribution_manager"):
+                    sd_email = str(row.get("sub_distributor_email") or "").strip().lower()
+                    parent_id = await _resolve_parent(sd_email, "sub_distributor")
+                    if not sd_email:
+                        errors.append({"row": row_num, "email": email, "error": f"sub_distributor_email is required for role '{normalized_role}'"})
+                        continue
+                    if parent_id is None:
+                        errors.append({"row": row_num, "email": email, "error": f"Sub-distributor with email '{sd_email}' not found"})
+                        continue
+
+                if normalized_role == "operator":
+                    cluster_email = str(row.get("cluster_email") or "").strip().lower()
+                    parent_id = await _resolve_parent(cluster_email, "cluster")
+                    if not cluster_email:
+                        errors.append({"row": row_num, "email": email, "error": "cluster_email is required for role 'operator'"})
+                        continue
+                    if parent_id is None:
+                        errors.append({"row": row_num, "email": email, "error": f"Cluster with email '{cluster_email}' not found"})
+                        continue
+
+                cursor = await db.execute("SELECT id FROM users WHERE email = ?", (email,))
+                if await cursor.fetchone():
+                    skipped.append({"row": row_num, "email": email, "reason": "Email already exists"})
+                    continue
+
+                now = _dt.now(_tz.utc).replace(tzinfo=None).isoformat()
+                await db.execute(
+                    """INSERT INTO users (email, password_hash, name, role, digital_id, broadband_id,
+                        phone, department, location, status, parent_id, permissions,
+                        theme, compact_mode, email_notifications, push_notifications,
+                        is_verified, created_at, updated_at, last_login)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        email, _hash(password), name, normalized_role,
+                        digital_id, broadband_id, phone, department, location,
+                        "active", parent_id, "{}", "light", 0, 1, 1, 0, now, now, None,
+                    ),
+                )
+                await db.commit()
+                created.append({"row": row_num, "email": email, "role": normalized_role, "name": name})
+
+            except Exception as e:
+                errors.append({"row": row_num, "email": row.get("email", ""), "error": str(e)[:200]})
+
+    audit_logger.info(
+        "USER_BULK_UPLOAD | actor=%s | total=%d | created=%d | skipped=%d | errors=%d",
+        current_user.get("email"), total, len(created), len(skipped), len(errors),
+    )
+
+    return {
+        "success": True,
+        "message": f"Created {len(created)} users",
+        "data": {
+            "total": total,
+            "created_count": len(created),
+            "skipped_count": len(skipped),
+            "error_count": len(errors),
+            "created": created,
+            "skipped": skipped,
+            "errors": errors,
+        },
+    }
+
+
+def _parse_file(contents: bytes, ext: str) -> list:
+    rows = []
+    if ext == "csv":
+        decoded = contents.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(decoded))
+        for row in reader:
+            rows.append({k.strip().lower(): v.strip() if v else "" for k, v in row.items()})
+    elif ext in ("xlsx", "xls"):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+        ws = wb.active
+        header_row = None
+        for r_idx, row in enumerate(ws.iter_rows(values_only=True)):
+            values = [str(v).strip() if v is not None else "" for v in row]
+            if r_idx == 0:
+                header_row = [str(h).strip().lower() for h in values]
+                continue
+            if header_row:
+                row_dict = {}
+                for c_idx, val in enumerate(values):
+                    if c_idx < len(header_row):
+                        row_dict[header_row[c_idx]] = val
+                if any(row_dict.values()):
+                    rows.append(row_dict)
+        wb.close()
+    return rows
 
 
 

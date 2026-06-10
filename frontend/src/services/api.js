@@ -249,6 +249,23 @@ export const usersAPI = {
     });
     return response;
   },
+
+  bulkUpload: async (file) => {
+    const formData = new FormData();
+    const fileBuffer = await file.arrayBuffer();
+    const fileSnapshot = new Blob([fileBuffer], { type: file.type || 'application/octet-stream' });
+    formData.append('file', fileSnapshot, file.name || 'bulk-upload.csv');
+    const url = `${API_BASE_URL}/users/bulk-upload`;
+    const response = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { ...buildCsrfHeader('POST') },
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || data.detail || 'Upload failed');
+    return data;
+  },
 };
 
 // Devices API
@@ -1228,6 +1245,16 @@ export const dashboardAPI = {
 
   getSystemAlerts: async () => {
     const response = await apiRequest('/dashboard/alerts');
+    return response;
+  },
+
+  getScopeUsers: async () => {
+    const response = await apiRequest('/dashboard/scope-users');
+    return response;
+  },
+
+  getUserKpi: async (userId) => {
+    const response = await apiRequest(`/dashboard/user-kpi/${userId}`);
     return response;
   },
 };

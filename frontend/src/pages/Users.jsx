@@ -440,15 +440,20 @@ const Users = () => {
       const subDistManagerIds = visibleUsers
         .filter(u => u.role === 'sub_distribution_manager' && String(u.parent_id) === filters.subDistId)
         .map(u => String(u.id));
-      const clusterIds = visibleUsers
+      const clusterViaSDMIds = visibleUsers
         .filter(u => u.role === 'cluster' && subDistManagerIds.includes(String(u.parent_id)))
         .map(u => String(u.id));
+      const clusterDirectIds = visibleUsers
+        .filter(u => u.role === 'cluster' && String(u.parent_id) === filters.subDistId)
+        .map(u => String(u.id));
+      const allClusterIds = [...new Set([...clusterViaSDMIds, ...clusterDirectIds])];
 
       result = result.filter(u =>
         String(u.id) === filters.subDistId ||
         String(u.parent_id) === filters.subDistId ||
         subDistManagerIds.includes(String(u.id)) ||
-        clusterIds.includes(String(u.parent_id))
+        allClusterIds.includes(String(u.id)) ||
+        allClusterIds.includes(String(u.parent_id))
       );
     } else if (filters.subDistManagerId) {
       const clusterIds = visibleUsers
@@ -773,6 +778,7 @@ const Users = () => {
                           if (u.role !== 'cluster') return false;
                           if (filters.subDistManagerId) return String(u.parent_id) === filters.subDistManagerId;
                           if (filters.subDistId) {
+                            if (String(u.parent_id) === filters.subDistId) return true;
                             const parentSdm = visibleUsers.find(sdm => String(sdm.id) === String(u.parent_id));
                             return parentSdm && String(parentSdm.parent_id) === filters.subDistId;
                           }

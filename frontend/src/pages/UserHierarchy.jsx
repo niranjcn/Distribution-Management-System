@@ -123,6 +123,8 @@ const UserNode = ({ user, depth = 0, children, defaultOpen = false, onSelect }) 
 };
 
 // ─── Main page ─────────────────────────────────────────────────────────────────
+const HIERARCHY_PAGE_SIZE = 1000000;
+
 const UserHierarchy = () => {
   const { user: currentUser } = useAuth();
   const { showToast } = useNotifications();
@@ -163,14 +165,14 @@ const UserHierarchy = () => {
       if (currentUser?.role === 'sub_distributor') {
         // clusters directly under me
         const [clusterRes, opRes] = await Promise.all([
-          usersAPI.getUsers({ page_size: 100 }),
-          usersAPI.getUsers({ role: 'operator', page_size: 100 }),
+          usersAPI.getUsers({ page_size: HIERARCHY_PAGE_SIZE }),
+          usersAPI.getUsers({ role: 'operator', page_size: HIERARCHY_PAGE_SIZE }),
         ]);
         const clusters = (clusterRes.data || []);
         const operators = (opRes.data || []);
         setAllUsers([...clusters, ...operators]);
       } else {
-        const res = await usersAPI.getUsers({ page_size: 100 });
+        const res = await usersAPI.getUsers({ page_size: HIERARCHY_PAGE_SIZE });
         setAllUsers(res.data || []);
       }
     } catch (err) {
@@ -256,13 +258,13 @@ const UserHierarchy = () => {
     setParentOptions([]);
     try {
       if (role === 'sub_distribution_manager') {
-        const r = await usersAPI.getUsers({ role: 'sub_distributor', page_size: 100 });
+        const r = await usersAPI.getUsers({ role: 'sub_distributor', page_size: HIERARCHY_PAGE_SIZE });
         setParentOptions((r.data || []).map(u => ({ ...u, groupLabel: 'Sub Distributor' })));
       } else if (role === 'cluster') {
         if (currentUser?.role === 'sub_distribution_manager') {
           setParentOptions([{ id: String(currentUser.id), name: currentUser.name, groupLabel: 'You (Sub Distribution Manager)' }]);
         } else {
-          const r = await usersAPI.getUsers({ role: 'sub_distribution_manager', page_size: 100 });
+          const r = await usersAPI.getUsers({ role: 'sub_distribution_manager', page_size: HIERARCHY_PAGE_SIZE });
           setParentOptions((r.data || []).map(u => ({ ...u, groupLabel: 'Sub Distribution Manager' })));
         }
       } else if (role === 'operator') {
@@ -273,7 +275,7 @@ const UserHierarchy = () => {
           setParentOptions(visibleUsers.filter(u => u.role === 'cluster').map(u => ({ ...u, groupLabel: 'Cluster' })));
         } else {
           // admin / manager: show all clusters
-          const r = await usersAPI.getUsers({ role: 'cluster', page_size: 100 });
+          const r = await usersAPI.getUsers({ role: 'cluster', page_size: HIERARCHY_PAGE_SIZE });
           setParentOptions((r.data || []).map(u => ({ ...u, groupLabel: 'Cluster' })));
         }
       }
