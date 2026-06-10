@@ -1,0 +1,1090 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import Card from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import { useNotifications } from '../context/NotificationContext';
+import { devicesAPI } from '../services/api';
+import { Box, Save, X, QrCode, ScanLine, Zap, CheckCircle, AlertCircle, Plus, Trash2, Copy, Camera, XCircle } from 'lucide-react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
+
+// Smart parser to detect and extract device information from scanned text
+const parseScannedData = (scannedText) => {
+  const result = {
+    macAddress: '',
+    serialNumber: '',
+    ponSerialNumber: '',
+    ontSerialNumber: '',
+    model: '',
+    manufacturer: '',
+    partNumber: '',
+    deviceType: 'ONT',
+    certificateNo: '',
+    powerSpec: '',
+    detectedFields: []
+  };
+
+  const text = scannedText.toUpperCase().trim();
+  
+  // MAC Address patterns (various formats)
+  // Format: XX:XX:XX:XX:XX:XX or XXXXXXXXXXXX or XX-XX-XX-XX-XX-XX
+  const macPatterns = [
+    /(?:MAC|ONU\s*MAC)[:\s]*([0-9A-F]{2}[:\-]?[0-9A-F]{2}[:\-]?[0-9A-F]{2}[:\-]?[0-9A-F]{2}[:\-]?[0-9A-F]{2}[:\-]?[0-9A-F]{2})/i,
+    /\b([0-9A-F]{12})\b/,
+    /\b([0-9A-F]{2}[:\-][0-9A-F]{2}[:\-][0-9A-F]{2}[:\-][0-9A-F]{2}[:\-][0-9A-F]{2}[:\-][0-9A-F]{2})\b/
+  ];
+  
+  for (const pattern of macPatterns) {
+    const macMatch = text.match(pattern);
+    if (macMatch) {
+      let mac = macMatch[1].replace(/[:\-]/g, '');
+      // Format MAC with colons
+      result.macAddress = mac.match(/.{2}/g)?.join(':') || mac;
+      result.detectedFields.push('MAC Address');
+      break;
+    }
+  }
+
+  // PON Serial Number (various formats)
+  const ponPatterns = [
+    /PON\s*S\/?N[:\s]*([A-Z0-9]+)/i,
+    /SCPS[0-9A-F]+/i,
+    /PPCT[0-9A-F]+/i
+  ];
+  
+  for (const pattern of ponPatterns) {
+    const ponMatch = text.match(pattern);
+    if (ponMatch) {
+      result.ponSerialNumber = ponMatch[1] || ponMatch[0];
+      result.detectedFields.push('PON Serial Number');
+      break;
+    }
+  }
+
+  // ONT Serial Number
+  const ontPatterns = [
+    /ONT\s*S\/?N[:\s]*([A-Z0-9]+)/i,
+    /SC\d{12,}/i,
+    /PPCONT\d+/i
+  ];
+  
+  for (const pattern of ontPatterns) {
+    const ontMatch = text.match(pattern);
+    if (ontMatch) {
+      result.ontSerialNumber = ontMatch[1] || ontMatch[0];
+      result.detectedFields.push('ONT Serial Number');
+      break;
+    }
+  }
+
+  // General Serial Number
+  const snPatterns = [
+    /(?:^|\s)S\/?N[:\s]*([A-Z0-9\-]+)/i,
+    /SERIAL[:\s]*([A-Z0-9\-]+)/i
+  ];
+  
+  for (const pattern of snPatterns) {
+    const snMatch = text.match(pattern);
+    if (snMatch && !result.serialNumber) {
+      result.serialNumber = snMatch[1];
+      result.detectedFields.push('Serial Number');
+      break;
+    }
+  }
+
+  // If no serial found, use ONT or PON serial
+  if (!result.serialNumber) {
+    result.serialNumber = result.ontSerialNumber || result.ponSerialNumber;
+  }
+
+  // Model detection
+  const modelPatterns = [
+    /MODEL[:\s]*([A-Z0-9\-]+)/i,
+    /MODEL\s*NO[:\s]*([A-Z0-9\-\s]+)/i,
+    /\b(SI\d+[A-Z]+)\b/i,    // Matches SI5520GWV
+    /\b(STREAM\s*[A-Z0-9]+)\b/i,  // Matches STREAM 1K14F
+    /\b([A-Z]+\d+[A-Z]*)\b/  // Generic model pattern
+  ];
+  
+  for (const pattern of modelPatterns) {
+    const modelMatch = text.match(pattern);
+    if (modelMatch) {
+      result.model = modelMatch[1].trim();
+      result.detectedFields.push('Model');
+      break;
+    }
+  }
+
+  // Manufacturer detection based on known patterns
+  const manufacturers = {
+    'PPC': ['PPC', 'PPC TECHNOLOGIES', 'PPC062'],
+    'Syrotech': ['SYROTECH', 'SI5520', 'SI55'],
+    'VSOL': ['VSOL'],
+    'Huawei': ['HUAWEI', 'HG8'],
+    'ZTE': ['ZTE', 'ZXHN'],
+    'Nokia': ['NOKIA'],
+    'Fiberhome': ['FIBERHOME'],
+    'HFCL': ['HFCL'],
+    'Netlink': ['NETLINK'],
+    'DBC': ['DBC']
+  };
+
+  for (const [manufacturer, keywords] of Object.entries(manufacturers)) {
+    if (keywords.some(keyword => text.includes(keyword))) {
+      result.manufacturer = manufacturer;
+      result.detectedFields.push('Manufacturer');
+      break;
+    }
+  }
+
+  // Part Number
+  const partMatch = text.match(/PART\s*(?:NUMBER|NO\.?)[:\s]*([A-Z0-9\-]+)/i);
+  if (partMatch) {
+    result.partNumber = partMatch[1];
+    result.detectedFields.push('Part Number');
+  }
+
+  // Certificate Number
+  const certMatch = text.match(/CERTIFICATE\s*NO[:\s]*(\d+)/i);
+  if (certMatch) {
+    result.certificateNo = certMatch[1];
+    result.detectedFields.push('Certificate No');
+  }
+
+  // Power Specification
+  const powerMatch = text.match(/(?:POWER|DC)[:\s]*(\d+V[=\s]*\d*A?)/i);
+  if (powerMatch) {
+    result.powerSpec = powerMatch[1];
+    result.detectedFields.push('Power Spec');
+  }
+
+  // Device Type detection
+  if (text.includes('ONT') || text.includes('ONU')) {
+    result.deviceType = 'ONT';
+  } else if (text.includes('ROUTER')) {
+    result.deviceType = 'Router';
+  } else if (text.includes('SWITCH')) {
+    result.deviceType = 'Switch';
+  } else if (text.includes('MODEM')) {
+    result.deviceType = 'Modem';
+  }
+
+  return result;
+};
+
+// Format MAC address for display
+const formatMACAddress = (mac) => {
+  if (!mac) return '';
+  const cleaned = mac.replace(/[:\-\s]/g, '').toUpperCase();
+  if (cleaned.length !== 12) return mac;
+  return cleaned.match(/.{2}/g)?.join(':') || mac;
+};
+
+const RegisterDevice = () => {
+  const navigate = useNavigate();
+  const { showToast } = useNotifications();
+  const [loading, setLoading] = useState(false);
+  const [scanMode, setScanMode] = useState(false);
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
+  const [scanInput, setScanInput] = useState('');
+  const [lastScanTime, setLastScanTime] = useState(0);
+  const [scanBuffer, setScanBuffer] = useState('');
+  const [parsedPreview, setParsedPreview] = useState(null);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchDevices, setBatchDevices] = useState([]);
+  const scanInputRef = useRef(null);
+  const scannerRef = useRef(null);
+  const html5QrCodeRef = useRef(null);
+
+  const [formData, setFormData] = useState({
+    macAddress: '',
+    serialNumber: '',
+    ponSerialNumber: '',
+    ontSerialNumber: '',
+    model: '',
+    manufacturer: '',
+    deviceType: 'ONT',
+    partNumber: '',
+    certificateNo: '',
+    condition: 'new',
+    notes: ''
+  });
+
+  // Initialize camera scanner
+  useEffect(() => {
+    if (showCameraScanner && scannerRef.current && !html5QrCodeRef.current) {
+      const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0,
+        disableFlip: false,
+        formatsToSupport: [
+          0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
+        ] // All formats including QR, DataMatrix, Code128, etc.
+      };
+
+      const scanner = new Html5QrcodeScanner('qr-reader', config, false);
+      html5QrCodeRef.current = scanner;
+
+      scanner.render(onScanSuccess, onScanError);
+    }
+
+    return () => {
+      if (html5QrCodeRef.current) {
+        html5QrCodeRef.current.clear().catch(err => console.error('Failed to clear scanner', err));
+        html5QrCodeRef.current = null;
+      }
+    };
+  }, [showCameraScanner]);
+
+  // Handle successful scan from camera
+  const onScanSuccess = (decodedText, decodedResult) => {
+    console.log('Scanned:', decodedText);
+    processScan(decodedText);
+    setShowCameraScanner(false);
+    
+    // Clean up scanner
+    if (html5QrCodeRef.current) {
+      html5QrCodeRef.current.clear().catch(err => console.error('Failed to clear scanner', err));
+      html5QrCodeRef.current = null;
+    }
+  };
+
+  // Handle scan error (can be ignored for continuous scanning)
+  const onScanError = (errorMessage) => {
+    // Ignore errors during scanning - they're normal when no code is detected
+  };
+
+  const processScan = (scannedText) => {
+    const parsed = parseScannedData(scannedText);
+    
+    if (parsed.detectedFields.length > 0) {
+      setParsedPreview(parsed);
+      setScanMode(true); // Show the scan preview section
+      
+      // Auto-fill form with parsed data
+      setFormData(prev => ({
+        ...prev,
+        macAddress: parsed.macAddress || prev.macAddress,
+        serialNumber: parsed.serialNumber || prev.serialNumber,
+        ponSerialNumber: parsed.ponSerialNumber || prev.ponSerialNumber,
+        ontSerialNumber: parsed.ontSerialNumber || prev.ontSerialNumber,
+        model: parsed.model || prev.model,
+        manufacturer: parsed.manufacturer || prev.manufacturer,
+        deviceType: parsed.deviceType || prev.deviceType,
+        partNumber: parsed.partNumber || prev.partNumber,
+        certificateNo: parsed.certificateNo || prev.certificateNo,
+      }));
+      
+      showToast(`Detected: ${parsed.detectedFields.join(', ')}`, 'success');
+    } else {
+      showToast('Could not parse device data. Please enter manually.', 'warning');
+      setScanMode(true); // Still show the section
+    }
+    
+    setScanInput(scannedText); // Show what was scanned
+  };
+
+  const openCameraScanner = () => {
+    setShowCameraScanner(true);
+  };
+
+  const closeCameraScanner = () => {
+    setShowCameraScanner(false);
+    if (html5QrCodeRef.current) {
+      html5QrCodeRef.current.clear().catch(err => console.error('Failed to clear scanner', err));
+      html5QrCodeRef.current = null;
+    }
+    // If typing is fast (< 50ms between keys), it's likely a scanner
+    if (timeDiff < 50) {
+      setScanBuffer(prev => prev + e.key);
+    } else {
+      setScanBuffer(e.key);
+    }
+    
+    setLastScanTime(currentTime);
+  }, [lastScanTime]);
+
+  // Process scan buffer on Enter or after delay
+  useEffect(() => {
+    if (scanBuffer.length > 0) {
+      const timer = setTimeout(() => {
+        if (scanBuffer.length >= 5) { // Minimum valid scan length
+          processScan(scanBuffer);
+        }
+        setScanBuffer('');
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [scanBuffer]);
+
+  const processScan = (scannedText) => {
+    const parsed = parseScannedData(scannedText);
+    
+    if (parsed.detectedFields.length > 0) {
+      setParsedPreview(parsed);
+      
+      // Auto-fill form with parsed data
+      setFormData(prev => ({
+        ...prev,
+        macAddress: parsed.macAddress || prev.macAddress,
+        serialNumber: parsed.serialNumber || prev.serialNumber,
+        ponSerialNumber: parsed.ponSerialNumber || prev.ponSerialNumber,
+        ontSerialNumber: parsed.ontSerialNumber || prev.ontSerialNumber,
+        model: parsed.model || prev.model,
+        manufacturer: parsed.manufacturer || prev.manufacturer,
+        deviceType: parsed.deviceType || prev.deviceType,
+        partNumber: parsed.partNumber || prev.partNumber,
+        certificateNo: parsed.certificateNo || prev.certificateNo,
+      }));
+      
+      showToast(`Detected: ${parsed.detectedFields.join(', ')}`, 'success');
+    } else {
+      showToast('Could not parse device data. Please enter manually.', 'warning');
+    }
+    
+    setScanInput('');
+  };
+
+  const handleTextAreaScan = (e) => {
+    const text = e.target.value;
+    setScanInput(text);
+    
+    // Auto-parse on paste or after typing stops
+    if (text.length > 10) {
+      const parsed = parseScannedData(text);
+      setParsedPreview(parsed);
+    }
+  };
+
+  const applyParsedData = () => {
+    if (parsedPreview) {
+      if (batchMode) {
+        // Add to batch list
+        const newDevice = {
+          id: Date.now(),
+          ...formData,
+          macAddress: parsedPreview.macAddress || formData.macAddress,
+          serialNumber: parsedPreview.serialNumber || formData.serialNumber,
+          ponSerialNumber: parsedPreview.ponSerialNumber || formData.ponSerialNumber,
+          ontSerialNumber: parsedPreview.ontSerialNumber || formData.ontSerialNumber,
+          model: parsedPreview.model || formData.model,
+          manufacturer: parsedPreview.manufacturer || formData.manufacturer,
+          deviceType: parsedPreview.deviceType || formData.deviceType,
+        };
+        setBatchDevices(prev => [...prev, newDevice]);
+        showToast('Device added to batch!', 'success');
+        // Reset for next scan
+        setScanInput('');
+        setParsedPreview(null);
+        setFormData({
+          macAddress: '',
+          serialNumber: '',
+          ponSerialNumber: '',
+          ontSerialNumber: '',
+          model: '',
+          manufacturer: '',
+          deviceType: 'ONT',
+          partNumber: '',
+          certificateNo: '',
+          condition: 'new',
+          notes: ''
+        });
+        // Focus back to scan input
+        if (scanInputRef.current) {
+          scanInputRef.current.focus();
+        }
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          macAddress: parsedPreview.macAddress || prev.macAddress,
+          serialNumber: parsedPreview.serialNumber || prev.serialNumber,
+          ponSerialNumber: parsedPreview.ponSerialNumber || prev.ponSerialNumber,
+          ontSerialNumber: parsedPreview.ontSerialNumber || prev.ontSerialNumber,
+          model: parsedPreview.model || prev.model,
+          manufacturer: parsedPreview.manufacturer || prev.manufacturer,
+          deviceType: parsedPreview.deviceType || prev.deviceType,
+          partNumber: parsedPreview.partNumber || prev.partNumber,
+          certificateNo: parsedPreview.certificateNo || prev.certificateNo,
+        }));
+        setScanMode(false);
+        setScanInput('');
+        setParsedPreview(null);
+        showToast('Data applied! Review and submit.', 'success');
+      }
+    }
+  };
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const deviceData = {
+        device_type: formData.deviceType,
+        model: formData.model,
+        serial_number: formData.serialNumber || formData.ontSerialNumber || formData.ponSerialNumber,
+        mac_address: formData.macAddress,
+        manufacturer: formData.manufacturer,
+        metadata: {
+          pon_serial: formData.ponSerialNumber,
+          ont_serial: formData.ontSerialNumber,
+          part_number: formData.partNumber,
+          certificate_no: formData.certificateNo,
+          condition: formData.condition,
+          notes: formData.notes
+        }
+      };
+
+      await devicesAPI.createDevice(deviceData);
+      showToast('Device registered successfully!', 'success');
+      navigate('/devices');
+    } catch (error) {
+      showToast(error.message || 'Failed to register device', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBatchSubmit = async () => {
+    if (batchDevices.length === 0) {
+      showToast('No devices in batch', 'warning');
+      return;
+    }
+
+    setLoading(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const device of batchDevices) {
+      try {
+        const dButtons */}
+      <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200">
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <ScanLine className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-800">Scan Device</h3>
+              <p className="text-sm text-gray-500">Use camera or paste device label text</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="button"
+              onClick={openCameraScanner}
+              className="flex-1 flex items-center justify-center gap-3 p-4 bg-white border-2 border-blue-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-colors group"
+            >
+              <Camera className="w-6 h-6 text-blue-600 group-hover:scale-110 transition-transform" />
+              <div className="text-left">
+                <div className="font-medium text-gray-800">Scan with Camera</div>
+                <div className="text-xs text-gray-500">Barcode, QR Code, or Text</div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setScanMode(!scanMode)}
+              className="flex-1 flex items-center justify-center gap-3 p-4 bg-white border-2 border-blue-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-colors group"
+            >
+              <QrCode className="w-6 h-6 text-blue-600 group-hover:scale-110 transition-transform" />
+              <div className="text-left">
+                <div className="font-medium text-gray-800">Manual Entry</div>
+                <div className="text-xs text-gray-500">Paste or type device info</div>
+              </div>
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Camera Scanner Modal */}
+      {showCameraScanner && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-auto">
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-100 rounded-lg">
+                    <Camera className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-800">Camera Scanner</h3>
+                    <p className="text-sm text-gray-500">Position the barcode/QR code in the frame</p>
+                  </div>
+                </div>
+                <button
+                  onClick={closeCameraScanner}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <XCircle className="w-6 h-6 text-gray-500" />
+                </button>
+              </div>
+
+              <div ref={scannerRef} id="qr-reader" className="rounded-lg overflow-hidden"></div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm text-blue-800">
+                    <p className="font-medium mb-1">Tips for best results:</p>
+                    <ul className="space-y-1 ml-4 list-disc">
+                      <li>Hold device steady and ensure good lighting</li>
+                      <li>Position barcode clearly in the scanning area</li>
+                      <li>Works with QR codes, barcodes, and text labels</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Scan Input Section */}
+      {scanMode && (
+        <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <ScanLine className="w-6 h-6 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-800">Manual Entry</h3>
+                  <p className="text-sm text-gray-500">Paste or type device information</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScanMode(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+      {/* Parsed Preview */}
+      {parsedPreview && parsedPreview.detectedFields.length > 0 && (
+        <Card>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-green-700">
+              <CheckCircle className="w-5 h-5" />
+              <span className="font-medium">Detected {parsedPreview.detectedFields.length} field(s)</span>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+              {parsedPreview.macAddress && (
+                <div className="bg-gray-50 rounded p-2">
+                  <span className="text-gray-500 text-xs">MAC Address</span>
+                  <p className="font-mono font-medium text-gray-800">{parsedPreview.macAddress}</p>
+                </div>
+              )}
+              {parsedPreview.serialNumber && (
+                <div className="bg-gray-50 rounded p-2">
+                  <span className="text-gray-500 text-xs">Serial Number</span>
+                  <p className="font-mono font-medium text-gray-800">{parsedPreview.serialNumber}</p>
+                </div>
+              )}
+              {parsedPreview.ponSerialNumber && (
+                <div className="bg-gray-50 rounded p-2">
+                  <span className="text-gray-500 text-xs">PON Serial</span>
+                  <p className="font-mono font-medium text-gray-800">{parsedPreview.ponSerialNumber}</p>
+                </div>
+              )}
+              {parsedPreview.ontSerialNumber && (
+                <div className="bg-gray-50 rounded p-2">
+                  <span className="text-gray-500 text-xs">ONT Serial</span>
+                  <p className="font-mono font-medium text-gray-800">{parsedPreview.ontSerialNumber}</p>
+                </div>
+              )}
+              {parsedPreview.model && (
+                <div className="bg-gray-50 rounded p-2">
+                  <span className="text-gray-500 text-xs">Model</span>
+                  <p className="font-medium text-gray-800">{parsedPreview.model}</p>
+                </div>
+              )}
+              {parsedPreview.manufacturer && (
+                <div className="bg-gray-50 rounded p-2">
+                  <span className="text-gray-500 text-xs">Manufacturer</span>
+                  <p className="font-medium text-gray-800">{parsedPreview.manufacturer}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="secondary" 
+                onClick={() => {
+                  setParsedPreview(null);
+                  setScanInput('');
+        </div>
+      )}/div>
+          </div>
+        </Card>
+      )}
+
+      {/* No detection warning */}
+      {scanMode && scanInput.length > 10 && (!parsedPreview || parsedPreview.detectedFields.length === 0) && (
+        <Card>
+          <div className="flex items-center gap-2 text-amber-600">
+            <AlertCircle className="w-5 h-5" />
+            <span className="text-sm">Could not auto-detect fields. Please enter manually below.</span>
+          </div>
+        </Card>
+      )}
+
+      {/* Old parsed preview - remove this section */}
+      {false &&      <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="relative">
+              <textarea
+                ref={scanInputRef}
+                value={scanInput}
+                onChange={handleTextAreaScan}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && scanInput.length > 5) {
+                    e.preventDefault();
+                    processScan(scanInput);
+                  }
+                }}
+                placeholder="Paste device information here...
+
+Examples:
+• MAC: 64FB9265062B
+• Model: SI5520GWV  
+• PON SN: SCPS550FBC00
+• ONT S/N: SC202308170108
+
+You can paste multiple lines from the device label!"
+                className="w-full h-32 px-4 py-3 border-2 border-blue-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm bg-white placeholder-gray-400 resize-none"
+                autoFocus
+              />
+              {scanInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScanInput('');
+                    setParsedPreview(null);
+                  }}
+                  className="absolute top-2 right-2 p-1 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {scanInput.length > 5 && (
+              <div className="flex justify-end">
+                <Button onClick={() => processScan(scanInput)} icon={Zap} size="sm">
+                  Parse Data
+                </Button>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+            <span className="text-gray-700">Batch Mode</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Scan Section */}
+      <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <ScanLine className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-800">Quick Scan</h3>
+                <p className="text-sm text-gray-500">Scan barcode or paste device label text</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-yellow-500" />
+              <span className="text-xs text-gray-500">Auto-detect enabled</span>
+            </div>
+          </div>
+
+          <div className="relative">
+            <textarea
+              ref={scanInputRef}
+              value={scanInput}
+              onChange={handleTextAreaScan}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && scanInput.length > 5) {
+                  e.preventDefault();
+                  processScan(scanInput);
+                }
+              }}
+              placeholder="Scan barcode here or paste/type device information...
+
+Examples:
+• MAC: 64FB9265062B
+• Model: SI5520GWV  
+• PON SN: SCPS550FBC00
+• ONT S/N: SC202308170108
+
+You can paste multiple lines from the device label!"
+              className="w-full h-32 px-4 py-3 border-2 border-blue-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm bg-white placeholder-gray-400 resize-none"
+              autoFocus
+            />
+            {scanInput && (
+              <button
+                type="button"
+                onClick={() => {
+                  setScanInput('');
+                  setParsedPreview(null);
+                }}
+                className="absolute top-2 right-2 p-1 text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Parsed Preview */}
+          {parsedPreview && parsedPreview.detectedFields.length > 0 && (
+            <div className="bg-white rounded-lg border border-green-200 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-green-700">
+                <CheckCircle className="w-5 h-5" />
+                <span className="font-medium">Detected {parsedPreview.detectedFields.length} field(s)</span>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                {parsedPreview.macAddress && (
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 text-xs">MAC Address</span>
+                    <p className="font-mono font-medium text-gray-800">{parsedPreview.macAddress}</p>
+                  </div>
+                )}
+                {parsedPreview.serialNumber && (
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 text-xs">Serial Number</span>
+                    <p className="font-mono font-medium text-gray-800">{parsedPreview.serialNumber}</p>
+                  </div>
+                )}
+                {parsedPreview.ponSerialNumber && (
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 text-xs">PON Serial</span>
+                    <p className="font-mono font-medium text-gray-800">{parsedPreview.ponSerialNumber}</p>
+                  </div>
+                )}
+                {parsedPreview.ontSerialNumber && (
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 text-xs">ONT Serial</span>
+                    <p className="font-mono font-medium text-gray-800">{parsedPreview.ontSerialNumber}</p>
+                  </div>
+                )}
+                {parsedPreview.model && (
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 text-xs">Model</span>
+                    <p className="font-medium text-gray-800">{parsedPreview.model}</p>
+                  </div>
+                )}
+                {parsedPreview.manufacturer && (
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 text-xs">Manufacturer</span>
+                    <p className="font-medium text-gray-800">{parsedPreview.manufacturer}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={applyParsedData} icon={batchMode ? Plus : CheckCircle} size="sm">
+                  {batchMode ? 'Add to Batch' : 'Apply & Continue'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* No detection warning */}
+          {scanInput.length > 10 && (!parsedPreview || parsedPreview.detectedFields.length === 0) && (
+            <div className="flex items-center gap-2 text-amber-600 bg-amber-50 rounded-lg p-3">
+              <AlertCircle className="w-5 h-5" />
+              <span className="text-sm">Could not auto-detect fields. Please enter manually below.</span>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Batch Preview */}
+      {batchMode && batchDevices.length > 0 && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-800">Batch Queue ({batchDevices.length} devices)</h3>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" onClick={clearBatch} icon={Trash2}>
+                Clear All
+              </Button>
+              <Button onClick={handleBatchSubmit} loading={loading} icon={Save} size="sm">
+                Register All
+              </Button>
+            </div>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-gray-600">MAC Address</th>
+                  <th className="px-3 py-2 text-left text-gray-600">Serial Number</th>
+                  <th className="px-3 py-2 text-left text-gray-600">Model</th>
+                  <th className="px-3 py-2 text-left text-gray-600">Manufacturer</th>
+                  <th className="px-3 py-2 text-left text-gray-600">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {batchDevices.map((device, index) => (
+                  <tr key={device.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 font-mono text-xs">{device.macAddress}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{device.serialNumber || device.ontSerialNumber}</td>
+                    <td className="px-3 py-2">{device.model}</td>
+                    <td className="px-3 py-2">{device.manufacturer}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        onClick={() => removeFromBatch(device.id)}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* Manual Entry Form */}
+      {!batchMode && (
+        <Card>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="flex items-center justify-between border-b border-gray-200 pb-4">
+              <h3 className="font-semibold text-gray-800">Device Details</h3>
+              <button
+                type="button"
+                onClick={() => setScanMode(!scanMode)}
+                className="text-sm text-blue-600 hover:text-blue-700"
+              >
+                {scanMode ? 'Hide scanner' : 'Show scanner'}
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Device Type <span className="text-red-500">*</span>
+                </label>
+                <select
+                  name="deviceType"
+                  value={formData.deviceType}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="ONT">ONT</option>
+                  <option value="ONU">ONU</option>
+                  <option value="Router">Router</option>
+                  <option value="Switch">Switch</option>
+                  <option value="Modem">Modem</option>
+                  <option value="Access Point">Access Point</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  MAC Address <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="macAddress"
+                  value={formData.macAddress}
+                  onChange={(e) => {
+                    const formatted = formatMACAddress(e.target.value);
+                    setFormData(prev => ({ ...prev, macAddress: formatted }));
+                  }}
+                  placeholder="AA:BB:CC:DD:EE:FF"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Serial Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="serialNumber"
+                  value={formData.serialNumber}
+                  onChange={handleChange}
+                  placeholder="Device serial number"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  PON Serial Number
+                </label>
+                <input
+                  type="text"
+                  name="ponSerialNumber"
+                  value={formData.ponSerialNumber}
+                  onChange={handleChange}
+                  placeholder="PON S/N (if applicable)"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  ONT Serial Number
+                </label>
+                <input
+                  type="text"
+                  name="ontSerialNumber"
+                  value={formData.ontSerialNumber}
+                  onChange={handleChange}
+                  placeholder="ONT S/N (if applicable)"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Device Model <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="model"
+                  value={formData.model}
+                  onChange={handleChange}
+                  placeholder="e.g., SI5520GWV, STREAM 1K14F"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Manufacturer <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="manufacturer"
+                  value={formData.manufacturer}
+                  onChange={handleChange}
+                  placeholder="e.g., Syrotech, PPC Technologies"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                  list="manufacturers"
+                />
+                <datalist id="manufacturers">
+                  <option value="Syrotech" />
+                  <option value="PPC Technologies" />
+                  <option value="VSOL" />
+                  <option value="Huawei" />
+                  <option value="ZTE" />
+                  <option value="Nokia" />
+                  <option value="Fiberhome" />
+                  <option value="HFCL" />
+                  <option value="Netlink" />
+                  <option value="DBC" />
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Part Number
+                </label>
+                <input
+                  type="text"
+                  name="partNumber"
+                  value={formData.partNumber}
+                  onChange={handleChange}
+                  placeholder="Part number (if available)"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Certificate Number
+                </label>
+                <input
+                  type="text"
+                  name="certificateNo"
+                  value={formData.certificateNo}
+                  onChange={handleChange}
+                  placeholder="TEC Certificate No."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Condition <span className="text-red-500">*</span>
+                </label>
+                <select
+                  name="condition"
+                  value={formData.condition}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="new">New</option>
+                  <option value="refurbished">Refurbished</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Additional Notes
+              </label>
+              <textarea
+                name="notes"
+                value={formData.notes}
+                onChange={handleChange}
+                rows={3}
+                placeholder="Any additional information about the device..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">
+              <Button variant="secondary" onClick={() => navigate('/devices')} icon={X}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={loading} icon={Save}>
+                Register Device
+              </Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {/* Tips Card */}
+      <Card className="bg-gray-50 border-gray-200">
+        <h4 className="font-medium text-gray-700 mb-2">💡 Scanning Tips</h4>
+        <ul className="text-sm text-gray-600 space-y-1">
+          <li>• <strong>Barcode Scanner:</strong> Just scan - data auto-fills instantly</li>
+          <li>• <strong>Manual Entry:</strong> Paste text from device label for auto-detection</li>
+          <li>• <strong>Batch Mode:</strong> Enable to register multiple devices quickly</li>
+          <li>• <strong>Supported formats:</strong> MAC, PON S/N, ONT S/N, Model, Part Number</li>
+        </ul>
+      </Card>
+    </div>
+  );
+};
+
+export default RegisterDevice;

@@ -1,0 +1,119 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: dms-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: distribution_management_system
+      MYSQL_USER: dms_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Kolkata
+    command: ["--default-time-zone=+05:30"]
+    expose:
+      - "3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.2
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dms-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: dms_user
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_NAME: distribution_management_system
+      HOST: 0.0.0.0
+      PORT: 8080
+      ENFORCE_HTTPS: "true"
+      CSRF_COOKIE_SECURE: "true"
+      DB_BACKUP_TIME: "02:00"
+      RCLONE_REMOTE: DMS
+      DMS_RCLONE_DEST_DIR: dms-db-backups
+      RCLONE_CONFIG_SEED: /app/rclone/rclone.conf
+      RCLONE_CONFIG: /tmp/rclone.conf
+      TZ: Asia/Kolkata
+    expose:
+      - "8080"
+    volumes:
+      - ./backend/distribution_manifests:/app/distribution_manifests
+      - ./backend/monthly_backups:/app/monthly_backups
+      - ./backend/db_backups:/app/db_backups
+      - ./backend/uploads:/app/uploads
+      - ./backend/logs:/app/logs
+      - ${HOME}/.config/rclone/rclone.conf:/app/rclone/rclone.conf
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: https://localhost/api
+    container_name: dms-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      TZ: Asia/Kolkata
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /var/log/nginx
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.4
+
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    container_name: dms-reverse-proxy
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      dms_net:
+        ipv4_address: 172.20.0.5
+
+volumes:
+  mysql_data:
+
+networks:
+  dms_net:
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,405 @@
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
+import { api } from '../services/api';
+import { 
+  Building2, 
+  ChevronRight, 
+  ChevronDown,
+  Users,
+  User,
+  Plus,
+  Edit,
+  Trash2,
+  MapPin,
+  Phone,
+  Mail,
+  Package,
+  ArrowLeft
+} from 'lucide-react';
+import Button from '../components/ui/Button';
+import Card from '../components/ui/Card';
+import StatusBadge from '../components/ui/StatusBadge';
+
+const Distributions = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { showToast } = useNotifications();
+  const [loading, setLoading] = useState(true);
+  const [distributions, setDistributions] = useState([]);
+
+  const canManage = ['admin', 'manager'].includes(user?.role);
+
+  useEffect(() => {
+    fetchDistributions();
+  }, [location]);
+
+  const fetchDistributions = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/distributions');
+      const distributionsData = response.data || [];
+      setDistributions(distributionsData);
+    } catch (error) {
+      showToast('Failed to fetch distributions', 'error');
+      console.error('Fetch distributions error:', error);
+      setDistributions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDistributionClick = (distribution) => {
+    navigate(`/distributions/${distribution.id}`);
+  };
+
+  const handleDeleteDistribution = async (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this distribution and all its children?')) return;
+    
+    try {
+      await api.delete(`/distributions/${id}`);
+      showToast('Distribution deleted successfully', 'success');
+      fetchDistributions();
+    } catch (error) {
+      showToast('Failed to delete distribution', 'error');
+      console.error(error);
+    }
+  };
+
+  const canManage = ['admin', 'manager'].includes(user?.role);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  // DISTRIBUTIONS VIEW
+  if (viewMode === 'distributions') {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Distributions</h1>
+            <p className="text-gray-500 mt-1">Manage your distribution hierarchy</p>
+          </div>
+          {canManage && (
+            <Button icon={Plus} onClick={() => navigate('/distributions/create')}>
+              Create Distribution
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {distributions.map(dist => (
+            <Card
+              key={dist.id}
+              className="cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => handleDistributionClick(dist)}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-blue-600" />
+                  <h3 className="font-semibold text-gray-800">{dist.name}</h3>
+                </div>
+                <StatusBadge status={dist.status} size="sm" />
+              </div>
+
+              {dist.location && (
+                <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                  <MapPin className="w-4 h-4" />
+                  <span>{dist.location}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                <div className="flex items-center gap-4 text-sm text-gray-500">
+                  <div className="flex items-center gap-1">
+                    <Users className="w-4 h-4" />
+                    <span>{dist.sub_distribution_count} Sub-Dists</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Package className="w-4 h-4" />
+                    <span>{dist.device_count} Devices</span>
+                  </div>
+                </div>
+                
+                {canManage && (
+                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={(e) => handleDeleteDistribution(dist.id, e)}
+                      className="p-1 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {distributions.length === 0 && (
+          <div className="text-center py-12">
+            <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500">No distributions found</p>
+            {canManage && (
+              <Button className="mt-4" onClick={() => navigate('/distributions/create')}>
+                Create First Distribution
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // SUB-DISTRIBUTIONS VIEW
+  if (viewMode === 'sub-distributions') {
+    const currentSubDists = subDistributions[currentDistribution?.id] || [];
+    
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={ArrowLeft}
+            onClick={handleBackToDistributions}
+          >
+            Back
+          </Button>
+          <div className="flex items-center gap-2 text-gray-500">
+            <Building2 className="w-5 h-5" />
+            <ChevronRight className="w-4 h-4" />
+            <span className="font-semibold text-gray-800">{currentDistribution?.name}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Sub-Distributions</h1>
+            <p className="text-gray-500 mt-1">
+              Under {currentDistribution?.name}
+            </p>
+          </div>
+          {canManage && (
+            <Button 
+              icon={Plus} 
+              onClick={() => navigate('/distributions/create', { 
+                state: { 
+                  type: 'sub-distribution', 
+                  parentId: currentDistribution?.id,
+                  parentName: currentDistribution?.name
+                } 
+              })}
+            >
+              Add Sub-Distribution
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {currentSubDists.map(subDist => (
+            <Card
+              key={subDist.id}
+              className="cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => handleSubDistributionClick(subDist)}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Users className="w-5 h-5 text-green-600" />
+                  <h3 className="font-semibold text-gray-800">{subDist.name}</h3>
+                </div>
+                <StatusBadge status={subDist.status} size="sm" />
+              </div>
+
+              {subDist.location && (
+                <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                  <MapPin className="w-4 h-4" />
+                  <span>{subDist.location}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                <div className="flex items-center gap-4 text-sm text-gray-500">
+                  <div className="flex items-center gap-1">
+                    <User className="w-4 h-4" />
+                    <span>{subDist.operator_count} Operators</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Package className="w-4 h-4" />
+                    <span>{subDist.device_count} Devices</span>
+                  </div>
+                </div>
+                
+                {canManage && (
+                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={(e) => handleDeleteSubDistribution(subDist.id, e)}
+                      className="p-1 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {currentSubDists.length === 0 && (
+          <div className="text-center py-12">
+            <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500">No sub-distributions found</p>
+            {canManage && (
+              <Button 
+                className="mt-4" 
+                onClick={() => navigate('/distributions/create', { 
+                  state: { 
+                    type: 'sub-distribution', 
+                    parentId: currentDistribution?.id,
+                    parentName: currentDistribution?.name
+                  } 
+                })}
+              >
+                Add First Sub-Distribution
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // OPERATORS VIEW
+  if (viewMode === 'operators') {
+    const currentOperators = operators[currentSubDistribution?.id] || [];
+    
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={ArrowLeft}
+            onClick={handleBackToSubDistributions}
+          >
+            Back
+          </Button>
+          <div className="flex items-center gap-2 text-gray-500 text-sm">
+            <Building2 className="w-4 h-4" />
+            <ChevronRight className="w-3 h-3" />
+            <Users className="w-4 h-4" />
+            <ChevronRight className="w-3 h-3" />
+            <span className="font-semibold text-gray-800">{currentSubDistribution?.name}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Operators</h1>
+            <p className="text-gray-500 mt-1">
+              Under {currentSubDistribution?.name}
+            </p>
+          </div>
+          {canManage && (
+            <Button 
+              icon={Plus} 
+              onClick={() => navigate('/distributions/create', { 
+                state: { 
+                  type: 'operator', 
+                  parentSubDistId: currentSubDistribution?.id,
+                  parentSubDistName: currentSubDistribution?.name
+                } 
+              })}
+            >
+              Add Operator
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {currentOperators.map(operator => (
+            <Card key={operator.id}>
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <User className="w-5 h-5 text-purple-600" />
+                  <h3 className="font-semibold text-gray-800">{operator.name}</h3>
+                </div>
+                <StatusBadge status={operator.status} size="sm" />
+              </div>
+
+              <div className="space-y-2 mb-3">
+                {operator.location && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <MapPin className="w-4 h-4" />
+                    <span>{operator.location}</span>
+                  </div>
+                )}
+                {operator.contact_number && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Phone className="w-4 h-4" />
+                    <span>{operator.contact_number}</span>
+                  </div>
+                )}
+                {operator.email && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Mail className="w-4 h-4" />
+                    <span>{operator.email}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                <div className="flex items-center gap-1 text-sm text-gray-500">
+                  <Package className="w-4 h-4" />
+                  <span>{operator.device_count} Devices</span>
+                </div>
+                
+                {canManage && (
+                  <button
+                    onClick={() => handleDeleteOperator(operator.id)}
+                    className="p-1 text-red-600 hover:bg-red-50 rounded"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {currentOperators.length === 0 && (
+          <div className="text-center py-12">
+            <User className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500">No operators found</p>
+            {canManage && (
+              <Button 
+                className="mt-4" 
+                onClick={() => navigate('/distributions/create', { 
+                  state: { 
+                    type: 'operator', 
+                    parentSubDistId: currentSubDistribution?.id,
+                    parentSubDistName: currentSubDistribution?.name
+                  } 
+                })}
+              >
+                Add First Operator
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+};
+
+export default Distributions;

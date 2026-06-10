@@ -1,0 +1,657 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== KannurVision PDIC Light Theme ===== */
+:root {
+  /* Backgrounds */
+  --bg-page:          #F0F2F5;
+  --bg-sidebar:       #FFFFFF;
+  --bg-card:          #FFFFFF;
+  --bg-card-hover:    #F8F9FA;
+  --bg-input:         #FFFFFF;
+  --bg-table-header:  #F8F9FA;
+  --bg-table-row-alt: #FAFAFA;
+
+  /* Primary Brand */
+  --color-primary:        #2E7D32;
+  --color-primary-light:  #E8F5E9;
+  --color-primary-dark:   #1B5E20;
+  --color-primary-text:   #FFFFFF;
+
+  /* Accent */
+  --color-accent:         #1A1A2E;
+
+  /* Status Colors */
+  --color-online:         #2E7D32;
+  --color-online-bg:      #E8F5E9;
+  --color-offline:        #C62828;
+  --color-offline-bg:     #FFEBEE;
+  --color-pending:        #E65100;
+  --color-pending-bg:     #FFF3E0;
+  --color-escalated:      #C62828;
+  --color-escalated-bg:   #FFEBEE;
+  --color-resolved:       #2E7D32;
+  --color-resolved-bg:    #E8F5E9;
+  --color-info:           #1565C0;
+  --color-info-bg:        #E3F2FD;
+
+  /* Text */
+  --text-primary:     #1A1A1A;
+  --text-secondary:   #5F6368;
+  --text-muted:       #9AA0A6;
+  --text-link:        #1565C0;
+
+  /* Borders */
+  --border-color:         #E0E0E0;
+  --border-color-strong:  #BDBDBD;
+  --border-radius-sm:     6px;
+  --border-radius-md:     10px;
+  --border-radius-lg:     14px;
+  --border-radius-xl:     18px;
+  --border-radius-pill:   999px;
+
+  /* Shadows */
+  --shadow-card:    0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-card-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-sidebar: 2px 0 8px rgba(0,0,0,0.06);
+
+  /* Spacing */
+  --space-xs:   4px;
+  --space-sm:   8px;
+  --space-md:   16px;
+  --space-lg:   24px;
+  --space-xl:   32px;
+
+  /* Typography */
+  --font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-size-xs:   11px;
+  --font-size-sm:   13px;
+  --font-size-md:   14px;
+  --font-size-base: 15px;
+  --font-size-lg:   18px;
+  --font-size-xl:   24px;
+  --font-size-2xl:  32px;
+}
+
+/* ===== KannurVision PDIC Dark Theme ===== */
+.ops-theme-dark {
+  /* Backgrounds */
+  --bg-page:          #0F1115;
+  --bg-sidebar:       #111722;
+  --bg-card:          #151B25;
+  --bg-card-hover:    #1C2431;
+  --bg-input:         #0F141C;
+  --bg-table-header:  #1A212E;
+  --bg-table-row-alt: #131A25;
+
+  /* Primary Brand */
+  --color-primary:        #58B368;
+  --color-primary-light:  #1E2B22;
+  --color-primary-dark:   #3E8F4B;
+  --color-primary-text:   #F8FAFC;
+
+  /* Accent */
+  --color-accent:         #CBD5E1;
+
+  /* Status Colors */
+  --color-online:         #5FD37A;
+  --color-online-bg:      #16301E;
+  --color-offline:        #F87171;
+  --color-offline-bg:     #3A1A1A;
+  --color-pending:        #F59E0B;
+  --color-pending-bg:     #3A2A10;
+  --color-escalated:      #F87171;
+  --color-escalated-bg:   #3A1A1A;
+  --color-resolved:       #5FD37A;
+  --color-resolved-bg:    #16301E;
+  --color-info:           #7DB5FF;
+  --color-info-bg:        #172538;
+
+  /* Text */
+  --text-primary:     #E8EDF3;
+  --text-secondary:   #B6BFCC;
+  --text-muted:       #8B95A7;
+  --text-link:        #7DB5FF;
+
+  /* Borders */
+  --border-color:         #2A3342;
+  --border-color-strong:  #3A475C;
+
+  /* Shadows */
+  --shadow-card:    0 1px 3px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-card-md: 0 6px 16px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.35);
+  --shadow-sidebar: 2px 0 12px rgba(0,0,0,0.45);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body {
+  overflow-x: hidden;
+}
+
+/* ===== KannurVision Light Theme Overrides ===== */
+/* The ops-theme wrapper now drives the LIGHT theme */
+.ops-theme {
+  background-color: var(--bg-page);
+  min-height: 100vh;
+}
+
+/* Glass panels -> clean white cards */
+.ops-theme .glass-shell,
+.ops-theme .glass-panel,
+.ops-theme .bg-white,
+.ops-theme .bg-gray-50 {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: var(--shadow-card);
+}
+
+.ops-theme .bg-gray-100 {
+  background: var(--bg-page) !important;
+}
+
+.ops-theme .bg-gray-200 {
+  background: #F0F0F0 !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme .border-gray-200,
+.ops-theme .border-gray-300,
+.ops-theme .border-gray-100 {
+  border-color: var(--border-color) !important;
+}
+
+/* Text color overrides — dark text on light bg */
+.ops-theme .text-gray-900,
+.ops-theme .text-gray-800 {
+  color: var(--text-primary) !important;
+}
+
+.ops-theme .text-gray-700,
+.ops-theme .text-gray-600 {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme .text-gray-500,
+.ops-theme .text-gray-400,
+.ops-theme .text-gray-300 {
+  color: var(--text-muted) !important;
+}
+
+.ops-theme .text-white {
+  color: #FFFFFF !important;
+}
+
+/* Links */
+.ops-theme a {
+  color: var(--text-link);
+}
+.ops-theme a:hover {
+  color: #0D47A1;
+}
+
+/* Inputs — light bg with proper border */
+.ops-theme input,
+.ops-theme select,
+.ops-theme textarea {
+  background: var(--bg-input) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+.ops-theme input::placeholder,
+.ops-theme textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.ops-theme input:focus,
+.ops-theme select:focus,
+.ops-theme textarea:focus {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.1) !important;
+}
+
+/* Tables */
+.ops-theme table thead {
+  background: var(--bg-table-header) !important;
+}
+.ops-theme table tbody tr:hover {
+  background: var(--bg-card-hover) !important;
+}
+
+/* Buttons */
+.ops-theme button {
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ops-theme button:hover {
+  transform: none;
+}
+
+/* Green primary buttons */
+.ops-theme .bg-blue-600,
+.ops-theme .bg-blue-500 {
+  background: var(--color-primary) !important;
+}
+.ops-theme .bg-blue-600:hover,
+.ops-theme .bg-blue-500:hover {
+  background: var(--color-primary-dark) !important;
+}
+
+.ops-theme .bg-red-600,
+.ops-theme .bg-red-500 {
+  background: var(--color-offline) !important;
+}
+
+.ops-theme .bg-green-600,
+.ops-theme .bg-green-500 {
+  background: var(--color-online) !important;
+}
+
+.ops-theme .bg-yellow-500,
+.ops-theme .bg-yellow-600 {
+  background: var(--color-pending) !important;
+}
+
+.ops-theme .bg-purple-600,
+.ops-theme .bg-indigo-600 {
+  background: #5C6BC0 !important;
+}
+
+/* Text color utility overrides for semantic colors */
+.ops-theme .text-blue-600,
+.ops-theme .text-blue-700 {
+  color: var(--color-info) !important;
+}
+
+.ops-theme .text-red-600,
+.ops-theme .text-red-700,
+.ops-theme .text-red-800,
+.ops-theme .text-red-900,
+.ops-theme .text-orange-700 {
+  color: var(--color-offline) !important;
+}
+
+.ops-theme .text-green-600,
+.ops-theme .text-green-700,
+.ops-theme .text-green-800,
+.ops-theme .text-green-900,
+.ops-theme .text-emerald-700,
+.ops-theme .text-emerald-800,
+.ops-theme .text-emerald-900,
+.ops-theme .text-teal-700,
+.ops-theme .text-teal-800,
+.ops-theme .text-teal-900 {
+  color: var(--color-online) !important;
+}
+
+.ops-theme .text-yellow-600,
+.ops-theme .text-yellow-700,
+.ops-theme .text-yellow-800,
+.ops-theme .text-yellow-900,
+.ops-theme .text-amber-700,
+.ops-theme .text-amber-800 {
+  color: var(--color-pending) !important;
+}
+
+.ops-theme .text-indigo-600,
+.ops-theme .text-indigo-700,
+.ops-theme .text-indigo-800,
+.ops-theme .text-indigo-900,
+.ops-theme .text-purple-600,
+.ops-theme .text-purple-700,
+.ops-theme .text-purple-800,
+.ops-theme .text-purple-900 {
+  color: #5C6BC0 !important;
+}
+
+.ops-theme .text-cyan-700,
+.ops-theme .text-cyan-800,
+.ops-theme .text-cyan-900,
+.ops-theme .text-sky-700,
+.ops-theme .text-sky-800,
+.ops-theme .text-sky-900,
+.ops-theme .text-blue-800,
+.ops-theme .text-blue-900 {
+  color: var(--color-info) !important;
+}
+
+/* Soft semantic backgrounds */
+.ops-theme .bg-blue-100,
+.ops-theme .bg-indigo-100,
+.ops-theme .bg-purple-100 {
+  background: var(--color-info-bg) !important;
+}
+
+.ops-theme .bg-red-100 {
+  background: var(--color-offline-bg) !important;
+}
+
+.ops-theme .bg-yellow-100,
+.ops-theme .bg-orange-100,
+.ops-theme .bg-amber-100 {
+  background: var(--color-pending-bg) !important;
+}
+
+.ops-theme .bg-green-100,
+.ops-theme .bg-emerald-100,
+.ops-theme .bg-teal-100 {
+  background: var(--color-online-bg) !important;
+}
+
+/* Light 50-level bg overrides */
+.ops-theme .bg-white\/60,
+.ops-theme .bg-white\/70,
+.ops-theme .bg-white\/80,
+.ops-theme .bg-white\/90,
+.ops-theme .bg-slate-50,
+.ops-theme .bg-blue-50,
+.ops-theme .bg-blue-50\/60,
+.ops-theme .bg-sky-50,
+.ops-theme .bg-cyan-50,
+.ops-theme .bg-green-50,
+.ops-theme .bg-teal-50,
+.ops-theme .bg-red-50,
+.ops-theme .bg-yellow-50,
+.ops-theme .bg-orange-50,
+.ops-theme .bg-amber-50,
+.ops-theme .bg-emerald-50,
+.ops-theme .bg-purple-50,
+.ops-theme .bg-indigo-50 {
+  background: #F8F9FA !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme .bg-slate-100 {
+  background: var(--bg-page) !important;
+}
+
+/* Hover backgrounds */
+.ops-theme .hover\:bg-white:hover,
+.ops-theme .hover\:bg-gray-50:hover,
+.ops-theme .hover\:bg-gray-100:hover,
+.ops-theme .hover\:bg-gray-200:hover,
+.ops-theme .hover\:bg-slate-50:hover,
+.ops-theme .hover\:bg-blue-50:hover,
+.ops-theme .hover\:bg-green-50:hover,
+.ops-theme .hover\:bg-red-50:hover,
+.ops-theme .hover\:bg-yellow-50:hover,
+.ops-theme .hover\:bg-orange-50:hover {
+  background: var(--bg-card-hover) !important;
+}
+
+/* Border overrides for colored borders */
+.ops-theme .border-blue-200,
+.ops-theme .border-green-200,
+.ops-theme .border-red-200,
+.ops-theme .border-yellow-200,
+.ops-theme .border-orange-200,
+.ops-theme .border-indigo-200,
+.ops-theme .border-amber-200,
+.ops-theme .border-emerald-200,
+.ops-theme .border-green-300,
+.ops-theme .border-red-300,
+.ops-theme .border-yellow-300,
+.ops-theme .border-orange-300,
+.ops-theme .border-purple-300,
+.ops-theme .border-blue-300,
+.ops-theme .border-indigo-300,
+.ops-theme .border-amber-300,
+.ops-theme .border-emerald-300,
+.ops-theme .border-slate-500\/30,
+.ops-theme .border-slate-500\/40,
+.ops-theme .border-slate-400\/40,
+.ops-theme .border-slate-600\/40 {
+  border-color: var(--border-color) !important;
+}
+
+/* Button text color overrides */
+.ops-theme button[class*='text-gray-4'],
+.ops-theme button[class*='text-gray-5'] {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme .hover\:text-gray-600:hover,
+.ops-theme .hover\:text-gray-700:hover,
+.ops-theme .hover\:text-gray-800:hover {
+  color: var(--text-primary) !important;
+}
+
+.ops-theme [class*='bg-white/'][class*='text-gray-'] {
+  color: var(--text-secondary) !important;
+}
+
+/* Shadows */
+.ops-theme .shadow-sm,
+.ops-theme .shadow-lg,
+.ops-theme .shadow-xl {
+  box-shadow: var(--shadow-card) !important;
+}
+
+/* Hero sections — light green gradient */
+.ops-theme .industrial-hero,
+.industrial-hero {
+  background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 50%, #A5D6A7 100%) !important;
+  border: 1px solid #C8E6C9 !important;
+  box-shadow: var(--shadow-card-md) !important;
+  backdrop-filter: none;
+}
+
+.ops-theme .industrial-hero h1,
+.industrial-hero h1 {
+  color: #1B5E20 !important;
+}
+
+.ops-theme .industrial-hero p,
+.industrial-hero p {
+  color: #2E7D32 !important;
+}
+
+/* Mini stat cards */
+.industrial-mini-card {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--border-radius-lg);
+  padding: 0.85rem 0.9rem;
+  box-shadow: var(--shadow-card);
+}
+
+.industrial-mini-card p:first-child {
+  color: var(--text-muted) !important;
+}
+
+.industrial-mini-card p:last-child {
+  color: var(--text-primary) !important;
+}
+
+/* Chart cards */
+.industrial-chart-card {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+
+.industrial-chart-card h3,
+.industrial-chart-card p {
+  color: var(--text-primary) !important;
+}
+
+/* External inventory hero */
+.ops-theme .external-inventory-hero {
+  background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme .external-inventory-hero h1 {
+  color: #1B5E20 !important;
+}
+
+.ops-theme .external-inventory-hero p {
+  color: #2E7D32 !important;
+}
+
+/* ===== Dark theme overrides ===== */
+.ops-theme-dark .ops-theme .bg-gray-200 {
+  background: #1A212E !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .ops-theme .bg-white\/60,
+.ops-theme-dark .ops-theme .bg-white\/70,
+.ops-theme-dark .ops-theme .bg-white\/80,
+.ops-theme-dark .ops-theme .bg-white\/90,
+.ops-theme-dark .ops-theme .bg-slate-50,
+.ops-theme-dark .ops-theme .bg-blue-50,
+.ops-theme-dark .ops-theme .bg-blue-50\/60,
+.ops-theme-dark .ops-theme .bg-sky-50,
+.ops-theme-dark .ops-theme .bg-cyan-50,
+.ops-theme-dark .ops-theme .bg-green-50,
+.ops-theme-dark .ops-theme .bg-teal-50,
+.ops-theme-dark .ops-theme .bg-red-50,
+.ops-theme-dark .ops-theme .bg-yellow-50,
+.ops-theme-dark .ops-theme .bg-orange-50,
+.ops-theme-dark .ops-theme .bg-amber-50,
+.ops-theme-dark .ops-theme .bg-emerald-50,
+.ops-theme-dark .ops-theme .bg-purple-50,
+.ops-theme-dark .ops-theme .bg-indigo-50 {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .ops-theme .industrial-hero,
+.ops-theme-dark .industrial-hero {
+  background: linear-gradient(135deg, #0F1A14 0%, #14251C 50%, #1A2E23 100%) !important;
+  border: 1px solid #1E2B22 !important;
+  box-shadow: var(--shadow-card-md) !important;
+}
+
+.ops-theme-dark .ops-theme .industrial-hero h1,
+.ops-theme-dark .industrial-hero h1 {
+  color: var(--text-primary) !important;
+}
+
+.ops-theme-dark .ops-theme .industrial-hero p,
+.ops-theme-dark .industrial-hero p {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme-dark .ops-theme .external-inventory-hero {
+  background: linear-gradient(135deg, #0F1A14 0%, #16261D 100%) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .ops-theme .external-inventory-hero h1 {
+  color: var(--text-primary) !important;
+}
+
+.ops-theme-dark .ops-theme .external-inventory-hero p {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme-dark .stat-card {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ops-theme-dark .stat-card-glow {
+  background: linear-gradient(135deg, rgba(88, 179, 104, 0.12) 0%, rgba(21, 27, 37, 0) 70%) !important;
+  opacity: 0.9 !important;
+}
+
+.ops-theme-dark .stat-card-title {
+  color: var(--text-secondary) !important;
+}
+
+.ops-theme-dark .stat-card-desc {
+  color: var(--text-muted) !important;
+}
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D1D5DB;
+  border-radius: var(--border-radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9CA3AF;
+}
+
+@media (max-width: 640px) {
+  ::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+}
+
+/* ===== Animations ===== */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-10px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-fadeIn { animation: fadeIn 0.3s ease-in-out; }
+.animate-slideIn { animation: slideIn 0.3s ease-in-out; }
+.animate-slideUp { animation: slideUp 0.3s ease-in-out; }
+
+/* ===== Mobile touch targets ===== */
+@media (max-width: 640px) {
+  button, a, input, select, textarea {
+    min-height: 44px;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: auto;
+  }
+}
+
+/* Safe area insets */
+@supports (padding: max(0px)) {
+  .safe-area-inset-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* ===== Compact mode ===== */
+.compact * { font-size: 0.9em; }
+.compact .text-2xl { font-size: 1.25rem !important; }
+.compact .text-xl { font-size: 1.1rem !important; }
+.compact .text-lg { font-size: 1rem !important; }
+.compact .p-6 { padding: 1rem !important; }
+.compact .p-4 { padding: 0.75rem !important; }
+.compact .py-6 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+.compact .gap-6 { gap: 1rem !important; }
+.compact .space-y-6>*+* { margin-top: 1rem !important; }
+.compact .h-16 { height: 3.5rem !important; }
+.compact .h-64 { height: 14rem !important; }

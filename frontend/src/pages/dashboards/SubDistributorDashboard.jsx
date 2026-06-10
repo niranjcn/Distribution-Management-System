@@ -1,0 +1,344 @@
+import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Doughnut } from 'react-chartjs-2';
+import StatCard from '../../components/ui/StatCard';
+import Card from '../../components/ui/Card';
+import StatusBadge from '../../components/ui/StatusBadge';
+import Button from '../../components/ui/Button';
+import { dashboardAPI, devicesAPI, distributionsAPI, usersAPI, defectsAPI, returnsAPI } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
+import {
+  Box,
+  Users,
+  AlertTriangle,
+  RotateCcw,
+  CheckSquare,
+  Package,
+  ArrowRight,
+  CheckCircle,
+  XCircle,
+  Send,
+  Loader2
+} from 'lucide-react';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
+
+const doughnutOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { position: 'bottom' },
+  },
+};
+
+const SubDistributorDashboard = () => {
+  const { user } = useAuth();
+  const role = String(user?.role || '').toLowerCase();
+  const isSubDistributionManager = role === 'sub_distribution_manager';
+  const isCluster = role === 'cluster';
+  const canAssign = role !== 'sub_distribution_manager';
+  const [stats, setStats] = useState({});
+  const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
+  const [myDevices, setMyDevices] = useState([]);
+  const [distributions, setDistributions] = useState([]);
+  const [myOperators, setMyOperators] = useState([]);
+  const [defectReports, setDefectReports] = useState([]);
+  const [returnRequests, setReturnRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const [statsRes, advancedRes, devRes, distRes, usersRes, defRes, retRes] = await Promise.all([
+          dashboardAPI.getStats().catch(() => ({ data: {} })),
+          dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
+          ['sub_distribution_manager', 'sub_distributor', 'cluster'].includes(role)
+            ? devicesAPI.getMyOverview({ show_all: true }).catch(() => ({ data: { all_under_me: [] } }))
+            : devicesAPI.getDevices().catch(() => ({ data: [] })),
+          distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(() => ({ data: [] })),
+          usersAPI.getUsers({ role: 'operator' }).catch(() => ({ data: [] })),
+          defectsAPI.getDefects().catch(() => ({ data: [] })),
+          returnsAPI.getReturns().catch(() => ({ data: [] }))
+        ]);
+        setStats(statsRes.data || {});
+        setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
+        setMyDevices(Array.isArray(devRes.data) ? devRes.data : (devRes.data?.all_under_me || []));
+        setDistributions(distRes.data || []);
+        setMyOperators(usersRes.data || []);
+        setDefectReports(defRes.data || []);
+        setReturnRequests(retRes.data || []);
+      } catch (error) {
+        console.error('Failed to load dashboard data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  const charts = advanced.charts || {};
+  const myDeviceSplitData = {
+    labels: ['Active', 'Inactive'],
+    datasets: [{
+      data: [
+        charts.my_device_active_split?.active || myDevices.filter((d) => ['active', 'available', 'distributed', 'in_use'].includes(d.status)).length,
+        charts.my_device_active_split?.inactive || myDevices.filter((d) => !['active', 'available', 'distributed', 'in_use'].includes(d.status)).length,
+      ],
+      backgroundColor: ['#10b981', '#ef4444'],
+      borderWidth: 1,
+    }],
+  };
+
+  const managedUserSplitData = {
+    labels: ['Active', 'Inactive'],
+    datasets: [{
+      data: [
+        charts.cluster_account_active_split?.active || charts.operator_account_active_split?.active || 0,
+        charts.cluster_account_active_split?.inactive || charts.operator_account_active_split?.inactive || 0,
+      ],
+      backgroundColor: ['#3b82f6', '#f59e0b'],
+      borderWidth: 1,
+    }],
+  };
+
+  const pendingReceipts = distributions.filter(
+    d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)
+  );
+
+  const receivedDevicesCount = isCluster
+    ? (stats.my_devices ?? 0)
+    : (stats.received_devices ?? myDevices.length);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">{isSubDistributionManager ? 'Sub Distribution Manager Dashboard' : isCluster ? 'Cluster Dashboard' : 'Sub-Distributor Dashboard'}</h1>
+          <p className="text-gray-500 mt-1">
+            {isSubDistributionManager ? 'Monitor branch devices and operator activity.' : isCluster ? 'Manage cluster devices and operator assignments.' : 'Manage received devices and operator assignments.'}
+          </p>
+        </div>
+        {canAssign && (
+          <Link to="/distributions/create">
+            <Button icon={Send}>Assign to Operator</Button>
+          </Link>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <StatCard title="Received Devices" value={receivedDevicesCount} icon={Box} color="blue" />
+        <StatCard title="Pending Confirmations" value={pendingReceipts.length} icon={CheckSquare} color="orange" />
+        <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" />
+        <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" />
+        <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" />
+        <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card title="My Device Active vs Inactive" icon={Box} padding={false}>
+          <div className="h-72 p-4"><Doughnut data={myDeviceSplitData} options={doughnutOptions} /></div>
+        </Card>
+        <Card
+          title={user?.role === 'cluster' ? 'Operator Account Active vs Inactive' : 'Cluster/Operator Account Active vs Inactive'}
+          icon={Users}
+          padding={false}
+        >
+          <div className="h-72 p-4"><Doughnut data={managedUserSplitData} options={doughnutOptions} /></div>
+        </Card>
+      </div>
+
+      {/* Pending Receipt Confirmations Banner */}
+      {pendingReceipts.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+                <Package className="w-5 h-5 text-orange-600" />
+              </div>
+              <div>
+                <p className="font-medium text-orange-800">
+                  You have {pendingReceipts.length} delivery(ies) to confirm
+                </p>
+                <p className="text-sm text-orange-600">Confirm that you have received the devices before you can redistribute them</p>
+              </div>
+            </div>
+            <Link to="/delivery-confirmations">
+              <Button variant="warning" size="sm">Confirm Now</Button>
+            </Link>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* My Devices */}
+        <Card
+          title="My Devices"
+          icon={Box}
+          action={
+            <Link to="/devices" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+              View all <ArrowRight className="w-4 h-4" />
+            </Link>
+          }
+        >
+          <div className="space-y-3">
+            {myDevices.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No devices assigned</p>
+            ) : (
+              myDevices.slice(0, 4).map((device) => (
+                <div key={device.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{device.model || device.device_type}</p>
+                    <p className="text-xs text-gray-500">{device.mac_address}</p>
+                  </div>
+                  <StatusBadge status={device.status} size="sm" />
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+        {/* Pending Receipt Confirmations */}
+        <Card
+          title="Pending Confirmations"
+          icon={Package}
+          action={
+            <Link to="/delivery-confirmations" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+              View all <ArrowRight className="w-4 h-4" />
+            </Link>
+          }
+        >
+          <div className="space-y-3">
+            {pendingReceipts.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No pending confirmations</p>
+            ) : (
+              pendingReceipts.map((dist) => (
+                <div key={dist.id} className="p-3 bg-orange-50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium text-gray-800">{dist.distribution_id}</p>
+                    <StatusBadge status={dist.status} size="sm" />
+                  </div>
+                  <p className="text-xs text-gray-500">From: {dist.from_user_name}</p>
+                  <p className="text-xs text-gray-400 mb-2">{dist.device_count || dist.device_ids?.length || 0} devices</p>
+                  <Link to="/delivery-confirmations" className="block">
+                    <button className="w-full flex items-center justify-center gap-1 px-2 py-1 text-xs font-medium text-orange-700 bg-orange-100 rounded hover:bg-orange-200">
+                      <Package className="w-3 h-3" /> Confirm Receipt
+                    </button>
+                  </Link>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+        {/* My Operators */}
+        <Card
+          title="My Operators"
+          icon={Users}
+          action={
+            <Link to="/users" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+              View all <ArrowRight className="w-4 h-4" />
+            </Link>
+          }
+        >
+          <div className="space-y-3">
+            {myOperators.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No operators found</p>
+            ) : (
+              myOperators.slice(0, 4).map((op) => (
+                <div key={op.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                      <span className="text-xs font-medium text-blue-600">
+                        {String(op.name || '').split(' ').filter(Boolean).map(n => n[0]).join('') || '?'}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{op.name || 'Unknown'}</p>
+                      <p className="text-xs text-gray-500">{op.email || '-'}</p>
+                    </div>
+                  </div>
+                  <StatusBadge status={op.status} size="sm" />
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Defect Reports to Review */}
+        <Card
+          title="Defect Reports to Review"
+          icon={AlertTriangle}
+          action={
+            <Link to="/defects" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+              View all
+            </Link>
+          }
+        >
+          <div className="space-y-3">
+            {defectReports.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No defect reports</p>
+            ) : (
+              defectReports
+                .filter((d) => !['resolved', 'rejected'].includes(String(d.status || '').toLowerCase()))
+                .slice(0, 3)
+                .map((defect) => (
+                  <div key={defect.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-800">{defect.device_name || defect.device_type || 'Unknown'}</p>
+                        <StatusBadge status={defect.severity} size="sm" />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">{defect.defect_type || '-'}</p>
+                      <p className="text-xs text-gray-400">Reported by: {defect.reported_by_name || 'Unknown'}</p>
+                    </div>
+                    <StatusBadge status={defect.status} />
+                  </div>
+                ))
+            )}
+          </div>
+        </Card>
+
+        {/* Return Requests */}
+        <Card
+          title="Return Requests"
+          icon={RotateCcw}
+          action={
+            <Link to="/returns" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+              View all
+            </Link>
+          }
+        >
+          <div className="space-y-3">
+            {returnRequests.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">No return requests</p>
+            ) : (
+              returnRequests.slice(0, 3).map((ret) => (
+                <div key={ret.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{ret.device_name || ret.device_type || ret.device_model || 'Unknown'}</p>
+                    <p className="text-xs text-gray-500">{ret.reason || '-'}</p>
+                    <p className="text-xs text-gray-400 mt-1">By: {ret.requested_by_name || ret.initiated_by_name || 'Unknown'}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={ret.status} />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+export default SubDistributorDashboard;
