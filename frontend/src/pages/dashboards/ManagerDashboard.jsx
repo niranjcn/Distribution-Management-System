@@ -17,6 +17,8 @@ import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { dashboardAPI, distributionsAPI, returnsAPI } from '../../services/api';
+import HierarchySelector from '../../components/dashboard/HierarchySelector';
+import UserKpiSection from '../../components/dashboard/UserKpiSection';
 import {
   Activity,
   Boxes,
@@ -80,6 +82,9 @@ const ManagerDashboard = () => {
   const [distributions, setDistributions] = useState([]);
   const [returnRequests, setReturnRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [userKpi, setUserKpi] = useState(null);
+  const [kpiLoading, setKpiLoading] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -103,6 +108,24 @@ const ManagerDashboard = () => {
     };
     fetchData();
   }, []);
+
+  const handleHierarchySelect = async (selection) => {
+    setSelectedUser(selection);
+    if (selection && selection.id) {
+      setKpiLoading(true);
+      setUserKpi(null);
+      try {
+        const res = await dashboardAPI.getUserKpi(selection.id);
+        setUserKpi(res.data || null);
+      } catch {
+        setUserKpi(null);
+      } finally {
+        setKpiLoading(false);
+      }
+    } else {
+      setUserKpi(null);
+    }
+  };
 
   const kpis = advanced.kpis || {};
   const charts = advanced.charts || {};
@@ -257,6 +280,9 @@ const ManagerDashboard = () => {
           <p className="text-green-700 mt-1">Role-scoped analytics for throughput, defects, replacements, and return control.</p>
         </div>
       </div>
+
+      <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
+      {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 animate-slideUp">
         <StatCard title="Total Devices" value={kpis.total_devices || stats.total_devices || 0} description="Registered devices" icon={Boxes} color="total" />

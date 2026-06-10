@@ -15,6 +15,39 @@ class ClientActivityTrackRequest(BaseModel):
     context: str | None = None
 
 
+@router.get("/scope-users")
+async def get_scope_users(
+    current_user: dict = Depends(get_current_user)
+):
+    """Get users visible in the hierarchy scope selector."""
+    try:
+        data = await dashboard_service.get_scope_users(current_user)
+        return {"success": True, "data": data}
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
+@router.get("/user-kpi/{user_id}")
+async def get_user_kpi(
+    user_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get KPI data for a specific user in the hierarchy."""
+    try:
+        data = await dashboard_service.get_user_kpi(current_user, user_id)
+        return {"success": True, "data": data}
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
 @router.get("/stats")
 async def get_dashboard_stats(
     current_user: dict = Depends(get_current_user)

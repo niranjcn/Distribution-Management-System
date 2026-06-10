@@ -36,6 +36,7 @@ import PendingDues from './pages/PendingDues';
 
 import BulkImportDevices from './pages/BulkImportDevices';
 import BulkImportDistribution from './pages/BulkImportDistribution';
+import BulkUploadUsers from './pages/BulkUploadUsers';
 import { normalizeRole, isForcedCredentialUpdateRequired } from './utils/roles';
 
 // Protected Route Component
@@ -223,6 +224,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster']}>
               <UserHierarchy />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="users/bulk-upload"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'manager']}>
+              <BulkUploadUsers />
             </ProtectedRoute>
           }
         />
