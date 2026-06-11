@@ -26,6 +26,7 @@ import Unauthorized from './pages/Unauthorized';
 import ForcedCredentialUpdate from './pages/ForcedCredentialUpdate';
 import ChangeRequests from './pages/ChangeRequests';
 import EditRequests from './pages/EditRequests';
+import ReassignmentRequests from './pages/ReassignmentRequests';
 
 
 import DeliveryConfirmations from './pages/DeliveryConfirmations';
@@ -318,6 +319,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['super_admin', 'manager']}>
               <ChangeRequests />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reassignment-requests"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin']}>
+              <ReassignmentRequests />
             </ProtectedRoute>
           }
         />

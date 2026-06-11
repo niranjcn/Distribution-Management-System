@@ -15,7 +15,7 @@ from app.utils.roles import (
 
 PERMISSIONS = {
     "users:read": [SUPER_ADMIN, MD_DIRECTOR, MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER],
-    "users:create": [SUPER_ADMIN, MANAGER],
+    "users:create": [SUPER_ADMIN, MANAGER, SUB_DISTRIBUTOR, CLUSTER],
     "users:update": [SUPER_ADMIN, MANAGER],
     "users:delete": [SUPER_ADMIN],
     "users:set_permissions": [SUPER_ADMIN],

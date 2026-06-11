@@ -6,7 +6,7 @@ from typing import Optional
 
 from app.database import get_db
 from app.models.user import UserCreate, UserUpdate
-from app.services import user_service
+from app.services import user_service, reassignment_request_service, notification_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager_or_md
 from app.core.audit import audit_logger
 from app.core.activity_logger import build_field_change_summary, log_business_activity
@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 ALLOWED_CREATE_BY_ROLE = {
     SUPER_ADMIN: [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
     MANAGER: [PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
+    SUB_DISTRIBUTOR: [SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR],
+    CLUSTER: [OPERATOR],
 }
 
 
@@ -404,6 +406,49 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
+async def _get_children_to_reassign(target_user: dict) -> list:
+    """Get all children that would be orphaned by deleting this user."""
+    target_role = normalize_role(target_user.get("role"))
+    children = []
+
+    async with get_db() as db:
+        if target_role == SUB_DISTRIBUTOR:
+            # Get sub_distribution_managers, clusters, and operators
+            cursor = await db.execute(
+                "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role IN (?, ?, ?)",
+                (int(target_user["id"]), SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR)
+            )
+            direct_children = await cursor.fetchall()
+            for child in direct_children:
+                child_dict = dict(child)
+                children.append(child_dict)
+                # If it's a sub_distribution_manager, get their clusters and operators too
+                if child_dict.get("role") == SUB_DISTRIBUTION_MANAGER:
+                    cursor2 = await db.execute(
+                        "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role IN (?, ?)",
+                        (int(child_dict["id"]), CLUSTER, OPERATOR)
+                    )
+                    for gc in await cursor2.fetchall():
+                        children.append(dict(gc))
+                # If it's a cluster, get their operators
+                if child_dict.get("role") == CLUSTER:
+                    cursor2 = await db.execute(
+                        "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role = ?",
+                        (int(child_dict["id"]), OPERATOR)
+                    )
+                    for gc in await cursor2.fetchall():
+                        children.append(dict(gc))
+        elif target_role == CLUSTER:
+            cursor = await db.execute(
+                "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role = ?",
+                (int(target_user["id"]), OPERATOR)
+            )
+            for child in await cursor.fetchall():
+                children.append(dict(child))
+
+    return children
+
+
 @router.delete("/{user_id}")
 async def delete_user(request: Request, user_id: str, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
@@ -425,6 +470,68 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
         if not await _can_access_user(current_user, target_user, write=True):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
+    target_role = normalize_role(target_user.get("role"))
+
+    # If deleting a sub_distributor or cluster, create reassignment request instead
+    if target_role in {SUB_DISTRIBUTOR, CLUSTER}:
+        children = await _get_children_to_reassign(target_user)
+
+        if not children:
+            # No children orphaned, proceed with normal deletion
+            try:
+                success = await user_service.delete_user(user_id)
+                if not success:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+                actor_name = current_user.get("name") or current_user.get("email") or "User"
+                target_name = target_user.get("name") or target_user.get("email") or user_id
+                await log_business_activity(
+                    user=current_user,
+                    path="/activity/users/delete",
+                    description=f"{actor_name} deleted user {target_name}",
+                )
+                audit_logger.warning(
+                    "USER_DELETE | actor_id=%s | actor_email=%s | target_user_id=%s | ip=%s",
+                    current_user.get("id"),
+                    current_user.get("email"),
+                    user_id,
+                    request.client.host if request.client else "unknown",
+                )
+                return {"success": True, "message": "User deleted successfully"}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.exception("Unhandled route exception")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
+
+        # Create reassignment request
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        req = await reassignment_request_service.create_reassignment_request(
+            deleted_user=target_user,
+            children=children,
+            actor_name=actor_name,
+        )
+
+        # Notify all super admins
+        super_admins = await user_service.get_users(role=SUPER_ADMIN, page_size=10000)
+        for sa in super_admins["data"]:
+            await notification_service.create_notification(
+                user_id=sa["id"],
+                title="Reassignment Request",
+                message=f"A {target_role} ({target_user.get('name')}) was scheduled for deletion. {len(children)} user(s) need reassignment.",
+                notification_type="warning",
+                category="user",
+                link="/reassignment-requests",
+                metadata={"request_id": req.get("request_id"), "request_db_id": req.get("id")},
+            )
+
+        return {
+            "success": True,
+            "message": f"Reassignment request created. {len(children)} user(s) need to be reassigned before deletion.",
+            "data": {"request": req, "children_count": len(children)},
+        }
+
+    # For non-sub_distributor/cluster, proceed with normal deletion
     try:
         success = await user_service.delete_user(user_id)
         if not success:
