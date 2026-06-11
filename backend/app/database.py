@@ -105,33 +105,69 @@ class MySQLDB:
             or prefix.startswith("EXPLAIN")
         )
 
+    @staticmethod
+    def _classify_operation(sql: str) -> str:
+        upper = sql.strip().upper()
+        if upper.startswith("SELECT"):
+            return "select"
+        if upper.startswith("INSERT"):
+            return "insert"
+        if upper.startswith("UPDATE"):
+            return "update"
+        if upper.startswith("DELETE"):
+            return "delete"
+        return "other"
+
     async def execute(self, query: str, params: Optional[Iterable[Any]] = None) -> CursorWrapper:
         sql = _translate_sql(query)
         args = tuple(params or ())
         max_attempts = 3 if self._is_retryable_read_query(sql) else 1
+        operation = self._classify_operation(sql)
+
+        from app.core.metrics import mysql_queries_total, mysql_query_duration_seconds, mysql_query_failures_total
+        import time
+
+        mysql_queries_total.labels(operation=operation).inc()
+        start = time.time()
 
         for attempt in range(1, max_attempts + 1):
             cur = await self._conn.cursor(aiomysql.DictCursor)
             try:
                 await cur.execute(sql, args)
+                mysql_query_duration_seconds.labels(operation=operation).observe(time.time() - start)
                 return CursorWrapper(cur)
             except pymysql.err.OperationalError as exc:
-                # MySQL error 1412 appears transiently after DDL/TRUNCATE metadata changes.
                 if exc.args and exc.args[0] == 1412 and attempt < max_attempts:
                     await cur.close()
                     await asyncio.sleep(0.05)
                     continue
                 await cur.close()
+                mysql_query_failures_total.labels(operation=operation).inc()
                 raise
             except Exception:
                 await cur.close()
+                mysql_query_failures_total.labels(operation=operation).inc()
                 raise
 
     async def executemany(self, query: str, params: Iterable[Iterable[Any]]) -> CursorWrapper:
         cur = await self._conn.cursor(aiomysql.DictCursor)
         sql = _translate_sql(query)
-        await cur.executemany(sql, params)
-        return CursorWrapper(cur)
+        operation = self._classify_operation(sql)
+
+        from app.core.metrics import mysql_queries_total, mysql_query_duration_seconds, mysql_query_failures_total
+        import time
+
+        mysql_queries_total.labels(operation=operation).inc()
+        start = time.time()
+
+        try:
+            await cur.executemany(sql, params)
+            mysql_query_duration_seconds.labels(operation=operation).observe(time.time() - start)
+            return CursorWrapper(cur)
+        except Exception:
+            await cur.close()
+            mysql_query_failures_total.labels(operation=operation).inc()
+            raise
 
     async def commit(self):
         await self._conn.commit()

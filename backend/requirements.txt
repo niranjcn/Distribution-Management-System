@@ -14,3 +14,4 @@ xlrd>=2.0.1
 slowapi>=0.1.9
 starlette-csrf>=3.0.0
 apscheduler>=3.10.4
+prometheus-client>=0.19.0
