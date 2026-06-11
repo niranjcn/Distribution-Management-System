@@ -24,6 +24,7 @@ from app.middleware.auth_middleware import get_current_user, require_admin
 from app.core.rate_limiter import limiter
 from app.core.audit import audit_logger
 from app.core.activity_logger import build_meaningful_activity_description, log_api_activity
+from app.core.metrics import MetricsMiddleware, metrics_endpoint
 from app.services.auth_service import get_current_user_from_token
 
 
@@ -51,9 +52,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class HttpsEnforcementMiddleware(BaseHTTPMiddleware):
-    """Redirect plaintext HTTP requests to HTTPS when explicitly enabled."""
+    """Redirect plaintext HTTP requests to HTTPS when explicitly enabled.
+    Skips internal-only paths that may be scraped by Prometheus over HTTP.
+    """
+
+    EXEMPT_PATHS = {"/metrics", "/health"}
 
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in self.EXEMPT_PATHS:
+            return await call_next(request)
+
         if settings.ENFORCE_HTTPS:
             forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
             if forwarded_proto.lower() != "https":
@@ -70,6 +78,8 @@ class ApiActivityLoggingMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith(settings.API_V1_PREFIX):
             return await call_next(request)
         if request.method.upper() == "OPTIONS":
+            return await call_next(request)
+        if request.url.path == "/metrics":
             return await call_next(request)
 
         actor_id = None
@@ -190,6 +200,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 uploads_root = Path(__file__).resolve().parents[1] / "uploads"
 uploads_root.mkdir(parents=True, exist_ok=True)
 
+app.add_middleware(MetricsMiddleware)
+
 app.add_middleware(
     CSRFMiddleware,
     secret=settings.SECRET_KEY,
@@ -197,7 +209,7 @@ app.add_middleware(
     cookie_secure=settings.CSRF_COOKIE_SECURE,
     cookie_samesite="strict",
     sensitive_cookies={"access_token", "refresh_token"},
-    exempt_urls=[re.compile(r"^/api/auth/login$")],
+    exempt_urls=[re.compile(r"^/api/auth/login$"), re.compile(r"^/metrics$")],
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -251,6 +263,12 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.get("/metrics", tags=["Metrics"])
+async def metrics():
+    """Prometheus metrics endpoint"""
+    return await metrics_endpoint()
 
 
 @app.get(f"{settings.API_V1_PREFIX}/uploads/{{file_path:path}}", tags=["Uploads"])

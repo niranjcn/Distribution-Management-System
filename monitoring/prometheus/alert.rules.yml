@@ -1,0 +1,75 @@
+groups:
+  - name: backend_alerts
+    interval: 30s
+    rules:
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend instance is down"
+          description: "Backend {{ $labels.instance }} has been unreachable for more than 30 seconds."
+
+      - alert: HighErrorRate
+        expr: rate(http_errors_total[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate ({{ $value | humanizePercentage }})"
+          description: "Error rate on backend {{ $labels.instance }} exceeds 5% over the last 5 minutes."
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P95 latency ({{ $value }}s)"
+          description: "P95 latency on backend {{ $labels.instance }} exceeds 2 seconds."
+
+      - alert: ManyInProgressRequests
+        expr: http_requests_in_progress > 50
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of in-flight requests ({{ $value }})"
+          description: "More than 50 concurrent requests on backend {{ $labels.instance }}."
+
+      - alert: SlowQueries
+        expr: histogram_quantile(0.95, rate(mysql_query_duration_seconds_bucket[5m])) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries (P95 {{ $value }}s)"
+          description: "P95 query latency on backend {{ $labels.instance }} exceeds 1 second."
+
+      - alert: QueryFailures
+        expr: rate(mysql_query_failures_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database query failures ({{ $value | humanize }} per second)"
+          description: "Query failure rate on backend {{ $labels.instance }} exceeds 0.1/s."
+
+      - alert: LoginFailureSpike
+        expr: rate(failed_logins_total[5m]) > 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Login failure spike ({{ $value | humanize }} per second)"
+          description: "More than 1 failed login per second over the last 5 minutes."
+
+      - alert: AppRestarted
+        expr: app_uptime_seconds < 60
+        for: 0s
+        labels:
+          severity: info
+        annotations:
+          summary: "Application has restarted"
+          description: "Backend uptime is less than 60 seconds — recent restart detected."
