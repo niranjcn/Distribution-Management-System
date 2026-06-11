@@ -17,7 +17,7 @@ from app.routes import (
     auth, users, devices, distributions, 
     defects, returns, approvals, operators,
     notifications, reports, dashboard, change_requests,
-    external_inventory
+    external_inventory, reassignment_requests
 )
 from app.middleware.error_handler import add_exception_handlers
 from app.middleware.auth_middleware import get_current_user, require_admin
@@ -234,6 +234,7 @@ app.include_router(reports.router, prefix=f"{settings.API_V1_PREFIX}/reports", t
 app.include_router(dashboard.router, prefix=f"{settings.API_V1_PREFIX}/dashboard", tags=["Dashboard"])
 app.include_router(change_requests.router, prefix=f"{settings.API_V1_PREFIX}/change-requests", tags=["Change Requests"])
 app.include_router(external_inventory.router, prefix=f"{settings.API_V1_PREFIX}/external-inventory", tags=["External Inventory"])
+app.include_router(reassignment_requests.router, prefix=f"{settings.API_V1_PREFIX}/reassignment-requests", tags=["Reassignment Requests"])
 
 
 @app.get("/", tags=["Root"])

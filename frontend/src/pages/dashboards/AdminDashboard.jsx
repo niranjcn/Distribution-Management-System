@@ -16,7 +16,7 @@ import { Doughnut, Pie, Line, Bar } from 'react-chartjs-2';
 import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { dashboardAPI, usersAPI, defectsAPI } from '../../services/api';
+import { dashboardAPI, usersAPI, defectsAPI, reassignmentRequestsAPI } from '../../services/api';
 import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
 import {
@@ -93,6 +93,7 @@ const AdminDashboard = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [userKpi, setUserKpi] = useState(null);
   const [kpiLoading, setKpiLoading] = useState(false);
+  const [pendingReassignments, setPendingReassignments] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -114,6 +115,13 @@ const AdminDashboard = () => {
           setRecentActivities(activitiesRes.data || []);
         } catch {
           setRecentActivities([]);
+        }
+
+        try {
+          const reassignRes = await reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 });
+          setPendingReassignments(reassignRes?.pagination?.total || 0);
+        } catch {
+          setPendingReassignments(0);
         }
       } catch (error) {
         console.error('Failed to load dashboard data:', error);
@@ -484,6 +492,22 @@ const AdminDashboard = () => {
 
         <Card title="Critical Ops Alerts" icon={Clock}>
           <div className="space-y-3">
+            {pendingReassignments > 0 && (
+              <Link
+                to="/reassignment-requests"
+                className="block rounded-lg border border-amber-200 bg-amber-50 p-3 hover:bg-amber-100 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-amber-800">Reassignment Requests</p>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-200 text-amber-800">
+                    {pendingReassignments} pending
+                  </span>
+                </div>
+                <p className="text-xs text-amber-700 mt-1">
+                  Users need reassignment before deletion can complete.
+                </p>
+              </Link>
+            )}
             {alerts.length === 0 ? (
               <p className="text-sm text-gray-500">No active alerts right now.</p>
             ) : alerts.map((alert, idx) => (

@@ -101,6 +101,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/users/hierarchy', label: 'User Hierarchy' },
             { path: '/users/bulk-upload', label: 'Bulk Upload' },
             { path: '/change-requests', label: 'Password Change Requests' },
+            { path: '/reassignment-requests', label: 'Reassignment Requests' },
           ]
         },
         {

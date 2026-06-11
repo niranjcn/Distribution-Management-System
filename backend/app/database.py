@@ -569,6 +569,23 @@ CREATE_TABLE_STATEMENTS = [
         INDEX idx_token_blacklist_expires_at(expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+    """
+    CREATE TABLE IF NOT EXISTS reassignment_requests (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        request_id VARCHAR(128) UNIQUE NOT NULL,
+        deleted_user_id INT NOT NULL,
+        deleted_user_name VARCHAR(255),
+        deleted_user_role VARCHAR(64) NOT NULL,
+        status VARCHAR(32) DEFAULT 'pending',
+        reassigned_to_id INT,
+        reassigned_to_name VARCHAR(255),
+        reassigned_to_role VARCHAR(64),
+        children_json LONGTEXT,
+        created_at VARCHAR(64) NOT NULL,
+        updated_at VARCHAR(64) NOT NULL,
+        INDEX idx_reassignment_requests_status(status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
 ]
 
 

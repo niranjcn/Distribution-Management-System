@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import DataTable from '../components/ui/DataTable';
 import Card from '../components/ui/Card';
 import Modal from '../components/ui/Modal';
@@ -6,17 +7,20 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { usersAPI, adminUpdateCredentials } from '../services/api';
+import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI } from '../services/api';
 import { 
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
   Building, MapPin, Calendar, Users as UsersIcon, Loader2, Lock,
-  Network, ChevronDown, ChevronRight, Filter, X, EyeOff, Search
+  Network, ChevronDown, ChevronRight, Filter, X, EyeOff, Search,
+  AlertTriangle
 } from 'lucide-react';
 
 // Roles each creator can assign
 const ALLOWED_ROLES_BY_CREATOR = {
   super_admin:     ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
   manager:         ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
+  sub_distributor: ['sub_distribution_manager', 'cluster', 'operator'],
+  cluster:         ['operator'],
 };
 
 const ROLE_LABELS = {
@@ -111,6 +115,8 @@ const Users = () => {
   const [loadingOps, setLoadingOps] = useState(false);
   // Which cluster cards are collapsed (by cluster id)
   const [collapsedClusters, setCollapsedClusters] = useState({});
+  // Pending reassignment count for super admin
+  const [pendingReassignCount, setPendingReassignCount] = useState(0);
 
   // Which roles the current user can create
   const creatableRoles = ALLOWED_ROLES_BY_CREATOR[currentUser?.role] || [];
@@ -151,12 +157,21 @@ const Users = () => {
   useEffect(() => {
     fetchUsers();
     fetchSubDistOperators();
+    if (currentUser?.role === 'super_admin') {
+      reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })
+        .then(res => setPendingReassignCount(res?.pagination?.total || 0))
+        .catch(() => setPendingReassignCount(0));
+    }
   }, []);
 
   // When add modal opens, default role to first available
   const openAddModal = () => {
     const defaultRole = creatableRoles[0] || 'operator';
-    setFormData({ ...emptyForm, role: defaultRole, parentId: '' });
+    const initialParentId = (
+      (currentUser?.role === 'sub_distributor' && (defaultRole === 'cluster' || defaultRole === 'sub_distribution_manager')) ||
+      (currentUser?.role === 'cluster' && defaultRole === 'operator')
+    ) ? currentUser.id : '';
+    setFormData({ ...emptyForm, role: defaultRole, parentId: initialParentId });
     setParentOptions([]);
     setSubDistributorOptions([]);
     setSelectedOperatorSubDistId('');
@@ -203,7 +218,11 @@ const Users = () => {
   // Handle role change in add form - fetch parent options for admin/manager;
   // for sub_distributor creating operator, populate from local clusters state.
   const handleRoleChange = (newRole) => {
-    setFormData(prev => ({ ...prev, role: newRole, parentId: '' }));
+    const isAutoParent = (
+      (currentUser?.role === 'sub_distributor' && (newRole === 'cluster' || newRole === 'sub_distribution_manager')) ||
+      (currentUser?.role === 'cluster' && newRole === 'operator')
+    );
+    setFormData(prev => ({ ...prev, role: newRole, parentId: isAutoParent ? currentUser.id : '' }));
     setSelectedOperatorSubDistId('');
     if (['super_admin', 'manager'].includes(currentUser?.role)) {
       if (newRole === 'sub_distribution_manager' || newRole === 'cluster' || newRole === 'operator') {
@@ -219,6 +238,8 @@ const Users = () => {
       } else {
         setParentOptions([]);
       }
+    } else if (currentUser?.role === 'cluster') {
+      setParentOptions([]);
     }
   };
 
@@ -385,12 +406,23 @@ const Users = () => {
 
   const handleDeleteUser = async () => {
     try {
-      await usersAPI.deleteUser(selectedUser._id || selectedUser.id);
-      showToast('User deleted successfully', 'success');
+      const res = await usersAPI.deleteUser(selectedUser._id || selectedUser.id);
+      const isReassign = res?.data?.request && (selectedUser?.role === 'sub_distributor' || selectedUser?.role === 'cluster');
+      if (isReassign) {
+        showToast(`Reassignment request created for ${res.data.children_count} user(s)`, 'success');
+      } else {
+        showToast('User deleted successfully', 'success');
+      }
       setShowDeleteModal(false);
       setSelectedUser(null);
       fetchUsers();
       fetchSubDistOperators();
+      // Refresh reassignment count
+      if (currentUser?.role === 'super_admin') {
+        reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })
+          .then(res2 => setPendingReassignCount(res2?.pagination?.total || 0))
+          .catch(() => {});
+      }
     } catch (error) {
       showToast(error.message || 'Failed to delete user', 'error');
     }
@@ -575,6 +607,21 @@ const Users = () => {
           </Button>
         )}
       </div>
+
+      {/* Reassignment request alert for super admin */}
+      {isAdmin && pendingReassignCount > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm text-amber-800">
+              <strong>{pendingReassignCount}</strong> reassignment request{pendingReassignCount !== 1 ? 's' : ''} pending.
+              <Link to="/reassignment-requests" className="ml-2 text-amber-700 underline hover:text-amber-900 font-medium">
+                View and manage
+              </Link>
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Stats */}
       <div className={`grid ${
@@ -1138,7 +1185,8 @@ const Users = () => {
             {/* Parent selector — shown when admin/manager creates sub-distributor/cluster/operator,
                 OR when sub_distributor creates an operator (must select a cluster) */}
             {((isAdminOrManager) && (formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator')) ||
-             (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ? (
+             (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ||
+             (currentUser?.role === 'cluster' && formData.role === 'operator') ? (
               <div>
                 {isAdminOrManager && formData.role === 'operator' ? (
                   <div className="space-y-3">
@@ -1369,24 +1417,49 @@ const Users = () => {
         isOpen={showDeleteModal}
         onClose={() => { setShowDeleteModal(false); setSelectedUser(null); }}
         title="Delete User"
-        size="sm"
+        size="md"
       >
         <div className="text-center py-4">
-          <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Trash2 className="w-6 h-6 text-red-600" />
-          </div>
-          <p className="text-gray-700 mb-4">
-            Are you sure you want to delete <strong>{selectedUser?.name}</strong>?
-            This action cannot be undone.
-          </p>
-          <div className="flex justify-center gap-3">
-            <Button variant="outline" onClick={() => setShowDeleteModal(false)}>
-              Cancel
-            </Button>
-            <Button variant="danger" onClick={handleDeleteUser}>
-              Delete User
-            </Button>
-          </div>
+          {selectedUser && (selectedUser.role === 'sub_distributor' || selectedUser.role === 'cluster') ? (
+            <>
+              <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="w-6 h-6 text-amber-600" />
+              </div>
+              <p className="text-gray-700 mb-2">
+                This will create a <strong>Reassignment Request</strong> for{' '}
+                <strong>{selectedUser?.name}</strong>.
+              </p>
+              <p className="text-sm text-gray-500 mb-4">
+                Users under this {selectedUser.role === 'sub_distributor' ? 'sub-distributor' : 'cluster'} will need to be reassigned to a new parent before deletion. You can manage this in the Reassignment Requests section.
+              </p>
+              <div className="flex justify-center gap-3">
+                <Button variant="outline" onClick={() => setShowDeleteModal(false)}>
+                  Cancel
+                </Button>
+                <Button variant="danger" onClick={handleDeleteUser}>
+                  Request Reassignment
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <p className="text-gray-700 mb-4">
+                Are you sure you want to delete <strong>{selectedUser?.name}</strong>?
+                This action cannot be undone.
+              </p>
+              <div className="flex justify-center gap-3">
+                <Button variant="outline" onClick={() => setShowDeleteModal(false)}>
+                  Cancel
+                </Button>
+                <Button variant="danger" onClick={handleDeleteUser}>
+                  Delete User
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </Modal>
 
