@@ -17,12 +17,14 @@ A full-stack web application for managing device distribution across different o
 - [11. Configuration](#11-configuration)
 - [12. Running Both Servers](#12-running-both-servers)
 - [13. Demo Accounts](#13-demo-accounts)
-- [14. Testing](#14-testing)
-- [15. Building for Production](#15-building-for-production)
-- [16. Troubleshooting](#16-troubleshooting)
-- [17. Development Notes](#17-development-notes)
-- [18. Contributing](#18-contributing)
-- [19. License](#19-license)
+- [14. Monitoring](#14-monitoring)
+- [14. Monitoring](#14-monitoring)
+- [15. Testing](#15-testing)
+- [16. Building for Production](#16-building-for-production)
+- [17. Troubleshooting](#17-troubleshooting)
+- [18. Development Notes](#18-development-notes)
+- [19. Contributing](#19-contributing)
+- [20. License](#20-license)
 
 ---
 
@@ -42,10 +44,15 @@ The Distribution Management System (DMS) provides end-to-end visibility and cont
 ### Backend
 
 - **FastAPI** — Modern Python async web framework
-- **MongoDB** — NoSQL document database with Motor async driver
+- **MySQL 8.4** — Relational database with aiomysql async driver
 - **JWT** — JSON Web Tokens for stateless authentication
 - **Pydantic** — Data validation and serialisation
 - **Bcrypt** — Secure password hashing
+
+### Monitoring
+
+- **Prometheus** — Metrics collection and query engine
+- **Grafana** — Metrics visualisation and dashboards
 
 ### Frontend
 
@@ -81,12 +88,19 @@ flowchart TD
   end
 
   subgraph Data ["Persistence Layer"]
-    DB[(MongoDB Atlas\nDocument Store)]
+    DB[(MySQL 8.4\nRelational Database)]
+  end
+
+  subgraph Monitoring ["Observability Stack"]
+    P[Prometheus\nMetrics Scraper]
+    G[Grafana\nDashboards]
   end
 
   FE -- HTTP/REST --> API
   API --> Services
   Services --> DB
+  P -- /metrics --> API
+  G -.-> P
 ```
 
 ---
@@ -97,15 +111,20 @@ flowchart TD
 distribution-management-system/
 ├── backend/
 │   ├── app/
+│   │   ├── core/
+│   │   │   ├── metrics.py           # Prometheus metric definitions
+│   │   │   └── ...
 │   │   ├── models/          # Pydantic models
 │   │   ├── routes/          # API endpoints
-│   │   ├── services/        # Business logic
+│   │   ├── services/
+│   │   │   ├── metrics_collector.py # Background Prometheus metric updater
+│   │   │   └── ...
 │   │   ├── middleware/      # Auth & error handling
 │   │   ├── utils/           # Helper functions
 │   │   ├── schemas/         # Response schemas
 │   │   ├── main.py          # FastAPI app entry point
 │   │   ├── config.py        # Settings
-│   │   └── database.py      # MongoDB connection
+│   │   └── database.py      # MySQL connection pool & schema
 │   ├── requirements.txt
 │   ├── .env
 │   └── README.md
@@ -125,6 +144,17 @@ distribution-management-system/
 │   ├── vite.config.js
 │   └── tailwind.config.js
 │
+├── monitoring/
+│   ├── prometheus/
+│   │   ├── prometheus.yml    # Scrape config
+│   │   └── alert.rules.yml   # Alert rules
+│   └── grafana/
+│       ├── datasources/      # Provisioned data source
+│       └── dashboards/       # Pre-built dashboards
+│
+├── docker-compose.yml
+├── docker-compose.override.yml
+├── nginx/
 └── README.md
 ```
 
@@ -169,6 +199,14 @@ distribution-management-system/
 
 ### Dashboard
 - Role-specific views with live statistics, activity feeds, charts, and system alerts
+
+### Monitoring (Prometheus + Grafana)
+- **Prometheus** scrapes the backend `/metrics` endpoint every 10s for HTTP, database, and business metrics
+- **Grafana** provisions dashboards automatically on startup:
+  - **Business Metrics** — total/active users, operators, clusters, sub-distributors, device inventory, distributions, login activity
+  - **Database Dashboard** — MySQL query throughput, durations, failure rates, active connections
+  - **Backend API Dashboard** — HTTP request rates, latencies, error rates, in-flight requests
+- A background **metrics collector** (`app/services/metrics_collector.py`) syncs database state to Prometheus gauges every 60s
 
 ---
 
@@ -331,9 +369,18 @@ All endpoints are mounted under `/api`.
 ### Dashboard
 - `GET /api/dashboard/stats` — Dashboard statistics
 - `GET /api/dashboard/recent-activities` — Recent activities
+- `GET /api/dashboard/advanced-metrics` — Advanced graph/metrics payload
 - `GET /api/dashboard/charts/distributions` — Distribution chart data
 - `GET /api/dashboard/charts/defects` — Defect chart data
 - `GET /api/dashboard/alerts` — System alerts
+
+### Bulk Upload
+- `POST /api/devices/bulk-upload` — Bulk register devices (CSV/XLSX/XLS)
+- `POST /api/users/bulk-upload` — Bulk create users (CSV/XLSX/XLS)
+
+### System
+- `GET /metrics` — Prometheus metrics endpoint (no auth)
+- `GET /health` — Health check
 
 ---
 
@@ -364,9 +411,32 @@ flowchart LR
 
 - Python 3.10+
 - Node.js 18+
-- MongoDB Atlas account (or local MongoDB)
+- MySQL 8.4
+- Docker & Docker Compose (recommended for monitoring stack)
 
-### Backend Setup
+### Quick Start (Docker — Recommended)
+
+The entire stack including MySQL, backend, frontend, reverse proxy, Prometheus, and Grafana can be started with Docker Compose:
+
+```bash
+# Ensure environment variables are set
+cp .env.example .env       # or configure manually
+
+# Start all services
+docker compose up -d
+
+# Wait for services to be healthy, then access:
+```
+
+| Service | URL |
+|---|---|
+| Web Application | https://localhost |
+| Backend API | https://localhost/api |
+| API Docs (Swagger) | https://localhost/docs |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 (admin / password from `.env`) |
+
+### Backend Setup (Manual)
 
 1. Navigate to the backend directory:
    ```bash
@@ -387,7 +457,7 @@ flowchart LR
 
 4. Configure environment variables:
    - Copy `.env.example` to `.env`
-   - Update the MongoDB connection string if needed
+   - Update the MySQL connection string if needed
 
 5. Start the backend server:
    ```bash
@@ -424,12 +494,17 @@ flowchart LR
 ### Backend (`backend/.env`)
 
 ```env
-MONGODB_URL=mongodb+srv://...
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=dms_user
+DB_PASSWORD=your-db-password
+DB_NAME=distribution_management_system
 SECRET_KEY=your-secret-key-here
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 REFRESH_TOKEN_EXPIRE_DAYS=7
 CORS_ORIGINS=http://localhost:5173,http://localhost:3002
+ENVIRONMENT=development
 ```
 
 ### Frontend (`frontend/.env`)
@@ -485,7 +560,88 @@ Run with:
 
 ---
 
-## 14. Testing
+## 14. Monitoring
+
+### Accessing Grafana Dashboards
+
+Grafana is available at **http://localhost:3000** when running via Docker Compose.
+
+| Default Credential | Value |
+|---|---|
+| Username | `admin` |
+| Password | Set via `GRAFANA_ADMIN_PASSWORD` in `.env` (defaults to `admin`) |
+
+Three dashboards are provisioned automatically on startup:
+
+| Dashboard | UID | Key Panels |
+|---|---|---|
+| **Business Metrics** | `business-metrics` | Total/Active Users, Operators, Clusters, Sub-Distributors, Distributions, Login Activity |
+| **Backend API** | `backend-api` | HTTP request rate, latency (P50/P95/P99), error rate, in-flight requests |
+| **Database** | `database` | MySQL query throughput, duration, failure rate, active connections |
+
+### Prometheus Metrics Endpoint
+
+The backend exposes a `/metrics` endpoint scraped by Prometheus:
+
+```bash
+# View raw metrics directly
+curl http://localhost:8080/metrics
+```
+
+### Metrics Collection Architecture
+
+```
+┌─────────────────┐    scrape(10s)    ┌────────────┐    query     ┌─────────┐
+│  FastAPI App    │ ────────────────→ │ Prometheus │ ←────────── │ Grafana │
+│  /metrics       │                   │ :9090      │             │ :3000   │
+└────────┬────────┘                   └────────────┘             └─────────┘
+         │
+    ┌────┴────┐
+    │ metrics │  <── background loop (60s)
+    │ collector│       updates gauges from DB
+    └─────────┘
+```
+
+- **`app/core/metrics.py`** — Declares all Prometheus metric objects (Counters, Gauges, Histograms) for HTTP requests, database queries, authentication, and business data.
+- **`app/services/metrics_collector.py`** — Background task that runs every 60 seconds, queries the database for current counts (total/active users by role, device inventory, distribution stats, login activity), and updates the corresponding Prometheus gauge/counter metrics.
+- **Prometheus** scrapes the `/metrics` HTTP endpoint every 10 seconds (configured in `monitoring/prometheus/prometheus.yml`).
+- **Grafana** uses Prometheus as a data source (configured in `monitoring/grafana/datasources/datasource.yml`) and loads dashboards from `monitoring/grafana/dashboards/`.
+
+### Exported Business Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `total_users` | Gauge | Total registered users |
+| `active_users` | Gauge | Users with status `active` |
+| `new_users_created_total` | Counter | Cumulative new user creations |
+| `total_operators` | Gauge | Users with role `operator` |
+| `active_operators` | Gauge | Active operators |
+| `total_clusters` | Gauge | Users with role `cluster` |
+| `active_clusters` | Gauge | Active clusters |
+| `total_sub_distributors` | Gauge | Users with role `sub_distributor` |
+| `active_sub_distributors` | Gauge | Active sub-distributors |
+| `inventory_items_total` | Gauge | Total devices registered |
+| `low_stock_items_total` | Gauge | Devices below low-stock threshold |
+| `distributions_created_total` | Counter | Cumulative distributions created |
+| `distributions_completed_total` | Counter | Distributions marked delivered |
+| `distributions_failed_total` | Counter | Distributions marked rejected |
+| `device_distributions_total` | Counter | Per-status distribution count |
+| `successful_logins_total` | Counter | Successful login events |
+| `failed_logins_total` | Counter | Failed login attempts |
+| `operator_logins_total` | Counter | Operator login events |
+| `http_requests_total` | Counter | Total HTTP requests by method/endpoint/status |
+| `http_request_duration_seconds` | Histogram | HTTP latency distribution |
+| `http_requests_in_progress` | Gauge | Concurrent in-flight requests |
+| `http_errors_total` | Counter | HTTP 4xx/5xx responses |
+| `login_attempts_total` | Counter | Login attempts by status |
+| `mysql_queries_total` | Counter | MySQL queries by operation type |
+| `mysql_query_duration_seconds` | Histogram | MySQL query latency |
+| `mysql_query_failures_total` | Counter | Failed MySQL queries |
+| `mysql_active_connections` | Gauge | Active DB connections |
+
+---
+
+## 15. Testing
 
 ### Test Backend API
 
@@ -509,7 +665,7 @@ curl http://localhost:8080/api/dashboard/stats \
 
 ---
 
-## 15. Building for Production
+## 16. Building for Production
 
 ### Backend
 
@@ -531,7 +687,7 @@ The production build outputs to `frontend/dist/`.
 
 ---
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 ### Backend Issues
 
@@ -569,15 +725,36 @@ rm -rf node_modules package-lock.json
 npm install
 ```
 
+### Monitoring Issues
+
+**Grafana shows 0 for all business metrics:**
+- Ensure the backend is running and Prometheus can reach `backend:8080/metrics`
+- Check Prometheus targets at http://localhost:9090/targets — the `backend` job should be UP
+- The metrics collector runs every 60s; wait at least one minute after startup for first sync
+- Verify `monitoring/prometheus/prometheus.yml` has `targets: ["backend:8080"]`
+
+**Grafana dashboards not appearing:**
+- Check Grafana logs: `docker compose logs grafana`
+- Verify dashboard JSON files exist in `monitoring/grafana/dashboards/`
+- The provisioning directory is mounted at `/etc/grafana/provisioning/dashboards`
+- Restart Grafana: `docker compose restart grafana`
+
+**Prometheus target down:**
+```bash
+# From within the Docker network, test connectivity
+docker compose exec backend wget -qO- http://localhost:8080/metrics | head -20
+```
+
 ---
 
-## 17. Development Notes
+## 18. Development Notes
 
 ### Database Seeding
 
-- Seed data is automatically created on first startup
+- Seed data is automatically created on first startup via `seed_initial_data()`
 - Includes 5 demo users, 20 sample devices, and example records
-- To reset: clear MongoDB collections and restart the backend
+- Tables are created automatically by `init_db()` on startup (see `backend/app/database.py`)
+- To reset: drop and recreate the database, then restart the backend
 
 ### CORS Configuration
 
@@ -586,7 +763,7 @@ npm install
 
 ---
 
-## 18. Contributing
+## 19. Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/AmazingFeature`
@@ -596,7 +773,7 @@ npm install
 
 ---
 
-## 19. License
+## 20. License
 
 This project is licensed under the MIT License.
 
