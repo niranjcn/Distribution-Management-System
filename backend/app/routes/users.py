@@ -2,7 +2,7 @@ import csv
 import io
 import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, File, UploadFile, Form
-from typing import Optional
+from typing import Optional, List, Any, Iterable
 
 from app.database import get_db
 from app.models.user import UserCreate, UserUpdate
@@ -27,6 +27,11 @@ from app.utils.roles import (
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+
+def _chunks(values: List[Any], chunk_size: int) -> Iterable[List[Any]]:
+    for i in range(0, len(values), chunk_size):
+        yield values[i:i + chunk_size]
 
 
 ALLOWED_CREATE_BY_ROLE = {
@@ -718,6 +723,8 @@ async def bulk_upload_users(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
+    import asyncio
+
     actor_role = normalize_role(current_user.get("role"))
     if actor_role not in {SUPER_ADMIN, MANAGER}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
@@ -740,115 +747,278 @@ async def bulk_upload_users(
         raise HTTPException(status_code=400, detail="File is empty or has no data rows")
 
     from app.utils.security import get_password_hash as _hash
-    from app.models.user import UserRole
     from datetime import datetime as _dt, timezone as _tz
+
+    actor_name = current_user.get("name") or current_user.get("email") or "User"
+
+    async def _log_bulk_upload_summary(created_count: int, skipped_count: int, error_count: int) -> None:
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/bulk-upload",
+            description=(
+                f"{actor_name} used bulk upload for users: "
+                f"{created_count} created, {skipped_count} skipped, {error_count} errors"
+            ),
+        )
 
     created = []
     errors = []
     skipped = []
-    total = len(rows)
+    prepared_rows = []
+    seen_emails = set()
+
+    for idx, row in enumerate(rows):
+        row_num = idx + 2
+        role_val = str(row.get("role") or "").strip().lower()
+        email = str(row.get("email") or "").strip().lower()
+        password = str(row.get("password") or "")
+        name = str(row.get("name") or "").strip()
+        digital_id = str(row.get("digital_id") or "").strip() or None
+        broadband_id = str(row.get("broadband_id") or "").strip() or None
+        phone = str(row.get("phone") or "").strip() or None
+        department = str(row.get("department") or "").strip() or None
+        location = str(row.get("location") or "").strip() or None
+
+        if not email or not password or not name:
+            errors.append({"row": row_num, "email": email, "error": "Missing required fields (email, password, name)"})
+            continue
+        if not role_val:
+            errors.append({"row": row_num, "email": email, "error": "Missing role"})
+            continue
+
+        normalized_role = normalize_role(role_val)
+        if not normalized_role or normalized_role not in {"sub_distributor", "sub_distribution_manager", "cluster", "operator"}:
+            errors.append({"row": row_num, "email": email, "error": f"Invalid role '{role_val}'. Allowed: sub_distributor, sub_distribution_manager, cluster, operator"})
+            continue
+
+        if email in seen_emails:
+            skipped.append({"row": row_num, "email": email, "reason": "Duplicate email in file"})
+            continue
+        seen_emails.add(email)
+
+        sd_email = str(row.get("sub_distributor_email") or "").strip().lower() or None
+        cluster_email = str(row.get("cluster_email") or "").strip().lower() or None
+
+        prepared_rows.append({
+            "row": row_num,
+            "email": email,
+            "password": password,
+            "name": name,
+            "normalized_role": normalized_role,
+            "digital_id": digital_id,
+            "broadband_id": broadband_id,
+            "phone": phone,
+            "department": department,
+            "location": location,
+            "sd_email": sd_email,
+            "cluster_email": cluster_email,
+        })
+
+    if not prepared_rows:
+        await _log_bulk_upload_summary(0, len(skipped), len(errors))
+        return {
+            "success": True,
+            "message": f"Bulk upload complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
+            "data": {
+                "created_count": 0,
+                "skipped_count": len(skipped),
+                "error_count": len(errors),
+                "created": created,
+                "skipped": skipped,
+                "errors": errors,
+            }
+        }
 
     async with get_db() as db:
-        caches = {"cluster": {}, "sub_distributor": {}, "sub_distribution_manager": {}}
+        all_emails = [item["email"] for item in prepared_rows]
+        existing_emails = set()
+        if all_emails:
+            for batch in _chunks(all_emails, 500):
+                placeholders = ",".join(["?"] * len(batch))
+                cursor = await db.execute(
+                    f"SELECT LOWER(email) as email FROM users WHERE LOWER(email) IN ({placeholders})",
+                    batch,
+                )
+                rows_found = await cursor.fetchall()
+                for r in rows_found:
+                    val = r.get("email") or r.get(0)
+                    if val:
+                        existing_emails.add(str(val).strip().lower())
 
-        async def _resolve_parent(email: str, expected_role: str) -> Optional[int]:
-            if not email or not email.strip():
+        insertable_rows = []
+        resolved_parents_email = {}
+
+        async def _resolve_parent_batch(email: str, expected_role: str) -> Optional[int]:
+            if not email:
                 return None
-            cache_key = email.strip().lower()
-            if cache_key in caches.get(expected_role, {}):
-                return caches[expected_role][cache_key]
+            cache_key = (email, expected_role)
+            if cache_key in resolved_parents_email:
+                return resolved_parents_email[cache_key]
             cursor = await db.execute(
                 "SELECT id FROM users WHERE LOWER(email) = ? AND role = ?",
-                (cache_key, expected_role),
+                (email, expected_role),
             )
             row = await cursor.fetchone()
             if row:
                 uid = int(row["id"])
-                caches.setdefault(expected_role, {})[cache_key] = uid
+                resolved_parents_email[cache_key] = uid
                 return uid
+            resolved_parents_email[cache_key] = None
             return None
 
-        for idx, row in enumerate(rows):
-            row_num = idx + 2
-            try:
-                role_val = str(row.get("role") or "").strip().lower()
-                email = str(row.get("email") or "").strip().lower()
-                password = str(row.get("password") or "")
-                name = str(row.get("name") or "").strip()
-                digital_id = str(row.get("digital_id") or "").strip() or None
-                broadband_id = str(row.get("broadband_id") or "").strip() or None
-                phone = str(row.get("phone") or "").strip() or None
-                department = str(row.get("department") or "").strip() or None
-                location = str(row.get("location") or "").strip() or None
+        for item in prepared_rows:
+            if item["email"] in existing_emails:
+                skipped.append({"row": item["row"], "email": item["email"], "reason": "Email already exists"})
+                continue
 
-                if not email or not password or not name:
-                    errors.append({"row": row_num, "email": email, "error": "Missing required fields (email, password, name)"})
+            parent_id = None
+            if item["normalized_role"] in ("cluster", "sub_distribution_manager"):
+                if not item["sd_email"]:
+                    errors.append({"row": item["row"], "email": item["email"], "error": f"sub_distributor_email is required for role '{item['normalized_role']}'"})
                     continue
-                if not role_val:
-                    errors.append({"row": row_num, "email": email, "error": "Missing role"})
+                parent_id = await _resolve_parent_batch(item["sd_email"], "sub_distributor")
+                if parent_id is None:
+                    errors.append({"row": item["row"], "email": item["email"], "error": f"Sub-distributor with email '{item['sd_email']}' not found"})
                     continue
 
-                normalized_role = normalize_role(role_val)
-                if not normalized_role or normalized_role not in {"sub_distributor", "sub_distribution_manager", "cluster", "operator"}:
-                    errors.append({"row": row_num, "email": email, "error": f"Invalid role '{role_val}'. Allowed: sub_distributor, sub_distribution_manager, cluster, operator"})
+            if item["normalized_role"] == "operator":
+                if not item["cluster_email"]:
+                    errors.append({"row": item["row"], "email": item["email"], "error": "cluster_email is required for role 'operator'"})
+                    continue
+                parent_id = await _resolve_parent_batch(item["cluster_email"], "cluster")
+                if parent_id is None:
+                    errors.append({"row": item["row"], "email": item["email"], "error": f"Cluster with email '{item['cluster_email']}' not found"})
                     continue
 
-                parent_id = None
+            item["parent_id"] = parent_id
+            insertable_rows.append(item)
 
-                if normalized_role in ("cluster", "sub_distribution_manager"):
-                    sd_email = str(row.get("sub_distributor_email") or "").strip().lower()
-                    parent_id = await _resolve_parent(sd_email, "sub_distributor")
-                    if not sd_email:
-                        errors.append({"row": row_num, "email": email, "error": f"sub_distributor_email is required for role '{normalized_role}'"})
-                        continue
-                    if parent_id is None:
-                        errors.append({"row": row_num, "email": email, "error": f"Sub-distributor with email '{sd_email}' not found"})
-                        continue
+        if not insertable_rows:
+            await _log_bulk_upload_summary(0, len(skipped), len(errors))
+            return {
+                "success": True,
+                "message": f"Bulk upload complete: 0 created, {len(skipped)} skipped, {len(errors)} errors",
+                "data": {
+                    "created_count": 0,
+                    "skipped_count": len(skipped),
+                    "error_count": len(errors),
+                    "created": created,
+                    "skipped": skipped,
+                    "errors": errors,
+                }
+            }
 
-                if normalized_role == "operator":
-                    cluster_email = str(row.get("cluster_email") or "").strip().lower()
-                    parent_id = await _resolve_parent(cluster_email, "cluster")
-                    if not cluster_email:
-                        errors.append({"row": row_num, "email": email, "error": "cluster_email is required for role 'operator'"})
-                        continue
-                    if parent_id is None:
-                        errors.append({"row": row_num, "email": email, "error": f"Cluster with email '{cluster_email}' not found"})
-                        continue
+        insert_sql = """INSERT INTO users (email, password_hash, name, role, digital_id, broadband_id,
+            phone, department, location, status, parent_id, permissions,
+            theme, compact_mode, email_notifications, push_notifications,
+            is_verified, created_at, updated_at, last_login)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
-                cursor = await db.execute("SELECT id FROM users WHERE email = ?", (email,))
-                if await cursor.fetchone():
-                    skipped.append({"row": row_num, "email": email, "reason": "Email already exists"})
-                    continue
+        should_commit = True
+        for batch in _chunks(insertable_rows, 500):
+            batch_payload = []
+            for item in batch:
 
                 now = _dt.now(_tz.utc).replace(tzinfo=None).isoformat()
-                await db.execute(
-                    """INSERT INTO users (email, password_hash, name, role, digital_id, broadband_id,
-                        phone, department, location, status, parent_id, permissions,
-                        theme, compact_mode, email_notifications, push_notifications,
-                        is_verified, created_at, updated_at, last_login)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        email, _hash(password), name, normalized_role,
-                        digital_id, broadband_id, phone, department, location,
-                        "active", parent_id, "{}", "light", 0, 1, 1, 0, now, now, None,
-                    ),
-                )
-                await db.commit()
-                created.append({"row": row_num, "email": email, "role": normalized_role, "name": name})
+                batch_payload.append((
+                    item["email"],
+                    _hash(item["password"]),
+                    item["name"],
+                    item["normalized_role"],
+                    item["digital_id"],
+                    item["broadband_id"],
+                    item["phone"],
+                    item["department"],
+                    item["location"],
+                    "active",
+                    item.get("parent_id"),
+                    "{}",
+                    "light",
+                    0,
+                    1,
+                    1,
+                    0,
+                    now,
+                    now,
+                    None,
+                ))
 
-            except Exception as e:
-                errors.append({"row": row_num, "email": row.get("email", ""), "error": str(e)[:200]})
+            try:
+                await db.executemany(insert_sql, batch_payload)
+                for item in batch:
+                    created.append({"row": item["row"], "email": item["email"], "role": item["normalized_role"], "name": item["name"]})
+            except Exception as batch_error:
+                for item in batch:
+                    row_idx = item["row"]
+                    email = item["email"]
+                    try:
+                        now = _dt.now(_tz.utc).replace(tzinfo=None).isoformat()
+
+                        await db.execute(
+                            insert_sql,
+                            (
+                                email,
+                                _hash(item["password"]),
+                                item["name"],
+                                item["normalized_role"],
+                                item["digital_id"],
+                                item["broadband_id"],
+                                item["phone"],
+                                item["department"],
+                                item["location"],
+                                "active",
+                                item.get("parent_id"),
+                                "{}",
+                                "light",
+                                0,
+                                1,
+                                1,
+                                0,
+                                now,
+                                now,
+                                None,
+                            ),
+                        )
+                        created.append({"row": row_idx, "email": email, "role": item["normalized_role"], "name": item["name"]})
+                    except Exception as single_error:
+                        lowered = str(single_error).lower()
+                        if "duplicate" in lowered or "unique" in lowered:
+                            skipped.append({"row": row_idx, "email": email, "reason": "Email already exists"})
+                        else:
+                            errors.append({"row": row_idx, "email": email, "error": str(single_error)[:200]})
+                            should_commit = False
+                            break
+
+                if not should_commit:
+                    break
+
+                logger.warning("Batch insert fallback triggered for users due to: %s", str(batch_error))
+
+            await asyncio.sleep(0)
+
+        if should_commit and insertable_rows:
+            await db.commit()
+        elif not insertable_rows:
+            pass
+        else:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."
+            )
+
+    await _log_bulk_upload_summary(len(created), len(skipped), len(errors))
 
     audit_logger.info(
         "USER_BULK_UPLOAD | actor=%s | total=%d | created=%d | skipped=%d | errors=%d",
-        current_user.get("email"), total, len(created), len(skipped), len(errors),
+        current_user.get("email"), len(prepared_rows), len(created), len(skipped), len(errors),
     )
 
     return {
         "success": True,
-        "message": f"Created {len(created)} users",
+        "message": f"Bulk upload complete: {len(created)} created, {len(skipped)} skipped, {len(errors)} errors",
         "data": {
-            "total": total,
+            "total": len(prepared_rows),
             "created_count": len(created),
             "skipped_count": len(skipped),
             "error_count": len(errors),

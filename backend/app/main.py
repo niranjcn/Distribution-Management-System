@@ -164,7 +164,11 @@ async def lifespan(app: FastAPI):
     app.state.monthly_backup_task = backup_task
 
     app.state.db_backup_scheduler = await start_db_backup_scheduler()
-    
+
+    from app.services.metrics_collector import metrics_collector_loop
+    metrics_task = asyncio.create_task(metrics_collector_loop())
+    app.state.metrics_collector_task = metrics_task
+
     yield
     
     # Shutdown - stop monthly backup loop.
@@ -179,6 +183,14 @@ async def lifespan(app: FastAPI):
     scheduler = getattr(app.state, "db_backup_scheduler", None)
     if scheduler:
         shutdown_db_backup_scheduler()
+
+    metrics_task = getattr(app.state, "metrics_collector_task", None)
+    if metrics_task:
+        metrics_task.cancel()
+        try:
+            await metrics_task
+        except asyncio.CancelledError:
+            pass
 
     await close_pool()
 
