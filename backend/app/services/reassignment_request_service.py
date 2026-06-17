@@ -6,6 +6,16 @@ from app.database import get_db, row_to_dict, rows_to_list
 from app.utils.helpers import get_pagination
 
 
+def _count_total_children(children: List[Dict[str, Any]]) -> int:
+    """Recursively count all items including nested ones."""
+    count = 0
+    for c in children:
+        count += 1
+        if c.get("children"):
+            count += _count_total_children(c["children"])
+    return count
+
+
 async def create_reassignment_request(
     deleted_user: Dict[str, Any],
     children: List[Dict[str, Any]],
@@ -13,13 +23,7 @@ async def create_reassignment_request(
 ) -> Dict[str, Any]:
     async with get_db() as db:
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        children_json = json.dumps([{
-            "id": c["id"],
-            "name": c.get("name", ""),
-            "email": c.get("email", ""),
-            "role": c.get("role", ""),
-            "parent_id": c.get("parent_id")
-        } for c in children])
+        children_json = json.dumps(children)
 
         year = datetime.now(timezone.utc).year
         cursor = await db.execute(
@@ -108,6 +112,21 @@ async def get_reassignment_request(request_id: str) -> Optional[Dict[str, Any]]:
         return req
 
 
+def _get_direct_children(children: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Extract only top-level items from nested children for parent_id updates.
+    Handles both old flat format (no 'children' key) and new nested format."""
+    direct = []
+    for c in children:
+        direct.append({
+            "id": c["id"],
+            "name": c.get("name", ""),
+            "email": c.get("email", ""),
+            "role": c.get("role", ""),
+            "parent_id": c.get("parent_id")
+        })
+    return direct
+
+
 async def reassign_users(
     request_id: str,
     new_parent_id: int,
@@ -133,10 +152,14 @@ async def reassign_users(
         if not children:
             return False, "No children to reassign"
 
+        # Only update parent_id for top-level (direct) children.
+        # Nested items (operators under clusters, etc.) keep their existing parent_id.
+        direct_children = _get_direct_children(children)
+
         deleted_user_id = int(req["deleted_user_id"])
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
-        for child in children:
+        for child in direct_children:
             child_id = int(child["id"])
             await db.execute(
                 "UPDATE users SET parent_id = ?, updated_at = ? WHERE id = ?",
@@ -154,7 +177,7 @@ async def reassign_users(
         await db.execute("DELETE FROM users WHERE id = ?", (deleted_user_id,))
 
         await db.commit()
-        return True, f"Reassigned {len(children)} user(s) to {new_parent_name}"
+        return True, f"Reassigned {len(direct_children)} user(s) to {new_parent_name}"
 
 
 async def reject_request(request_id: str) -> Tuple[bool, str]:

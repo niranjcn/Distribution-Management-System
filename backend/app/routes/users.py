@@ -412,37 +412,20 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
 
 
 async def _get_children_to_reassign(target_user: dict) -> list:
-    """Get all children that would be orphaned by deleting this user."""
+    """Get direct children that would be orphaned by deleting this user.
+    Only returns immediate children — grandchildren (operators under clusters)
+    stay connected to their parent automatically and don't need reassignment."""
     target_role = normalize_role(target_user.get("role"))
     children = []
 
     async with get_db() as db:
         if target_role == SUB_DISTRIBUTOR:
-            # Get sub_distribution_managers, clusters, and operators
             cursor = await db.execute(
                 "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role IN (?, ?, ?)",
                 (int(target_user["id"]), SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR)
             )
-            direct_children = await cursor.fetchall()
-            for child in direct_children:
-                child_dict = dict(child)
-                children.append(child_dict)
-                # If it's a sub_distribution_manager, get their clusters and operators too
-                if child_dict.get("role") == SUB_DISTRIBUTION_MANAGER:
-                    cursor2 = await db.execute(
-                        "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role IN (?, ?)",
-                        (int(child_dict["id"]), CLUSTER, OPERATOR)
-                    )
-                    for gc in await cursor2.fetchall():
-                        children.append(dict(gc))
-                # If it's a cluster, get their operators
-                if child_dict.get("role") == CLUSTER:
-                    cursor2 = await db.execute(
-                        "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role = ?",
-                        (int(child_dict["id"]), OPERATOR)
-                    )
-                    for gc in await cursor2.fetchall():
-                        children.append(dict(gc))
+            for child in await cursor.fetchall():
+                children.append(dict(child))
         elif target_role == CLUSTER:
             cursor = await db.execute(
                 "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role = ?",
@@ -452,6 +435,16 @@ async def _get_children_to_reassign(target_user: dict) -> list:
                 children.append(dict(child))
 
     return children
+
+
+def _count_total_children(children: list) -> int:
+    """Recursively count all items including nested ones."""
+    count = 0
+    for c in children:
+        count += 1
+        if c.get("children"):
+            count += _count_total_children(c["children"])
+    return count
 
 
 @router.delete("/{user_id}")
