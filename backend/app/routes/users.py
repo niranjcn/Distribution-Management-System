@@ -807,6 +807,15 @@ async def bulk_upload_users(
             "cluster_email": cluster_email,
         })
 
+    # Pre-hash all passwords before DB connection (bcrypt is CPU-intensive, ~50ms each).
+    # Run in parallel via gather to avoid sequential ~50ms × N delay.
+    loop = asyncio.get_running_loop()
+    hashed = await asyncio.gather(
+        *(loop.run_in_executor(None, _hash, item["password"]) for item in prepared_rows)
+    )
+    for item, pw_hash in zip(prepared_rows, hashed):
+        item["password_hash"] = pw_hash
+
     if not prepared_rows:
         await _log_bulk_upload_summary(0, len(skipped), len(errors))
         return {
@@ -838,27 +847,38 @@ async def bulk_upload_users(
                     if val:
                         existing_emails.add(str(val).strip().lower())
 
+        # Batch-resolve parent references (like device bulk upload uses _fetch_existing_values)
+        sd_emails = set()
+        cluster_emails = set()
+        for item in prepared_rows:
+            if item["normalized_role"] in ("cluster", "sub_distribution_manager") and item["sd_email"]:
+                sd_emails.add(item["sd_email"])
+            if item["normalized_role"] == "operator" and item["cluster_email"]:
+                cluster_emails.add(item["cluster_email"])
+
+        sd_parent_map = {}
+        if sd_emails:
+            for batch in _chunks(list(sd_emails), 500):
+                placeholders = ",".join(["?"] * len(batch))
+                cursor = await db.execute(
+                    f"SELECT LOWER(email) as email, id FROM users WHERE LOWER(email) IN ({placeholders}) AND role = ?",
+                    [*batch, "sub_distributor"],
+                )
+                for row in await cursor.fetchall():
+                    sd_parent_map[row["email"]] = int(row["id"])
+
+        cluster_parent_map = {}
+        if cluster_emails:
+            for batch in _chunks(list(cluster_emails), 500):
+                placeholders = ",".join(["?"] * len(batch))
+                cursor = await db.execute(
+                    f"SELECT LOWER(email) as email, id FROM users WHERE LOWER(email) IN ({placeholders}) AND role = ?",
+                    [*batch, "cluster"],
+                )
+                for row in await cursor.fetchall():
+                    cluster_parent_map[row["email"]] = int(row["id"])
+
         insertable_rows = []
-        resolved_parents_email = {}
-
-        async def _resolve_parent_batch(email: str, expected_role: str) -> Optional[int]:
-            if not email:
-                return None
-            cache_key = (email, expected_role)
-            if cache_key in resolved_parents_email:
-                return resolved_parents_email[cache_key]
-            cursor = await db.execute(
-                "SELECT id FROM users WHERE LOWER(email) = ? AND role = ?",
-                (email, expected_role),
-            )
-            row = await cursor.fetchone()
-            if row:
-                uid = int(row["id"])
-                resolved_parents_email[cache_key] = uid
-                return uid
-            resolved_parents_email[cache_key] = None
-            return None
-
         for item in prepared_rows:
             if item["email"] in existing_emails:
                 skipped.append({"row": item["row"], "email": item["email"], "reason": "Email already exists"})
@@ -869,7 +889,7 @@ async def bulk_upload_users(
                 if not item["sd_email"]:
                     errors.append({"row": item["row"], "email": item["email"], "error": f"sub_distributor_email is required for role '{item['normalized_role']}'"})
                     continue
-                parent_id = await _resolve_parent_batch(item["sd_email"], "sub_distributor")
+                parent_id = sd_parent_map.get(item["sd_email"])
                 if parent_id is None:
                     errors.append({"row": item["row"], "email": item["email"], "error": f"Sub-distributor with email '{item['sd_email']}' not found"})
                     continue
@@ -878,7 +898,7 @@ async def bulk_upload_users(
                 if not item["cluster_email"]:
                     errors.append({"row": item["row"], "email": item["email"], "error": "cluster_email is required for role 'operator'"})
                     continue
-                parent_id = await _resolve_parent_batch(item["cluster_email"], "cluster")
+                parent_id = cluster_parent_map.get(item["cluster_email"])
                 if parent_id is None:
                     errors.append({"row": item["row"], "email": item["email"], "error": f"Cluster with email '{item['cluster_email']}' not found"})
                     continue
@@ -915,7 +935,7 @@ async def bulk_upload_users(
                 now = _dt.now(_tz.utc).replace(tzinfo=None).isoformat()
                 batch_payload.append((
                     item["email"],
-                    _hash(item["password"]),
+                    item["password_hash"],
                     item["name"],
                     item["normalized_role"],
                     item["digital_id"],
@@ -951,7 +971,7 @@ async def bulk_upload_users(
                             insert_sql,
                             (
                                 email,
-                                _hash(item["password"]),
+                                item["password_hash"],
                                 item["name"],
                                 item["normalized_role"],
                                 item["digital_id"],

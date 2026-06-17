@@ -685,6 +685,7 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN force_password_change TINYINT(1) DEFAULT 0",
             "ALTER TABLE users ADD COLUMN digital_id VARCHAR(128)",
             "ALTER TABLE users ADD COLUMN broadband_id VARCHAR(128)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications (user_id, created_at DESC)",
         ]:
             try:
                 await db.execute(stmt)
