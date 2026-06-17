@@ -7,6 +7,7 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
+import useAutoRefresh from '../hooks/useAutoRefresh';
 import { distributionsAPI, returnsAPI, defectsAPI } from '../services/api';
 import {
   Check,
@@ -22,7 +23,7 @@ import {
 } from 'lucide-react';
 
 const Approvals = () => {
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const navigate = useNavigate();
   const { showToast } = useNotifications();
 
@@ -133,10 +134,12 @@ const Approvals = () => {
   };
 
   useEffect(() => {
-    if (canAccessApprovals) {
+    if (user?.role) {
       fetchPendingItems();
     }
-  }, [canAccessApprovals]);
+  }, [user?.role]);
+
+  useAutoRefresh(fetchPendingItems);
 
   const filteredItems = useMemo(() => {
     if (activeTab === 'all') return allPendingItems;
@@ -177,7 +180,7 @@ const Approvals = () => {
 
       setShowApproveModal(false);
       setSelectedItem(null);
-      fetchPendingItems();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast('Failed to process request', 'error');
     }
@@ -201,7 +204,7 @@ const Approvals = () => {
       setShowRejectModal(false);
       setRejectionReason('');
       setSelectedItem(null);
-      fetchPendingItems();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast('Failed to reject request', 'error');
     }

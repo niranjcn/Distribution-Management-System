@@ -70,6 +70,8 @@ const BulkUploadUsers = () => {
       setResult(null);
       const res = await usersAPI.bulkUpload(file);
       setResult(res.data);
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err) {
       setResult({ error: err.message || 'Upload failed' });
     } finally {

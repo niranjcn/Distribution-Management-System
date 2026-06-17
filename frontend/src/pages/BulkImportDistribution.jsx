@@ -191,6 +191,8 @@ const BulkImportDistribution = () => {
 
       if (response.data?.created) {
         showToast('Distribution created successfully from upload', 'success');
+        setFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
         showToast('Upload validated with errors. Fix rows and re-upload.', 'warning');
       }

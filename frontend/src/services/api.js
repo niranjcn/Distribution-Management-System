@@ -121,6 +121,16 @@ const apiRequest = async (endpoint, options = {}) => {
     }
 
     log('[API] Request successful:', endpoint);
+
+    // Auto-refresh the frontend for mutating requests, except for auth endpoints
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) && !endpoint.startsWith('/auth/')) {
+      setTimeout(() => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('appDataMutation'));
+        }
+      }, 500); // Wait 500ms for backend transactions to commit before triggering UI refetch
+    }
+
     return data;
   } catch (error) {
     logError('[API] Request error:', {
@@ -264,6 +274,7 @@ export const usersAPI = {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || data.detail || 'Upload failed');
+
     return data;
   },
 };
@@ -381,6 +392,7 @@ export const devicesAPI = {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || data.detail || 'Upload failed');
+
     return data;
   },
 

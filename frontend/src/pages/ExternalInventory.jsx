@@ -19,6 +19,7 @@ import {
   Download,
   Search,
 } from 'lucide-react';
+import useAutoRefresh from '../hooks/useAutoRefresh';
 
 const initialItemForm = {
   item_id: '',
@@ -445,6 +446,8 @@ const ExternalInventory = () => {
     loadData();
   }, [canManage, appliedItemSearch, appliedPOSearch, appliedMovementSearch]);
 
+  useAutoRefresh(loadData);
+
   const resetPoForm = () => {
     setPoForm({
       name: '',
@@ -503,7 +506,7 @@ const ExternalInventory = () => {
       setEditingInventoryId('');
       setItemImageFile(null);
       setItemImagePreview('');
-      await loadData();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to create item', 'error');
     } finally {
@@ -559,7 +562,7 @@ const ExternalInventory = () => {
       showToast('Purchase order created', 'success');
       setShowCreatePOModal(false);
       resetPoForm();
-      await loadData();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to create purchase order', 'error');
     } finally {
@@ -702,7 +705,7 @@ const ExternalInventory = () => {
       showToast('Purchase order submitted and stock updated', 'success');
       setReceivingPO(null);
       setReceiptForm({ notes: '', lines: [] });
-      await loadData();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to submit purchase order', 'error');
     } finally {
@@ -834,7 +837,7 @@ const ExternalInventory = () => {
         setSelectedItem(null);
       }
 
-      await loadData();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to delete item', 'error');
     } finally {

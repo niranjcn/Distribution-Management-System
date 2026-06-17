@@ -6,6 +6,7 @@ import Button from '../components/ui/Button';
 import DataTable from '../components/ui/DataTable';
 import { dashboardAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
+import useAutoRefresh from '../hooks/useAutoRefresh';
 
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
@@ -143,6 +144,8 @@ const Activities = () => {
     setTablePage(1);
     await loadActivityWindow(1, { reset: true, withLoading: true });
   };
+
+  useAutoRefresh(resetAndLoadActivities);
 
   useEffect(() => {
     const run = async () => {

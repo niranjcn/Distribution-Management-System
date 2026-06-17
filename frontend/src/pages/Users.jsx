@@ -14,6 +14,7 @@ import {
   Network, ChevronDown, ChevronRight, Filter, X, EyeOff, Search,
   AlertTriangle
 } from 'lucide-react';
+import useAutoRefresh from '../hooks/useAutoRefresh';
 
 // Roles each creator can assign
 const ALLOWED_ROLES_BY_CREATOR = {
@@ -163,6 +164,16 @@ const Users = () => {
         .catch(() => setPendingReassignCount(0));
     }
   }, []);
+
+  useAutoRefresh(() => {
+    fetchUsers();
+    fetchSubDistOperators();
+    if (currentUser?.role === 'super_admin') {
+      reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })
+        .then(res => setPendingReassignCount(res?.pagination?.total || 0))
+        .catch(() => setPendingReassignCount(0));
+    }
+  });
 
   // When add modal opens, default role to first available
   const openAddModal = () => {
@@ -374,8 +385,7 @@ const Users = () => {
       setShowCreatePassword(false);
       setShowCreateConfirmPassword(false);
       setParentOptions([]);
-      fetchUsers();
-      fetchSubDistOperators();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to create user', 'error');
     } finally {
@@ -396,7 +406,7 @@ const Users = () => {
       await usersAPI.updateUser(selectedUser._id || selectedUser.id, payload);
       showToast('User updated successfully', 'success');
       setShowEditModal(false);
-      fetchUsers();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to update user', 'error');
     } finally {
@@ -415,8 +425,7 @@ const Users = () => {
       }
       setShowDeleteModal(false);
       setSelectedUser(null);
-      fetchUsers();
-      fetchSubDistOperators();
+      // Data refetch is handled automatically by useAutoRefresh
       // Refresh reassignment count
       if (currentUser?.role === 'super_admin') {
         reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })
@@ -1490,7 +1499,6 @@ const Users = () => {
                       await usersAPI.updateUserStatus(detailUser.id, newStatus);
                       setDetailForm(p => ({ ...p, status: newStatus }));
                       showToast(`User ${newStatus === 'active' ? 'activated' : 'deactivated'}`, 'success');
-                      fetchUsers();
                     } catch (err) {
                       showToast(err.message || 'Failed to update status', 'error');
                     }
@@ -1571,7 +1579,6 @@ const Users = () => {
                       await adminUpdateCredentials(detailUser.id, { email: detailForm.email });
                     }
                     showToast('User details saved', 'success');
-                    fetchUsers();
                   } catch (err) {
                     showToast(err.message || 'Failed to save', 'error');
                   } finally {

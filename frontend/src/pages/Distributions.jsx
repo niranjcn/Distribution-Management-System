@@ -8,6 +8,7 @@ import Card from '../components/ui/Card';
 import { distributionsAPI, devicesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
+import useAutoRefresh from '../hooks/useAutoRefresh';
 import { Plus, Eye, Truck, CheckCircle, Loader2, AlertTriangle, PackageCheck, XCircle, Layers3, Factory, Upload, Download, Search } from 'lucide-react';
 
 const TABLE_PAGE_SIZE = 10;
@@ -282,6 +283,8 @@ const Distributions = () => {
     resetAndLoadDistributions();
   }, [appliedSearch, user?.id]);
 
+  useAutoRefresh(resetAndLoadDistributions);
+
   useEffect(() => {
     if (showModal && selectedDist) {
       fetchDistributionDevices(selectedDist.device_ids);
@@ -303,7 +306,7 @@ const Distributions = () => {
       setShowModal(false);
       setReceiptNotes('');
       setSelectedDist(null);
-      resetAndLoadDistributions();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to submit confirmation', 'error');
     } finally {
@@ -361,7 +364,7 @@ const Distributions = () => {
         'PDIC confirmed devices are physically back with sender'
       );
       showToast('Disputed return confirmed and devices unlocked for redistribution', 'success');
-      resetAndLoadDistributions();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to confirm disputed return', 'error');
     }

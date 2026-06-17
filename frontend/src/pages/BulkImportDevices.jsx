@@ -50,6 +50,8 @@ const BulkImportDevices = () => {
     try {
       const res = await devicesAPI.bulkUpload(file);
       setResult(res.data);
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       if (res.data.created_count > 0) {
         showToast(`${res.data.created_count} devices created successfully`, 'success');
       }

@@ -354,6 +354,12 @@ async def create_defect(
             reporter=current_user
         )
 
+        if not defect:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create defect report"
+            )
+
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         device_identifier = _get_defect_activity_device_identifier(defect)
         await log_business_activity(

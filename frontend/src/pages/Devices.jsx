@@ -8,6 +8,7 @@ import Card from '../components/ui/Card';
 import { devicesAPI, defectsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
+import useAutoRefresh from '../hooks/useAutoRefresh';
 import { Plus, Eye, Edit, Trash2, Box, Upload, Loader2, Users, Send, ArrowDownToLine, Link2, AlertTriangle, CheckCircle2, Save, Filter, Building2, Network, Factory, Search } from 'lucide-react';
 
 const normalizeDeviceType = (value) => {
@@ -303,6 +304,8 @@ const Devices = () => {
     }
   };
 
+  useAutoRefresh(refreshAllData);
+
   const overviewStats = overview?.stats || {};
 
   const getEffectiveDeviceStatus = (device) => {
@@ -510,7 +513,7 @@ const Devices = () => {
         showToast('Device updated successfully.', 'success');
       }
       setShowEditModal(false);
-      await refreshAllData();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to update device', 'error');
     } finally {
@@ -621,7 +624,7 @@ const Devices = () => {
       showToast(`Device ${selectedDevice.mac_address} deleted successfully`, 'success');
       setShowDeleteModal(false);
       setSelectedDevice(null);
-      await refreshAllData();
+      // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast('Failed to delete device', 'error');
     }
