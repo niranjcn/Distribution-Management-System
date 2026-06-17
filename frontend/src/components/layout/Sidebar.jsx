@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { returnsAPI } from '../../services/api';
-import { KeyRound } from 'lucide-react';
 import kvLogo from '../../kv_logo.webp';
 import {
   LayoutDashboard,
@@ -387,9 +386,6 @@ const Sidebar = ({ isOpen, onClose }) => {
     );
   };
 
-  const userInitial = user?.name?.charAt(0)?.toUpperCase() || 'U';
-  const userRole = ROLE_LABELS[normalizeRole(user?.role)] || normalizeRole(user?.role);
-
   return (
     <>
       {/* Mobile overlay */}
@@ -441,29 +437,6 @@ const Sidebar = ({ isOpen, onClose }) => {
           <nav className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5">
             {menuItems.map(renderMenuItem)}
           </nav>
-
-          {/* User info block at bottom — matches KannurVision image */}
-          <div className="border-t border-gray-200 p-4">
-            <div className="flex items-center gap-3 mb-3">
-              {/* Avatar circle with initial */}
-              <div className="w-9 h-9 rounded-full bg-green-700 flex items-center justify-center flex-shrink-0">
-                <span className="text-white text-sm font-bold">{userInitial}</span>
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-gray-800 truncate">{user?.name || 'User'}</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide truncate">{userRole}</p>
-              </div>
-            </div>
-            {/* My Profile link */}
-            <Link
-              to="/profile"
-              onClick={onClose}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
-            >
-              <KeyRound className="w-3.5 h-3.5 text-yellow-500" />
-              My Profile
-            </Link>
-          </div>
 
         </div>
       </aside>

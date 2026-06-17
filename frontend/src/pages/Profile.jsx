@@ -7,7 +7,7 @@ import { authAPI, usersAPI, changeRequestsAPI, adminUpdateCredentials } from '..
 import { updateStoredUser } from '../utils/authStorage';
 import { 
   User, Mail, Phone, Building, MapPin, Lock, 
-  Save, Eye, EyeOff, Bell, Palette
+  Save, Eye, EyeOff
 } from 'lucide-react';
 
 const Profile = () => {
@@ -24,10 +24,6 @@ const Profile = () => {
     phone: user?.phone || '',
     department: user?.department || '',
     location: user?.location || '',
-    theme: user?.theme || 'light',
-    compact_mode: Boolean(user?.compact_mode),
-    email_notifications: user?.email_notifications !== false,
-    push_notifications: user?.push_notifications !== false,
   });
 
   const [passwordData, setPasswordData] = useState({
@@ -49,10 +45,6 @@ const Profile = () => {
         phone: profileData.phone,
         department: profileData.department,
         location: profileData.location,
-        theme: profileData.theme,
-        compact_mode: profileData.compact_mode,
-        email_notifications: profileData.email_notifications,
-        push_notifications: profileData.push_notifications,
       };
 
       const response = await usersAPI.updateUser(user.id, payload);
@@ -278,58 +270,6 @@ const Profile = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  <Palette className="w-4 h-4 inline mr-2" />Theme
-                </label>
-                <select
-                  value={profileData.theme}
-                  onChange={(e) => setProfileData({ ...profileData, theme: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-3 mt-7">
-                <input
-                  id="compact_mode"
-                  type="checkbox"
-                  checked={profileData.compact_mode}
-                  onChange={(e) => setProfileData({ ...profileData, compact_mode: e.target.checked })}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <label htmlFor="compact_mode" className="text-sm font-medium text-gray-700">
-                  Enable compact layout mode
-                </label>
-              </div>
-
-              <div className="md:col-span-2 border border-gray-200 rounded-lg p-4">
-                <p className="text-sm font-medium text-gray-700 mb-3">
-                  <Bell className="w-4 h-4 inline mr-2" />Notification Preferences
-                </p>
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={profileData.email_notifications}
-                      onChange={(e) => setProfileData({ ...profileData, email_notifications: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    Email notifications
-                  </label>
-                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={profileData.push_notifications}
-                      onChange={(e) => setProfileData({ ...profileData, push_notifications: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    Push notifications
-                  </label>
-                </div>
-              </div>
             </div>
 
             <div className="flex justify-end pt-4 border-t">
