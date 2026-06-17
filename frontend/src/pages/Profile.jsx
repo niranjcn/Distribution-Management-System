@@ -112,25 +112,11 @@ const Profile = () => {
 
     setSaving(true);
     try {
-      const restrictedRoles = new Set(['manager', 'md_director', 'pdic_staff']);
-      const myRole = String(user?.role || '').toLowerCase();
-
-      if (restrictedRoles.has(myRole)) {
-        await changeRequestsAPI.submit({
-          request_type: 'email_change',
-          new_email: nextEmail,
-          reason: 'Submitted from profile security tab',
-        });
-        showToast('Email change request submitted to super admin for approval', 'success');
-      } else if (myRole === 'super_admin') {
-        const response = await adminUpdateCredentials(user.id, { email: nextEmail });
-        const updatedUser = { ...user, ...(response.data || {}), email: nextEmail };
-        setUser(updatedUser);
-        updateStoredUser(updatedUser);
-        showToast('Email updated successfully', 'success');
-      } else {
-        showToast('Email change is not available for your role', 'error');
-      }
+      const response = await adminUpdateCredentials(user.id, { email: nextEmail });
+      const updatedUser = { ...user, ...(response.data || {}), email: nextEmail };
+      setUser(updatedUser);
+      updateStoredUser(updatedUser);
+      showToast('Email updated successfully', 'success');
 
       setEmailData({ newEmail: '' });
     } catch (err) {
@@ -312,7 +298,7 @@ const Profile = () => {
                     required
                   />
                 </div>
-                <p className="text-xs text-gray-500 mt-1">For manager, MD/Director, and staff, this submits a super admin approval request.</p>
+                <p className="text-xs text-gray-500 mt-1">Your email will be updated immediately when you save.</p>
               </div>
 
               <Button type="submit" icon={Mail} disabled={saving}>
