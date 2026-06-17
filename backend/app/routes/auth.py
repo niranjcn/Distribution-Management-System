@@ -227,14 +227,6 @@ async def change_password(
     current_user: dict = Depends(get_current_user)
 ):
     """Change user password"""
-    restricted_roles = {"manager", "md_director", "pdic_staff"}
-    current_role = str(current_user.get("role") or "").lower()
-    if current_role in restricted_roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Direct password change is disabled for your role. Submit a change request for super admin approval."
-        )
-
     try:
         success = await auth_service.change_user_password(
             user_id=current_user["id"],
