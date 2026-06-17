@@ -449,8 +449,8 @@ async def create_defect(
                 now, now
             )
         )
-        await db.commit()
         new_id = cursor.lastrowid
+        await db.commit()
 
     # Update device status (also records history internally)
     if sync_device_status:
