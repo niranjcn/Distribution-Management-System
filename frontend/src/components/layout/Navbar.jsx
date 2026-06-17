@@ -1,16 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
 import {
   Menu,
   Bell,
-  Search,
   User,
   LogOut,
   Moon,
   Sun,
-  ChevronDown
+  ChevronDown,
+  ChevronRight,
+  Home
 } from 'lucide-react';
 
 const THEME_STORAGE_KEY = 'dms-theme';
@@ -19,8 +20,8 @@ const Navbar = ({ onMenuClick }) => {
   const { user, logout } = useAuth();
   const { unreadCount, fetchLatestNotifications } = useNotifications();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showProfile, setShowProfile] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const profileRef = useRef(null);
   const [theme, setTheme] = useState(() => {
     if (typeof window === 'undefined') {
@@ -28,6 +29,18 @@ const Navbar = ({ onMenuClick }) => {
     }
     return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
   });
+
+  // Generate breadcrumbs from path
+  const generateBreadcrumbs = () => {
+    const paths = location.pathname.split('/').filter(Boolean);
+    return paths.map((path, index) => {
+      const url = '/' + paths.slice(0, index + 1).join('/');
+      const label = path.charAt(0).toUpperCase() + path.slice(1).replace(/-/g, ' ');
+      return { label, url, isLast: index === paths.length - 1 };
+    });
+  };
+
+  const breadcrumbs = generateBreadcrumbs();
 
   // Fetch notifications when user is logged in
   useEffect(() => {
@@ -78,21 +91,12 @@ const Navbar = ({ onMenuClick }) => {
     navigate('/login');
   };
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      console.log('[Navbar] Searching for device:', searchQuery);
-      navigate(`/track-device?q=${encodeURIComponent(searchQuery)}`);
-      setSearchQuery('');
-    }
-  };
-
   const toggleTheme = () => {
     setTheme((prevTheme) => (prevTheme === 'dark' ? 'light' : 'dark'));
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
+    <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
       <div className="flex items-center justify-between h-16 px-4 lg:px-6">
         {/* Left side */}
         <div className="flex items-center gap-4">
@@ -102,20 +106,27 @@ const Navbar = ({ onMenuClick }) => {
           >
             <Menu className="w-6 h-6 text-gray-600" />
           </button>
-
-          {/* Search bar */}
-          <form onSubmit={handleSearch} className="hidden sm:block">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by MAC address..."
-                className="w-64 lg:w-80 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500/20 focus:border-green-600 text-sm"
-              />
-            </div>
-          </form>
+          
+          {/* Breadcrumbs */}
+          {breadcrumbs.length > 0 && (
+            <nav className="hidden sm:flex items-center gap-2 text-sm ml-2">
+              <Link to="/" className="text-gray-500 hover:text-gray-700">
+                <Home className="w-4 h-4" />
+              </Link>
+              {breadcrumbs.map((crumb, index) => (
+                <div key={crumb.url} className="flex items-center gap-2">
+                  <ChevronRight className="w-4 h-4 text-gray-400" />
+                  {crumb.isLast ? (
+                    <span className="text-gray-800 font-medium">{crumb.label}</span>
+                  ) : (
+                    <Link to={crumb.url} className="text-gray-500 hover:text-gray-700">
+                      {crumb.label}
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </nav>
+          )}
         </div>
 
         {/* Right side */}
