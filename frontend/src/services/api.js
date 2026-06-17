@@ -57,11 +57,17 @@ const apiRequest = async (endpoint, options = {}) => {
   };
 
   try {
-    const response = await fetch(url, {
+    const fetchOptions = {
       ...options,
       credentials: 'include',
       headers,
-    });
+    };
+
+    if (method === 'GET' || method === 'HEAD') {
+      fetchOptions.cache = 'no-store';
+    }
+
+    const response = await fetch(url, fetchOptions);
 
     log('[API] Response received:', {
       status: response.status,
