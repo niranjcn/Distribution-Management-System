@@ -20,6 +20,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 15
+      start_period: 90s
     networks:
       dms_net:
         ipv4_address: 172.20.0.2
