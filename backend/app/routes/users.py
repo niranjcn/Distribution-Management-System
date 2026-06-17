@@ -629,14 +629,24 @@ async def admin_update_credentials(
     from datetime import datetime as _dt, timezone as _timezone
 
     actor_role = normalize_role(current_user.get("role"))
+    actor_id = int(current_user.get("id"))
+    target_id = int(user_id)
+    is_self = actor_id == target_id
+
     if actor_role != SUPER_ADMIN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        # Non-super-admins can only update their own email, not password
+        if not is_self:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        if "password" in data and data["password"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super admin can change password")
+        if "email" not in data or not data["email"]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
 
     target_user = await user_service.get_user_by_id(user_id)
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    if not can_mutate_super_admin(current_user.get("id"), actor_role, target_user.get("id"), target_user.get("role")):
+    if not can_mutate_super_admin(actor_id, actor_role, target_user.get("id"), target_user.get("role")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot update another super admin credentials")
 
     try:
@@ -646,7 +656,7 @@ async def admin_update_credentials(
 
             if "email" in data and data["email"]:
                 normalized_email = str(data["email"]).lower().strip()
-                cursor = await db.execute("SELECT id FROM users WHERE email = ? AND id != ?", (normalized_email, int(user_id)))
+                cursor = await db.execute("SELECT id FROM users WHERE email = ? AND id != ?", (normalized_email, target_id))
                 if await cursor.fetchone():
                     raise HTTPException(status_code=400, detail="Email already in use")
                 update_fields.append("email = ?")
