@@ -842,9 +842,9 @@ async def get_system_alerts(user: Dict[str, Any]) -> list:
             if pending_approvals > 0:
                 alerts.append({
                     "type": "warning",
-                    "title": "Pending Approvals",
-                    "message": f"{pending_approvals} request(s) waiting for approval",
-                    "link": "/approvals"
+                    "title": "Pending",
+                    "message": f"{pending_approvals} request(s) waiting for approval with Pending payments",
+                    "link": "/payments"
                 })
 
             cursor = await db.execute("SELECT COUNT(*) FROM devices WHERE status = 'available'")

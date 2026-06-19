@@ -24,28 +24,44 @@ async def _count(db, table: str, condition: str = "1=1", params=()) -> int:
     return (await cursor.fetchone())[0]
 
 
-async def get_inventory_report() -> Dict[str, Any]:
+def _build_date_filter(base_condition: str, base_params: tuple, start_date: Optional[str], end_date: Optional[str]) -> tuple:
+    conds = [base_condition]
+    params = list(base_params)
+    if start_date:
+        conds.append("created_at >= ?")
+        params.append(start_date)
+    if end_date:
+        conds.append("created_at <= ?")
+        params.append(end_date)
+    return " AND ".join(conds), tuple(params)
+
+
+async def get_inventory_report(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate device inventory report"""
     async with get_db() as db:
-        total = await _count(db, "devices")
+        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
+        total = await _count(db, "devices", cond, prm)
 
         by_status = {}
         for status in ["available", "distributed", "in_use", "defective", "returned", "maintenance"]:
-            by_status[status] = await _count(db, "devices", "status = ?", (status,))
+            c, p = _build_date_filter("status = ?", (status,), start_date, end_date)
+            by_status[status] = await _count(db, "devices", c, p)
 
         # By type
         cursor = await db.execute("SELECT DISTINCT device_type FROM devices")
         dtypes = [r[0] for r in await cursor.fetchall()]
         by_type = {}
         for dtype in dtypes:
-            by_type[dtype] = await _count(db, "devices", "device_type = ?", (dtype,))
+            c, p = _build_date_filter("device_type = ?", (dtype,), start_date, end_date)
+            by_type[dtype] = await _count(db, "devices", c, p)
 
         # By holder type
         cursor = await db.execute("SELECT DISTINCT current_holder_type FROM devices WHERE current_holder_type IS NOT NULL")
         htypes = [r[0] for r in await cursor.fetchall()]
         by_location = {}
         for htype in htypes:
-            by_location[htype] = await _count(db, "devices", "current_holder_type = ?", (htype,))
+            c, p = _build_date_filter("current_holder_type = ?", (htype,), start_date, end_date)
+            by_location[htype] = await _count(db, "devices", c, p)
 
         return {
             "total_devices": total,
@@ -56,29 +72,33 @@ async def get_inventory_report() -> Dict[str, Any]:
         }
 
 
-async def get_distribution_summary() -> Dict[str, Any]:
+async def get_distribution_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate distribution summary report"""
     async with get_db() as db:
-        total = await _count(db, "distributions")
+        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
+        total = await _count(db, "distributions", cond, prm)
 
         by_status = {}
         for status in ["pending", "approved", "in_transit", "delivered", "rejected", "cancelled"]:
-            by_status[status] = await _count(db, "distributions", "status = ?", (status,))
+            c, p = _build_date_filter("status = ?", (status,), start_date, end_date)
+            by_status[status] = await _count(db, "distributions", c, p)
 
         by_month = []
         now = datetime.now().replace(tzinfo=None)
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             month_end = month_start + timedelta(days=30)
-            count = await _count(db, "distributions", "created_at >= ? AND created_at < ?",
-                                 (month_start.isoformat(), month_end.isoformat()))
+            c, p = _build_date_filter("created_at >= ? AND created_at < ?",
+                                 (month_start.isoformat(), month_end.isoformat()), start_date, end_date)
+            count = await _count(db, "distributions", c, p)
             by_month.append({"month": month_start.strftime("%B %Y"), "count": count})
 
         # Top distributors
+        c, p = _build_date_filter("status = 'delivered'", (), start_date, end_date)
         cursor = await db.execute(
-            """SELECT to_user_name, SUM(device_count) as total
-            FROM distributions WHERE status = 'delivered'
-            GROUP BY to_user_name ORDER BY total DESC LIMIT 5"""
+            f"""SELECT to_user_name, SUM(device_count) as total
+            FROM distributions WHERE {c}
+            GROUP BY to_user_name ORDER BY total DESC LIMIT 5""", p
         )
         top = await cursor.fetchall()
 
@@ -91,30 +111,35 @@ async def get_distribution_summary() -> Dict[str, Any]:
         }
 
 
-async def get_defect_summary() -> Dict[str, Any]:
+async def get_defect_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate defect summary report"""
     async with get_db() as db:
-        total = await _count(db, "defects")
+        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
+        total = await _count(db, "defects", cond, prm)
 
         by_status = {}
         for status in ["reported", "under_review", "approved", "rejected", "resolved"]:
-            by_status[status] = await _count(db, "defects", "status = ?", (status,))
+            c, p = _build_date_filter("status = ?", (status,), start_date, end_date)
+            by_status[status] = await _count(db, "defects", c, p)
 
         by_severity = {}
         for severity in ["critical", "high", "medium", "low"]:
-            by_severity[severity] = await _count(db, "defects", "severity = ?", (severity,))
+            c, p = _build_date_filter("severity = ?", (severity,), start_date, end_date)
+            by_severity[severity] = await _count(db, "defects", c, p)
 
         by_type = {}
         for defect_type in ["hardware", "software", "physical_damage", "performance", "connectivity", "other"]:
-            by_type[defect_type] = await _count(db, "defects", "defect_type = ?", (defect_type,))
+            c, p = _build_date_filter("defect_type = ?", (defect_type,), start_date, end_date)
+            by_type[defect_type] = await _count(db, "defects", c, p)
 
         by_month = []
         now = datetime.now().replace(tzinfo=None)
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             month_end = month_start + timedelta(days=30)
-            count = await _count(db, "defects", "created_at >= ? AND created_at < ?",
-                                 (month_start.isoformat(), month_end.isoformat()))
+            c, p = _build_date_filter("created_at >= ? AND created_at < ?",
+                                 (month_start.isoformat(), month_end.isoformat()), start_date, end_date)
+            count = await _count(db, "defects", c, p)
             by_month.append({"month": month_start.strftime("%B %Y"), "count": count})
 
         return {
@@ -127,26 +152,30 @@ async def get_defect_summary() -> Dict[str, Any]:
         }
 
 
-async def get_return_summary() -> Dict[str, Any]:
+async def get_return_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate return summary report"""
     async with get_db() as db:
-        total = await _count(db, "returns")
+        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
+        total = await _count(db, "returns", cond, prm)
 
         by_status = {}
         for status in ["pending", "approved", "in_transit", "received", "rejected", "cancelled"]:
-            by_status[status] = await _count(db, "returns", "status = ?", (status,))
+            c, p = _build_date_filter("status = ?", (status,), start_date, end_date)
+            by_status[status] = await _count(db, "returns", c, p)
 
         by_reason = {}
         for reason in ["defective", "unused", "end_of_contract", "upgrade", "other"]:
-            by_reason[reason] = await _count(db, "returns", "reason = ?", (reason,))
+            c, p = _build_date_filter("reason = ?", (reason,), start_date, end_date)
+            by_reason[reason] = await _count(db, "returns", c, p)
 
         by_month = []
         now = datetime.now().replace(tzinfo=None)
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             month_end = month_start + timedelta(days=30)
-            count = await _count(db, "returns", "created_at >= ? AND created_at < ?",
-                                 (month_start.isoformat(), month_end.isoformat()))
+            c, p = _build_date_filter("created_at >= ? AND created_at < ?",
+                                 (month_start.isoformat(), month_end.isoformat()), start_date, end_date)
+            count = await _count(db, "returns", c, p)
             by_month.append({"month": month_start.strftime("%B %Y"), "count": count})
 
         return {

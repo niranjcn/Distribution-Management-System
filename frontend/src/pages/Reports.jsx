@@ -93,12 +93,18 @@ const Reports = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
+        const start = buildRangeStart(dateRange);
+        const params = {};
+        if (start && dateRange !== 'all') {
+          params.start_date = start.toISOString();
+        }
+
         const [devRes, invRes, distRes, defRes, retRes] = await Promise.all([
-          devicesAPI.getDevices({ page: 1, page_size: 100 }).catch(() => ({ data: [] })),
-          reportsAPI.getInventoryReport().catch(() => ({ data: null })),
-          reportsAPI.getDistributionSummary().catch(() => ({ data: null })),
-          reportsAPI.getDefectSummary().catch(() => ({ data: null })),
-          reportsAPI.getReturnSummary().catch(() => ({ data: null }))
+          devicesAPI.getDevices({ page: 1, page_size: 100, ...params }).catch(() => ({ data: [] })),
+          reportsAPI.getInventoryReport(params).catch(() => ({ data: null })),
+          reportsAPI.getDistributionSummary(params).catch(() => ({ data: null })),
+          reportsAPI.getDefectSummary(params).catch(() => ({ data: null })),
+          reportsAPI.getReturnSummary(params).catch(() => ({ data: null }))
         ]);
         setDeviceReportRows(devRes.data || []);
         setInventoryReport(invRes.data || null);
@@ -112,7 +118,7 @@ const Reports = () => {
       }
     };
     fetchData();
-  }, []);
+  }, [dateRange]);
 
   const monthlyActivity = useMemo(() => {
     const distByMonth = distributionSummary?.by_month || [];
@@ -208,10 +214,6 @@ const Reports = () => {
 
   const reportTypes = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
-    { id: 'devices', label: 'Device Reports', icon: Box },
-    { id: 'distributions', label: 'Distribution Reports', icon: Package },
-    { id: 'defects', label: 'Defect Reports', icon: AlertTriangle },
-    { id: 'returns', label: 'Return Reports', icon: RotateCcw },
     { id: 'account_changes', label: 'Request Account Changes', icon: UserCog },
   ];
 
@@ -428,7 +430,9 @@ const Reports = () => {
       )}
 
       {/* Overview Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {reportType === 'overview' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="text-center">
           <div className="inline-flex p-3 rounded-lg bg-blue-100 mb-2">
             <Box className="w-6 h-6 text-blue-600" />
@@ -596,44 +600,7 @@ const Reports = () => {
         </Card>
       </div>
 
-      {reportType === 'devices' && (
-        <Card title="Device Report (Includes MAC ID / NUID)">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200 text-left text-sm text-gray-600">
-                  <th className="py-3 px-3">Device</th>
-                  <th className="py-3 px-3">Serial Number</th>
-                  <th className="py-3 px-3">MAC ID</th>
-                  <th className="py-3 px-3">Status</th>
-                  <th className="py-3 px-3">Holder</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {deviceReportRows.length === 0 ? (
-                  <tr>
-                    <td className="py-4 px-3 text-sm text-gray-500" colSpan={5}>No device records found.</td>
-                  </tr>
-                ) : (
-                  deviceReportRows.map((device) => (
-                    <tr key={device.id || device._id} className="hover:bg-gray-50">
-                      <td className="py-3 px-3 text-sm text-gray-800">{device.model || toDeviceTypeLabel(device.device_type)}</td>
-                      <td className="py-3 px-3 text-sm text-gray-600">
-                        {isSbDeviceType(device.device_type) ? (device.nuid || '-') : (device.serial_number || '-')}
-                      </td>
-                      <td className="py-3 px-3 text-sm font-medium text-gray-800">
-                        {isSbDeviceType(device.device_type) ? (device.nuid || '-') : (device.mac_address || '-')}
-                      </td>
-                      <td className="py-3 px-3 text-sm text-gray-600">{device.status || '-'}</td>
-                      <td className="py-3 px-3 text-sm text-gray-600">{device.current_holder_name || 'PDIC'}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+      
 
       {/* Summary Table */}
       <Card title="Summary Statistics">
@@ -717,6 +684,8 @@ const Reports = () => {
           </table>
         </div>
       </Card>
+        </div>
+      )}
     </div>
   );
 };

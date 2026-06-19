@@ -1092,23 +1092,27 @@ export const externalInventoryAPI = {
 
 // Reports API
 export const reportsAPI = {
-  getInventoryReport: async () => {
-    const response = await apiRequest('/reports/inventory');
+  getInventoryReport: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/inventory${queryString ? `?${queryString}` : ''}`);
     return response;
   },
 
-  getDistributionSummary: async () => {
-    const response = await apiRequest('/reports/distribution-summary');
+  getDistributionSummary: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/distribution-summary${queryString ? `?${queryString}` : ''}`);
     return response;
   },
 
-  getDefectSummary: async () => {
-    const response = await apiRequest('/reports/defect-summary');
+  getDefectSummary: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/defect-summary${queryString ? `?${queryString}` : ''}`);
     return response;
   },
 
-  getReturnSummary: async () => {
-    const response = await apiRequest('/reports/return-summary');
+  getReturnSummary: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/return-summary${queryString ? `?${queryString}` : ''}`);
     return response;
   },
 

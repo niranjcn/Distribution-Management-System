@@ -34,11 +34,13 @@ def _sanitize_filename(filename: str) -> str:
 
 @router.get("/inventory")
 async def get_inventory_report(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """Get device inventory report"""
     try:
-        report = await report_service.get_inventory_report()
+        report = await report_service.get_inventory_report(start_date, end_date)
 
         return {
             "success": True,
@@ -57,11 +59,13 @@ async def get_inventory_report(
 
 @router.get("/distribution-summary")
 async def get_distribution_summary(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """Get distribution summary report"""
     try:
-        report = await report_service.get_distribution_summary()
+        report = await report_service.get_distribution_summary(start_date, end_date)
 
         return {
             "success": True,
@@ -80,11 +84,13 @@ async def get_distribution_summary(
 
 @router.get("/defect-summary")
 async def get_defect_summary(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """Get defect summary report"""
     try:
-        report = await report_service.get_defect_summary()
+        report = await report_service.get_defect_summary(start_date, end_date)
 
         return {
             "success": True,
@@ -103,11 +109,13 @@ async def get_defect_summary(
 
 @router.get("/return-summary")
 async def get_return_summary(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """Get return summary report"""
     try:
-        report = await report_service.get_return_summary()
+        report = await report_service.get_return_summary(start_date, end_date)
 
         return {
             "success": True,

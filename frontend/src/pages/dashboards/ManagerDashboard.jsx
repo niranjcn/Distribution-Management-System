@@ -256,20 +256,7 @@ const ManagerDashboard = () => {
     ],
   }), [charts]);
 
-  const pendingActionQueueData = useMemo(() => ({
-    labels: ['Approvals', 'Receipts', 'Returns'],
-    datasets: [{
-      label: 'Pending',
-      data: [
-        charts.pending_action_queue?.approvals || kpis.pending_approvals || 0,
-        charts.pending_action_queue?.receipts || kpis.pending_receipts || 0,
-        charts.pending_action_queue?.returns || 0,
-      ],
-      backgroundColor: ['#6366f1', '#f59e0b', '#ef4444'],
-      borderColor: '#FFFFFF',
-      borderWidth: 1,
-    }],
-  }), [charts.pending_action_queue, kpis.pending_approvals, kpis.pending_receipts]);
+
 
   return (
     <div className="space-y-6">
@@ -320,15 +307,10 @@ const ManagerDashboard = () => {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
+      <div className="grid grid-cols-1 gap-6 animate-slideUp">
         <Card title="Returns By Status" icon={RotateCcw} className="industrial-chart-card" padding={false}>
           <div className="h-80 p-4"><Bar data={returnStatusData} options={chartOptions} /></div>
         </Card>
-
-        <Card title="Pending Action Queue" icon={CheckSquare} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={pendingActionQueueData} options={chartOptions} /></div>
-        </Card>
-
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-1 gap-6 animate-slideUp">

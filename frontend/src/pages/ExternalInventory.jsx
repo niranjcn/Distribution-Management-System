@@ -110,8 +110,6 @@ const ExternalInventory = () => {
   const [showCreatePOModal, setShowCreatePOModal] = useState(false);
   const [receivingPO, setReceivingPO] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
-  const [itemImageFile, setItemImageFile] = useState(null);
-  const [itemImagePreview, setItemImagePreview] = useState('');
   const [importingItems, setImportingItems] = useState(false);
   const [deletingInventoryId, setDeletingInventoryId] = useState('');
   const [downloadingReceiptPoId, setDownloadingReceiptPoId] = useState('');
@@ -495,17 +493,10 @@ const ExternalInventory = () => {
         ? await externalInventoryAPI.updateItem(editingInventoryId, payload)
         : await externalInventoryAPI.createItem(payload);
 
-      const createdInventoryId = created?.data?.inventory_id || editingInventoryId;
-      if (itemImageFile && createdInventoryId) {
-        await externalInventoryAPI.uploadItemImage(createdInventoryId, itemImageFile);
-      }
-
       showToast(editingInventoryId ? 'Inventory item updated' : 'Inventory device item created', 'success');
       setShowAddItemModal(false);
       setItemForm(initialItemForm);
       setEditingInventoryId('');
-      setItemImageFile(null);
-      setItemImagePreview('');
       // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to create item', 'error');
@@ -812,8 +803,6 @@ const ExternalInventory = () => {
       location: item.location || '',
       notes: item.notes || '',
     });
-    setItemImageFile(null);
-    setItemImagePreview(item.image_url ? toAssetUrl(item.image_url) : '');
     setSelectedItem(null);
     setShowAddItemModal(true);
   };
@@ -846,22 +835,6 @@ const ExternalInventory = () => {
   };
 
   const managementItemColumns = [
-    {
-      key: 'image_url',
-      label: 'Image',
-      sortable: false,
-      render: (value, row) => (
-        value ? (
-          <img
-            src={toAssetUrl(value)}
-            alt={row.name}
-            className="h-10 w-10 rounded-lg border border-gray-200 object-cover"
-          />
-        ) : (
-          <span className="text-xs text-gray-400">No image</span>
-        )
-      ),
-    },
     { key: 'inventory_id', label: 'Inventory ID' },
     { key: 'item_id', label: 'Item ID' },
     { key: 'name', label: 'Name' },
@@ -926,22 +899,6 @@ const ExternalInventory = () => {
   ];
 
   const viewerItemColumns = [
-    {
-      key: 'image_url',
-      label: 'Image',
-      sortable: false,
-      render: (value, row) => (
-        value ? (
-          <img
-            src={toAssetUrl(value)}
-            alt={row.name}
-            className="h-10 w-10 rounded-lg border border-gray-200 object-cover"
-          />
-        ) : (
-          <span className="text-xs text-gray-400">No image</span>
-        )
-      ),
-    },
     { key: 'name', label: 'Name' },
     { key: 'device_type', label: 'Type', render: (value) => toTypeLabel(value) },
     {
@@ -1097,8 +1054,6 @@ const ExternalInventory = () => {
                 onClick={() => {
                   setEditingInventoryId('');
                   setItemForm(initialItemForm);
-                  setItemImageFile(null);
-                  setItemImagePreview('');
                   setShowAddItemModal(true);
                 }}
               >
@@ -1346,8 +1301,6 @@ const ExternalInventory = () => {
           setShowAddItemModal(false);
           setEditingInventoryId('');
           setItemForm(initialItemForm);
-          setItemImageFile(null);
-          setItemImagePreview('');
         }}
         title={editingInventoryId ? 'Edit External Inventory Device Item' : 'Add External Inventory Device Item'}
         footer={
@@ -1358,8 +1311,6 @@ const ExternalInventory = () => {
                 setShowAddItemModal(false);
                 setEditingInventoryId('');
                 setItemForm(initialItemForm);
-                setItemImageFile(null);
-                setItemImagePreview('');
               }}
             >
               Cancel
@@ -1496,26 +1447,6 @@ const ExternalInventory = () => {
               onChange={(e) => setItemForm((p) => ({ ...p, notes: e.target.value }))}
             />
           </label>
-          <label className="space-y-1 md:col-span-2">
-            <span className="text-sm font-medium text-gray-700">Item Picture (Optional)</span>
-            <input
-              type="file"
-              accept="image/*"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              onChange={(e) => {
-                const file = e.target.files?.[0] || null;
-                setItemImageFile(file);
-                setItemImagePreview(file ? URL.createObjectURL(file) : '');
-              }}
-            />
-            {itemImagePreview && (
-              <img
-                src={itemImagePreview}
-                alt="Item preview"
-                className="mt-2 h-32 w-32 rounded-lg border border-gray-200 object-cover"
-              />
-            )}
-          </label>
         </div>
       </Modal>}
 
@@ -1552,21 +1483,7 @@ const ExternalInventory = () => {
       >
         {selectedItem && (
           <div className="space-y-4">
-            <div className="flex flex-col gap-4 md:flex-row">
-              <div className="md:w-1/3">
-                {selectedItem.image_url ? (
-                  <img
-                    src={toAssetUrl(selectedItem.image_url)}
-                    alt={selectedItem.name}
-                    className="h-44 w-full rounded-lg border border-gray-200 object-cover"
-                  />
-                ) : (
-                  <div className="flex h-44 w-full items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-500">
-                    <Eye className="mr-2 h-4 w-4" />
-                    No picture
-                  </div>
-                )}
-              </div>
+            <div className="flex flex-col gap-4">
               <div className="grid flex-1 grid-cols-1 gap-2 text-sm md:grid-cols-2">
                 <p><span className="font-semibold text-gray-700">Inventory ID:</span> {selectedItem.inventory_id}</p>
                 <p><span className="font-semibold text-gray-700">Item ID:</span> {selectedItem.item_id}</p>
