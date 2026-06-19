@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -15,6 +15,8 @@ const CreateDefectReport = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const fileInputRef = useRef(null);
   const [myDevices, setMyDevices] = useState([]);
   const [formData, setFormData] = useState({
     deviceId: '',
@@ -44,13 +46,38 @@ const CreateDefectReport = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handlePhotoUpload = () => {
-    // Simulate photo upload
-    setFormData(prev => ({
-      ...prev,
-      images: [...prev.images, `photo_${prev.images.length + 1}.jpg`]
-    }));
-    showToast('Photo added', 'info');
+  const handlePhotoUploadClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('Image size should be less than 10MB', 'error');
+      return;
+    }
+
+    setUploadingPhoto(true);
+    try {
+      const response = await defectsAPI.uploadDefectPhoto(file);
+      if (response.url) {
+        setFormData(prev => ({
+          ...prev,
+          images: [...prev.images, response.url]
+        }));
+        showToast('Photo uploaded successfully', 'success');
+      }
+    } catch (error) {
+      showToast(error.message || 'Failed to upload photo', 'error');
+    } finally {
+      setUploadingPhoto(false);
+      // Reset input so the same file can be selected again if needed
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const handleRemovePhoto = (index) => {
@@ -233,27 +260,51 @@ const CreateDefectReport = () => {
               Photos (Optional)
             </label>
             <div className="grid grid-cols-4 gap-3">
-              {formData.images.map((photo, index) => (
-                <div key={index} className="relative aspect-square bg-gray-100 rounded-lg flex items-center justify-center">
-                  <span className="text-xs text-gray-500">{photo}</span>
+              {formData.images.map((photoUrl, index) => (
+                <div key={index} className="relative aspect-square bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden border border-gray-200">
+                  <img
+                    src={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                    alt={`Defect ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
                   <button
                     type="button"
                     onClick={() => handleRemovePhoto(index)}
-                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs"
+                    className="absolute top-1 right-1 w-6 h-6 bg-red-500/80 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors"
                   >
-                    ×
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}
               {formData.images.length < 4 && (
-                <button
-                  type="button"
-                  onClick={handlePhotoUpload}
-                  className="aspect-square border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-blue-500 hover:bg-blue-50 transition-colors"
-                >
-                  <Camera className="w-6 h-6 text-gray-400" />
-                  <span className="text-xs text-gray-500">Add Photo</span>
-                </button>
+                <>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    disabled={uploadingPhoto}
+                  />
+                  <button
+                    type="button"
+                    onClick={handlePhotoUploadClick}
+                    disabled={uploadingPhoto}
+                    className="aspect-square border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-blue-500 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {uploadingPhoto ? (
+                      <>
+                        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                        <span className="text-xs text-gray-500">Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-6 h-6 text-gray-400" />
+                        <span className="text-xs text-gray-500">Add Photo</span>
+                      </>
+                    )}
+                  </button>
+                </>
               )}
             </div>
           </div>

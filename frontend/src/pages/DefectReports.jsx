@@ -1126,10 +1126,20 @@ const DefectReports = () => {
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Photos</label>
                 <div className="grid grid-cols-3 gap-2">
-                  {selectedDefect.images.map((photo, index) => (
-                    <div key={index} className="aspect-square bg-gray-100 rounded-lg flex items-center justify-center">
-                      <span className="text-xs text-gray-500">{photo}</span>
-                    </div>
+                  {selectedDefect.images.map((photoUrl, index) => (
+                    <a
+                      key={index}
+                      href={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="aspect-square bg-gray-100 rounded-lg overflow-hidden border border-gray-200 block hover:opacity-90 transition-opacity"
+                    >
+                      <img
+                        src={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                        alt={`Defect photo ${index + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                    </a>
                   ))}
                 </div>
               </div>

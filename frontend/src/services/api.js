@@ -629,6 +629,34 @@ export const defectsAPI = {
     return data;
   },
 
+  uploadDefectPhoto: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const url = `${API_BASE_URL}/defects/upload-photo`;
+    const response = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        ...buildCsrfHeader('POST'),
+      },
+      body: formData,
+    });
+
+    const raw = await response.text();
+    let data = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = { message: raw || 'Upload failed' };
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.message || data?.detail || 'Failed to upload defect photo');
+    }
+
+    return data;
+  },
+
   confirmPayment: async (defectId, notes = '') => {
     const response = await apiRequest(`/defects/${defectId}/confirm-payment`, {
       method: 'POST',

@@ -52,6 +52,35 @@ def _get_defect_activity_device_identifier(defect: dict) -> str:
     return str(defect.get("device_id") or "unknown").strip()
 
 
+@router.post("/upload-photo", tags=["Defects"])
+async def upload_defect_photo(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Upload a defect photo to rclone and return its accessible URL."""
+    _ensure_not_md_director(current_user)
+    
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    file_ext = Path(file.filename).suffix
+    unique_filename = f"{uuid4().hex}{file_ext}"
+    
+    try:
+        content = await file.read()
+        from app.services.rclone_storage import upload_file_to_rclone
+        await upload_file_to_rclone("defect_photos", unique_filename, content)
+        
+        from app.config import settings
+        return {"url": f"{settings.API_V1_PREFIX}/uploads/defect_photos/{unique_filename}"}
+    except Exception as e:
+        logger.error(f"Error uploading defect photo: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload defect photo: {str(e)}"
+        )
+
+
 def _get_device_identifier_for_activity(device: dict, *, fallback: str = "unknown") -> str:
     device_type = str(device.get("device_type") or "").strip().lower().replace("-", " ")
     is_set_top_box = device_type in {"set top box", "setup box", "sb", "stb"}
@@ -561,9 +590,9 @@ async def upload_defect_payment_bill(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be 8MB or less")
 
         file_name = f"defect_{defect_id}_{datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}{suffix}"
-        target_path = PAYMENT_BILL_UPLOAD_DIR / file_name
-        with open(target_path, "wb") as out:
-            out.write(content)
+        
+        from app.services.rclone_storage import upload_file_to_rclone
+        await upload_file_to_rclone("defect_payments", file_name, content)
 
         bill_url = f"/api/uploads/defect_payments/{file_name}"
         defect = await defect_service.set_defect_payment_bill_url(defect_id=defect_id, bill_url=bill_url)

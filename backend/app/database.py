@@ -205,6 +205,10 @@ async def get_db():
     try:
         yield db
     finally:
+        try:
+            await conn.rollback()
+        except Exception:
+            pass
         pool.release(conn)
 
 
