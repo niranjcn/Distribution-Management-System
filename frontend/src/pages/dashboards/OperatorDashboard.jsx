@@ -53,14 +53,14 @@ const OperatorDashboard = () => {
         const [statsRes, advancedRes, devRes, defRes, retRes, distRes] = await Promise.all([
           dashboardAPI.getStats().catch(() => ({ data: {} })),
           dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
-          devicesAPI.getDevices().catch(() => ({ data: [] })),
+          devicesAPI.getMyOverview({ show_all: true }).catch(() => ({ data: { all_under_me: [] } })),
           defectsAPI.getDefects().catch(() => ({ data: [] })),
           returnsAPI.getReturns().catch(() => ({ data: [] })),
           distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(() => ({ data: [] }))
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
-        setMyDevices(devRes.data || []);
+        setMyDevices(Array.isArray(devRes.data) ? devRes.data : (devRes.data?.all_under_me || []));
         setMyDefects(defRes.data || []);
         setMyReturns(retRes.data || []);
         setDistributions(distRes.data || []);
