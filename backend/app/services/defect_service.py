@@ -418,7 +418,7 @@ async def create_defect(
                 f"A new report can only be submitted after the existing defect is resolved."
             )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         images_json = json.dumps(defect_data.images or [])
         lineage = await _resolve_defect_lineage_ids(db, reporter_id=reporter_id, reporter_role=reporter_role)
 
@@ -552,7 +552,7 @@ async def forward_defect_to_management(
         if str(defect.get("reported_by")) not in operator_ids:
             raise ValueError("You can only forward defects reported by operators under your hierarchy")
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         await db.execute(
             """UPDATE defects
             SET forwarded_to_management = 1,
@@ -618,7 +618,7 @@ async def update_defect(defect_id: str, defect_data: DefectUpdate) -> Optional[D
     if "status" in update_dict:
         update_dict["status"] = update_dict["status"].value
 
-    update_dict["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    update_dict["updated_at"] = datetime.now().replace(tzinfo=None).isoformat()
 
     async with get_db() as db:
         set_clause = ", ".join(f"{k} = ?" for k in update_dict)
@@ -660,7 +660,7 @@ async def update_defect_status(
             return None
         defect = dict(defect)
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         update_sql = "UPDATE defects SET status = ?, updated_at = ?"
         update_params: List[Any] = [status, now]
 
@@ -761,7 +761,7 @@ async def update_defect_status(
 
 
 async def set_defect_payment_bill_url(defect_id: str, bill_url: str) -> Optional[Dict[str, Any]]:
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None).isoformat()
     async with get_db() as db:
         cursor = await db.execute(
             "UPDATE defects SET payment_bill_url = ?, updated_at = ? WHERE id = ?",
@@ -778,7 +778,7 @@ async def confirm_defect_payment(
     confirmer: Dict[str, Any],
     notes: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None).isoformat()
     confirmer_id = str(confirmer.get("_id") or confirmer.get("id") or "")
     confirmer_name = str(confirmer.get("name") or "Management")
 
@@ -950,7 +950,7 @@ async def resolve_defect(
             return None
         defect = dict(defect)
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         cursor = await db.execute(
             """UPDATE defects SET status = ?, resolution = ?, resolved_by = ?,
             resolved_by_name = ?, resolved_at = ?, updated_at = ? WHERE id = ?""",
@@ -1095,7 +1095,7 @@ async def replace_defect_device(
                 f"(Serial: {new_device.get('serial_number')}, MAC: {new_device.get('mac_address')})"
             )
         )
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         update_sql = (
             """UPDATE defects SET status = ?, replacement_device_id = ?, replacement_requested_at = ?,
@@ -1142,14 +1142,14 @@ async def replace_defect_device(
             "serial_number": new_device.get("serial_number"),
             "defect_id": str(defect_id),
             "defect_report_id": defect.get("report_id"),
-            "replaced_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+            "replaced_at": datetime.now().replace(tzinfo=None).isoformat(),
             "replaced_by_user_id": resolver_id,
             "replaced_by_user_name": resolver_name
         }
         async with get_db() as db:
             await db.execute(
                 "UPDATE devices SET metadata = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(old_device_metadata), datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), int(old_device["id"]))
+                (json.dumps(old_device_metadata), datetime.now().replace(tzinfo=None).isoformat(), int(old_device["id"]))
             )
             await db.commit()
 
@@ -1243,7 +1243,7 @@ async def confirm_replacement_receipt(
                 f"Replacement device is not available for confirmation. Current status: {new_device.get('status')}"
             )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         await db.execute(
             """UPDATE defects SET status = ?, replacement_confirmed_at = ?, replacement_confirmed_by = ?,
@@ -1443,7 +1443,7 @@ async def mark_replacement_waiting(
         if defect.get("status") != DefectStatus.REPLACEMENT_PENDING_CONFIRMATION.value:
             raise ValueError("Only pending confirmation defects can be marked as waiting")
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         waiting_note = notes or "Device is being shipped, please wait"
         await db.execute(
             "UPDATE defects SET status = ?, resolution = COALESCE(?, resolution), updated_at = ? WHERE id = ?",

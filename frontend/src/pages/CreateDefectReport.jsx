@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -15,6 +15,7 @@ const CreateDefectReport = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef(null);
   const [myDevices, setMyDevices] = useState([]);
   const [formData, setFormData] = useState({
     deviceId: '',
@@ -22,21 +23,57 @@ const CreateDefectReport = () => {
     severity: '',
     description: '',
     reportTarget: 'manager_admin',
-    images: []
+    imageFiles: [] // Store file objects with local preview URLs
   });
+  const [submitProgress, setSubmitProgress] = useState('');
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false);
+        if (formData.deviceId) {
+          const dev = myDevices.find(d => String(d._id || d.id) === String(formData.deviceId));
+          if (dev) {
+            setSearchQuery(getDeviceSelectLabel(dev));
+          }
+        } else {
+          setSearchQuery('');
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [formData.deviceId, myDevices]);
 
   const isOperator = user?.role === 'operator';
 
   useEffect(() => {
-    const fetchDevices = async () => {
+    const fetchData = async () => {
       try {
-        const response = await devicesAPI.getDevices();
-        setMyDevices(response.data || []);
+        const [devicesRes, defectsRes] = await Promise.all([
+          devicesAPI.getDevices({ page_size: 10000 }),
+          defectsAPI.getDefects({ page_size: 10000 })
+        ]);
+
+        const activeDefects = (defectsRes.data || []).filter(d => 
+          d.status !== 'resolved' && d.status !== 'rejected' && d.status !== 'replaced'
+        );
+        const activeDefectDeviceIds = new Set(activeDefects.map(d => String(d.device_id)));
+
+        const availableDevices = (devicesRes.data || []).filter(d => 
+          !activeDefectDeviceIds.has(String(d._id || d.id))
+        );
+
+        setMyDevices(availableDevices);
       } catch (error) {
-        console.error('Failed to fetch devices:', error);
+        console.error('Failed to fetch data:', error);
       }
     };
-    fetchDevices();
+    fetchData();
   }, []);
 
   const handleChange = (e) => {
@@ -44,44 +81,55 @@ const CreateDefectReport = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handlePhotoUpload = () => {
-    // Simulate photo upload
-    setFormData(prev => ({
-      ...prev,
-      images: [...prev.images, `photo_${prev.images.length + 1}.jpg`]
-    }));
-    showToast('Photo added', 'info');
+  const handlePhotoUploadClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('Image size should be less than 10MB', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setFormData(prev => ({
+        ...prev,
+        imageFiles: [...prev.imageFiles, { file, previewUrl: reader.result }]
+      }));
+    };
+    reader.readAsDataURL(file);
+
+    // Reset input so the same file can be selected again if needed
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleRemovePhoto = (index) => {
-    setFormData(prev => ({
-      ...prev,
-      images: prev.images.filter((_, i) => i !== index)
-    }));
+    setFormData(prev => {
+      const newFiles = [...prev.imageFiles];
+      newFiles.splice(index, 1);
+      return { ...prev, imageFiles: newFiles };
+    });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     const normalizedDescription = (formData.description || '').trim();
-    const normalizedPayload = {
-      device_id: String(formData.deviceId || '').trim(),
-      defect_type: String(formData.defectType || '').trim().toLowerCase(),
-      severity: String(formData.severity || '').trim().toLowerCase(),
-      description: normalizedDescription,
-      images: formData.images || [],
-      ...(isOperator ? { report_target: formData.reportTarget } : {})
-    };
-
-    if (!normalizedPayload.device_id) {
+    if (!formData.deviceId) {
       showToast('Please select a device', 'error');
       return;
     }
-    if (!normalizedPayload.defect_type) {
+    if (!formData.defectType) {
       showToast('Please select a defect type', 'error');
       return;
     }
-    if (!normalizedPayload.severity) {
+    if (!formData.severity) {
       showToast('Please select a severity', 'error');
       return;
     }
@@ -93,6 +141,25 @@ const CreateDefectReport = () => {
     setLoading(true);
     
     try {
+      const uploadedUrls = [];
+      if (formData.imageFiles.length > 0) {
+        setSubmitProgress('Uploading photos...');
+        for (const item of formData.imageFiles) {
+          const response = await defectsAPI.uploadDefectPhoto(item.file);
+          if (response.url) uploadedUrls.push(response.url);
+        }
+      }
+
+      setSubmitProgress('Submitting report...');
+      const normalizedPayload = {
+        device_id: String(formData.deviceId || '').trim(),
+        defect_type: String(formData.defectType || '').trim().toLowerCase(),
+        severity: String(formData.severity || '').trim().toLowerCase(),
+        description: normalizedDescription,
+        images: uploadedUrls,
+        ...(isOperator ? { report_target: formData.reportTarget } : {})
+      };
+
       await defectsAPI.createDefect(normalizedPayload);
       showToast('Defect report submitted successfully!', 'success');
       navigate('/defects');
@@ -100,10 +167,15 @@ const CreateDefectReport = () => {
       showToast(error.message || 'Failed to submit defect report', 'error');
     } finally {
       setLoading(false);
+      setSubmitProgress('');
     }
   };
 
   const selectedDevice = myDevices.find(d => (d._id || d.id) === formData.deviceId);
+
+  const filteredDevices = myDevices.filter(device => 
+    getDeviceSelectLabel(device).toLowerCase().includes((searchQuery || '').toLowerCase())
+  );
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -114,25 +186,53 @@ const CreateDefectReport = () => {
 
       <Card>
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Device Selection */}
-          <div>
+          {/* Device Selection (Searchable) */}
+          <div ref={dropdownRef} className="relative">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Select Device <span className="text-red-500">*</span>
             </label>
-            <select
-              name="deviceId"
-              value={formData.deviceId}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              required
-            >
-              <option value="">Select a device...</option>
-              {myDevices.map(device => (
-                <option key={device._id || device.id} value={device._id || device.id}>
-                  {getDeviceSelectLabel(device)}
-                </option>
-              ))}
-            </select>
+            <input
+              type="text"
+              placeholder="Search by Serial Number, MAC, or NUID..."
+              value={dropdownOpen ? searchQuery : (selectedDevice ? getDeviceSelectLabel(selectedDevice) : '')}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setDropdownOpen(true);
+                if (formData.deviceId) {
+                  handleChange({ target: { name: 'deviceId', value: '' } });
+                }
+              }}
+              onFocus={() => {
+                setDropdownOpen(true);
+                setSearchQuery('');
+                if (formData.deviceId) {
+                  handleChange({ target: { name: 'deviceId', value: '' } });
+                }
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              required={!formData.deviceId}
+            />
+            {dropdownOpen && (
+              <ul className="absolute z-10 w-full mt-1 max-h-60 overflow-y-auto bg-white border border-gray-300 rounded-lg shadow-lg">
+                {filteredDevices.length > 0 ? (
+                  filteredDevices.map(device => (
+                    <li
+                      key={device._id || device.id}
+                      onClick={() => {
+                        handleChange({ target: { name: 'deviceId', value: device._id || device.id } });
+                        setSearchQuery(getDeviceSelectLabel(device));
+                        setDropdownOpen(false);
+                      }}
+                      className="px-3 py-2 cursor-pointer hover:bg-blue-50 text-sm text-gray-700 border-b border-gray-100 last:border-0"
+                    >
+                      {getDeviceSelectLabel(device)}
+                    </li>
+                  ))
+                ) : (
+                  <li className="px-3 py-2 text-sm text-gray-500 text-center">No devices found</li>
+                )}
+              </ul>
+            )}
           </div>
 
           {/* Selected Device Info */}
@@ -233,27 +333,42 @@ const CreateDefectReport = () => {
               Photos (Optional)
             </label>
             <div className="grid grid-cols-4 gap-3">
-              {formData.images.map((photo, index) => (
-                <div key={index} className="relative aspect-square bg-gray-100 rounded-lg flex items-center justify-center">
-                  <span className="text-xs text-gray-500">{photo}</span>
+              {formData.imageFiles.map((item, index) => (
+                <div key={index} className="relative aspect-square bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden border border-gray-200">
+                  <img
+                    src={item.previewUrl}
+                    alt={`Defect ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
                   <button
                     type="button"
                     onClick={() => handleRemovePhoto(index)}
-                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-xs"
+                    className="absolute top-1 right-1 w-6 h-6 bg-red-500/80 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors"
                   >
-                    ×
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}
-              {formData.images.length < 4 && (
-                <button
-                  type="button"
-                  onClick={handlePhotoUpload}
-                  className="aspect-square border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-blue-500 hover:bg-blue-50 transition-colors"
-                >
-                  <Camera className="w-6 h-6 text-gray-400" />
-                  <span className="text-xs text-gray-500">Add Photo</span>
-                </button>
+              {formData.imageFiles.length < 4 && (
+                <>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    disabled={loading}
+                  />
+                  <button
+                    type="button"
+                    onClick={handlePhotoUploadClick}
+                    disabled={loading}
+                    className="aspect-square border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-blue-500 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Camera className="w-6 h-6 text-gray-400" />
+                    <span className="text-xs text-gray-500">Add Photo</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -272,11 +387,11 @@ const CreateDefectReport = () => {
           )}
 
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">
-            <Button variant="secondary" onClick={() => navigate('/defects')} icon={X}>
+            <Button variant="secondary" onClick={() => navigate('/defects')} icon={X} disabled={loading}>
               Cancel
             </Button>
             <Button type="submit" loading={loading} icon={Save}>
-              Submit Report
+              {submitProgress || 'Submit Report'}
             </Button>
           </div>
         </form>

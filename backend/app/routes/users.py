@@ -672,7 +672,7 @@ async def admin_update_credentials(
                 raise HTTPException(status_code=400, detail="No data to update")
 
             update_fields.append("updated_at = ?")
-            params.append(_dt.now(_timezone.utc).replace(tzinfo=None).isoformat())
+            params.append(_dt.now().replace(tzinfo=None).isoformat())
             params.append(int(user_id))
 
             cursor = await db.execute(f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?", params)

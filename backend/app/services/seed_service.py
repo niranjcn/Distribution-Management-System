@@ -46,7 +46,7 @@ async def seed_initial_data():
                 existing_admin.get("email") == "admin@dms.com"
                 and existing_admin.get("role") != "super_admin"
             ):
-                now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+                now = datetime.now().replace(tzinfo=None).isoformat()
                 await db.execute(
                     """UPDATE users
                     SET role = ?, force_email_change = 1, force_password_change = 1, updated_at = ?
@@ -62,7 +62,7 @@ async def seed_initial_data():
         print("Creating default super admin account...")
         admin_password = os.getenv("ADMIN_INITIAL_PASSWORD") or "Admin@123"
         
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         
         insert_cursor = await db.execute(
             """INSERT OR IGNORE INTO users (email, password_hash, name, role, force_email_change, force_password_change, phone, department, location,

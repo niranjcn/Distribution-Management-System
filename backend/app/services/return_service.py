@@ -166,7 +166,7 @@ async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) ->
             raise ValueError("No admin/manager found to process return")
         return_to_user = dict(return_to_user)
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         cursor = await db.execute(
             """INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,
@@ -257,7 +257,7 @@ async def update_return_status(
             return None
         return_req = dict(return_req)
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         if status == ReturnStatus.APPROVED.value:
             await db.execute(
@@ -402,7 +402,7 @@ async def cancel_return(return_id: str, user_id: str) -> bool:
 
         await db.execute(
             "UPDATE returns SET status = ?, updated_at = ? WHERE id = ?",
-            (ReturnStatus.CANCELLED.value, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), int(return_id))
+            (ReturnStatus.CANCELLED.value, datetime.now().replace(tzinfo=None).isoformat(), int(return_id))
         )
         await db.execute(
             "DELETE FROM approvals WHERE entity_id = ? AND approval_type = 'return'",
@@ -479,7 +479,7 @@ async def auto_create_defect_return(
             raise ValueError("No admin/manager found to process return")
         return_to_user = dict(return_to_user)
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         cursor = await db.execute(
             """INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,

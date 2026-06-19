@@ -119,7 +119,7 @@ async def submit_change_request(
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
     try:
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         request_id = f"CR-{uuid.uuid4().hex[:8].upper()}"
         hashed_new_password = get_password_hash(data.new_password) if data.new_password else None
         manager_notification_payloads = []
@@ -348,7 +348,7 @@ async def review_change_request(
             if req["status"] != "pending":
                 raise HTTPException(status_code=400, detail="Request already reviewed")
 
-            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            now = datetime.now().replace(tzinfo=None).isoformat()
 
             if review.action == "approve":
                 if req["request_type"] == "device_status_change":

@@ -291,10 +291,27 @@ async def serve_upload(file_path: str, current_user: dict = Depends(get_current_
 
     if resolved_root not in safe_path.parents and safe_path != resolved_root:
         raise HTTPException(status_code=403, detail="Access denied")
-    if not safe_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+    
+    if safe_path.is_file():
+        return FileResponse(path=str(safe_path))
 
-    return FileResponse(path=str(safe_path))
+    if file_path.startswith("defect_payments/") or file_path.startswith("defect_photos/"):
+        from app.services.rclone_storage import get_rclone_file_content
+        import mimetypes
+        from fastapi.responses import Response
+        
+        # Determine the rclone folder based on the prefix
+        rclone_folder = file_path.split("/")[0]
+        file_name = file_path.split("/")[-1]
+        
+        try:
+            content = await get_rclone_file_content(rclone_folder, file_name)
+            mime_type, _ = mimetypes.guess_type(file_name)
+            return Response(content=content, media_type=mime_type or "application/octet-stream")
+        except RuntimeError:
+            pass
+            
+    raise HTTPException(status_code=404, detail="File not found")
 
 
 @app.post("/reset-and-seed", tags=["Seed"], dependencies=[Depends(require_admin)])

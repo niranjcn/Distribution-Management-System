@@ -52,7 +52,7 @@ async def get_inventory_report() -> Dict[str, Any]:
             "by_status": by_status,
             "by_type": by_type,
             "by_location": by_location,
-            "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat()
         }
 
 
@@ -66,7 +66,7 @@ async def get_distribution_summary() -> Dict[str, Any]:
             by_status[status] = await _count(db, "distributions", "status = ?", (status,))
 
         by_month = []
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now().replace(tzinfo=None)
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             month_end = month_start + timedelta(days=30)
@@ -87,7 +87,7 @@ async def get_distribution_summary() -> Dict[str, Any]:
             "by_status": by_status,
             "by_month": by_month,
             "top_distributors": [{"name": r[0], "devices": r[1]} for r in top],
-            "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat()
         }
 
 
@@ -109,7 +109,7 @@ async def get_defect_summary() -> Dict[str, Any]:
             by_type[defect_type] = await _count(db, "defects", "defect_type = ?", (defect_type,))
 
         by_month = []
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now().replace(tzinfo=None)
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             month_end = month_start + timedelta(days=30)
@@ -123,7 +123,7 @@ async def get_defect_summary() -> Dict[str, Any]:
             "by_severity": by_severity,
             "by_type": by_type,
             "by_month": by_month,
-            "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat()
         }
 
 
@@ -141,7 +141,7 @@ async def get_return_summary() -> Dict[str, Any]:
             by_reason[reason] = await _count(db, "returns", "reason = ?", (reason,))
 
         by_month = []
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now().replace(tzinfo=None)
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             month_end = month_start + timedelta(days=30)
@@ -154,7 +154,7 @@ async def get_return_summary() -> Dict[str, Any]:
             "by_status": by_status,
             "by_reason": by_reason,
             "by_month": by_month,
-            "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat()
         }
 
 
@@ -165,7 +165,7 @@ async def get_user_activity_report() -> Dict[str, Any]:
         for role in ["super_admin", "manager", "pdic_staff", "sub_distributor", "cluster", "operator"]:
             by_role[role] = await _count(db, "users", "role = ?", (role,))
 
-        thirty_days_ago = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)).isoformat()
+        thirty_days_ago = (datetime.now().replace(tzinfo=None) - timedelta(days=30)).isoformat()
         active_users = await _count(db, "users", "last_login >= ?", (thirty_days_ago,))
         total_users = await _count(db, "users")
 
@@ -177,7 +177,7 @@ async def get_user_activity_report() -> Dict[str, Any]:
             "active_users": active_users,
             "by_role": by_role,
             "recent_activities": rows_to_list(rows),
-            "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat()
         }
 
 
@@ -197,7 +197,7 @@ async def get_device_utilization_report() -> Dict[str, Any]:
             "available": available,
             "defective": defective,
             "utilization_rate": round(utilization_rate, 2),
-            "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat()
         }
 
 
@@ -268,7 +268,7 @@ def _build_device_backup_file(rows: List[Dict[str, Any]], file_format: str) -> D
     ]
 
     normalized = str(file_format or "xlsx").strip().lower()
-    generated_ts = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d_%H%M%S")
+    generated_ts = datetime.now().replace(tzinfo=None).strftime("%Y%m%d_%H%M%S")
 
     if normalized == "xlsx":
         workbook = Workbook()
@@ -362,7 +362,7 @@ def _build_returns_defects_backup_file(
         return value
 
     normalized = str(file_format or "xlsx").strip().lower()
-    generated_ts = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d_%H%M%S")
+    generated_ts = datetime.now().replace(tzinfo=None).strftime("%Y%m%d_%H%M%S")
 
     return_headers = [
         "return_id",

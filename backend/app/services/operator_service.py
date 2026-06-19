@@ -58,7 +58,7 @@ async def get_operator_by_id(operator_id: str) -> Optional[Dict[str, Any]]:
 async def create_operator(operator_data: OperatorCreate, created_by: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new operator"""
     async with get_db() as db:
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         cursor = await db.execute(
             """INSERT INTO operators (operator_id, name, phone, email, address, area, city,
             assigned_to, assigned_to_name, status, device_count, connection_type, created_at, updated_at)
@@ -98,7 +98,7 @@ async def update_operator(operator_id: str, operator_data: OperatorUpdate) -> Op
     if "connection_type" in update_dict:
         update_dict["connection_type"] = update_dict["connection_type"].value
 
-    update_dict["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    update_dict["updated_at"] = datetime.now().replace(tzinfo=None).isoformat()
 
     async with get_db() as db:
         set_clause = ", ".join(f"{k} = ?" for k in update_dict)
@@ -142,7 +142,7 @@ async def update_operator_device_count(operator_id: str) -> None:
 
         await db.execute(
             "UPDATE operators SET device_count = ?, updated_at = ? WHERE id = ?",
-            (count, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(), int(operator_id))
+            (count, datetime.now().replace(tzinfo=None).isoformat(), int(operator_id))
         )
         await db.commit()
 

@@ -88,6 +88,7 @@ const DefectReports = () => {
   const [replacePaymentBillFile, setReplacePaymentBillFile] = useState(null);
   const [replacementMode, setReplacementMode] = useState('existing');
   const [replacementFilter, setReplacementFilter] = useState('all');
+  const [isReplacing, setIsReplacing] = useState(false);
   const [availableDevices, setAvailableDevices] = useState([]);
   const [loadingAvailableDevices, setLoadingAvailableDevices] = useState(false);
   const [replacementSearch, setReplacementSearch] = useState('');
@@ -97,6 +98,8 @@ const DefectReports = () => {
   const [tableSearchBy, setTableSearchBy] = useState('all');
   const [tableSearchInput, setTableSearchInput] = useState('');
   const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
+  const [openingBillId, setOpeningBillId] = useState(null);
+  const [replacePaymentBillPreview, setReplacePaymentBillPreview] = useState(null);
   const [newDeviceData, setNewDeviceData] = useState({
     device_type: 'ONT',
     model: '',
@@ -107,6 +110,19 @@ const DefectReports = () => {
     box_type: 'HD',
     nuid: ''
   });
+
+  useEffect(() => {
+    if (replacePaymentBillFile && replacePaymentBillFile.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setReplacePaymentBillPreview(reader.result);
+      };
+      reader.readAsDataURL(replacePaymentBillFile);
+    } else {
+      setReplacePaymentBillPreview(null);
+    }
+  }, [replacePaymentBillFile]);
+
   const [confirmPaymentNotes, setConfirmPaymentNotes] = useState('');
   const loadedWindowRef = useRef(0);
   const loadingWindowsRef = useRef(new Set());
@@ -575,13 +591,15 @@ const DefectReports = () => {
   const handleOpenPaymentBill = async (defectRow) => {
     const billPath = defectRow?.payment_bill_url;
     if (!billPath) return;
+    setOpeningBillId(defectRow._id || defectRow.id);
     try {
-      const { blob } = await defectsAPI.fetchPaymentBillBlob(billPath);
-      const blobUrl = URL.createObjectURL(blob);
-      window.open(blobUrl, '_blank', 'noopener,noreferrer');
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      const apiOrigin = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080';
+      const url = /^https?:\/\//i.test(billPath) ? billPath : `${apiOrigin}${billPath}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
     } catch (error) {
       showToast(error.message || 'Failed to open bill file', 'error');
+    } finally {
+      setOpeningBillId(null);
     }
   };
 
@@ -652,6 +670,7 @@ const DefectReports = () => {
       return;
     }
 
+    setIsReplacing(true);
     try {
       let uploadedBillUrl = null;
       if (replacePaymentBillFile) {
@@ -686,6 +705,8 @@ const DefectReports = () => {
       // Data refetch is handled automatically by useAutoRefresh
     } catch (error) {
       showToast(error.message || 'Failed to replace device', 'error');
+    } finally {
+      setIsReplacing(false);
     }
   };
 
@@ -1105,12 +1126,14 @@ const DefectReports = () => {
                   Payment Status: {selectedDefect.payment_confirmed ? 'Confirmed' : 'Pending Confirmation'}
                 </p>
                 {selectedDefect.payment_bill_url && (
-                  <button
+                  <Button
                     onClick={() => handleOpenPaymentBill(selectedDefect)}
-                    className="text-sm px-3 py-1.5 rounded bg-amber-700 text-white hover:bg-amber-800"
+                    loading={openingBillId === (selectedDefect._id || selectedDefect.id)}
+                    variant="secondary"
+                    className="mt-2"
                   >
-                    View Uploaded Bill
-                  </button>
+                    {openingBillId === (selectedDefect._id || selectedDefect.id) ? 'Loading Bill...' : 'View Uploaded Bill'}
+                  </Button>
                 )}
               </div>
             )}
@@ -1126,10 +1149,20 @@ const DefectReports = () => {
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Photos</label>
                 <div className="grid grid-cols-3 gap-2">
-                  {selectedDefect.images.map((photo, index) => (
-                    <div key={index} className="aspect-square bg-gray-100 rounded-lg flex items-center justify-center">
-                      <span className="text-xs text-gray-500">{photo}</span>
-                    </div>
+                  {selectedDefect.images.map((photoUrl, index) => (
+                    <a
+                      key={index}
+                      href={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="aspect-square bg-gray-100 rounded-lg overflow-hidden border border-gray-200 block hover:opacity-90 transition-opacity"
+                    >
+                      <img
+                        src={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                        alt={`Defect photo ${index + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                    </a>
                   ))}
                 </div>
               </div>
@@ -1216,6 +1249,7 @@ const DefectReports = () => {
           setReplaceReturnAmount('');
           setReplaceServiceCharge('');
           setReplacePaymentBillFile(null);
+          setReplacePaymentBillPreview(null);
           setSelectedReplacementDevice(null);
           setSelectedReplacementDeviceId('');
         }}
@@ -1223,10 +1257,10 @@ const DefectReports = () => {
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowReplaceModal(false)}>Cancel</Button>
-            <Button onClick={handleReplace}>
+            <Button variant="secondary" onClick={() => setShowReplaceModal(false)} disabled={isReplacing}>Cancel</Button>
+            <Button onClick={handleReplace} loading={isReplacing}>
               <RefreshCw className="w-4 h-4 mr-2" />
-              Assign Replacement
+              {isReplacing ? 'Uploading & Assigning...' : 'Assign Replacement'}
             </Button>
           </>
         }
@@ -1565,12 +1599,21 @@ const DefectReports = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Upload Bill (Optional)</label>
               <input
                 type="file"
-                accept=".jpg,.jpeg,.png,.webp,.pdf"
+                accept=".jpg,.jpeg,.png,.webp,.pdf,.docx"
                 onChange={(e) => setReplacePaymentBillFile(e.target.files?.[0] || null)}
                 className="w-full text-sm"
               />
               {replacePaymentBillFile && (
-                <p className="text-xs text-gray-500 mt-1">Selected: {replacePaymentBillFile.name}</p>
+                <div className="mt-2">
+                  <p className="text-xs text-gray-500 mb-2">Selected: {replacePaymentBillFile.name}</p>
+                  {replacePaymentBillPreview && (
+                    <img 
+                      src={replacePaymentBillPreview} 
+                      alt="Bill Preview" 
+                      className="max-h-32 rounded border border-gray-200" 
+                    />
+                  )}
+                </div>
               )}
             </div>
           </div>

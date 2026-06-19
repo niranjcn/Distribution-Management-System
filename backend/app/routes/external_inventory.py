@@ -367,7 +367,7 @@ async def bulk_upload_external_inventory_items(
                     },
                 }
 
-            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            now = datetime.now().replace(tzinfo=None).isoformat()
             actor_id = str(current_user.get("id") or current_user.get("_id") or current_user.get("user_id") or current_user.get("sub") or "")
             if not actor_id:
                 raise HTTPException(
@@ -570,7 +570,7 @@ async def upload_external_inventory_item_image(
             )
 
         suffix = Path(image.filename or "").suffix.lower() or ".jpg"
-        file_name = f"{inventory_id}_{datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}{suffix}"
+        file_name = f"{inventory_id}_{datetime.now().replace(tzinfo=None).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}{suffix}"
         file_path = UPLOAD_DIR / file_name
 
         content = await image.read()
