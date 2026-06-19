@@ -4,6 +4,7 @@ import json
 
 from app.database import get_db, row_to_dict, rows_to_list
 from app.utils.helpers import get_pagination
+from app.core.activity_logger import log_business_activity
 
 
 def _count_total_children(children: List[Dict[str, Any]]) -> int:
@@ -132,6 +133,7 @@ async def reassign_users(
     new_parent_id: int,
     new_parent_name: str,
     new_parent_role: str,
+    deleted_by_user: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, str]:
     async with get_db() as db:
         cursor = await db.execute("SELECT * FROM reassignment_requests WHERE id = ?", (int(request_id),))
@@ -174,9 +176,21 @@ async def reassign_users(
             (new_parent_id, new_parent_name, new_parent_role, now, int(request_id))
         )
 
+        cursor = await db.execute("SELECT name, email, role FROM users WHERE id = ?", (deleted_user_id,))
+        deleted_user_row = await cursor.fetchone()
+        deleted_user_name = dict(deleted_user_row)["name"] if deleted_user_row else str(deleted_user_id)
+
         await db.execute("DELETE FROM users WHERE id = ?", (deleted_user_id,))
 
         await db.commit()
+
+        if deleted_by_user:
+            await log_business_activity(
+                user=deleted_by_user,
+                path="/activity/users/delete",
+                description=f"{deleted_by_user.get('name') or deleted_by_user.get('email')} deleted user {deleted_user_name} (via reassignment request #{request_id})",
+            )
+
         return True, f"Reassigned {len(direct_children)} user(s) to {new_parent_name}"
 
 

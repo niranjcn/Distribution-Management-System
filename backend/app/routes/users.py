@@ -510,6 +510,12 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
             actor_name=actor_name,
         )
 
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/delete",
+            description=f"{actor_name} initiated deletion of {target_role} {target_user.get('name')} — reassignment request {req.get('request_id')} created for {_count_total_children(children)} user(s)",
+        )
+
         # Notify all super admins
         super_admins = await user_service.get_users(role=SUPER_ADMIN, page_size=10000)
         for sa in super_admins["data"]:
