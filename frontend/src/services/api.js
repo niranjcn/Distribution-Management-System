@@ -258,6 +258,14 @@ export const usersAPI = {
     return response;
   },
 
+  reassignUser: async (userId, data) => {
+    const response = await apiRequest(`/users/${userId}/reassign`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return response;
+  },
+
   updateUserStatus: async (userId, status) => {
     const response = await apiRequest(`/users/${userId}/status`, {
       method: 'PATCH',
