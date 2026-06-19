@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
+import FilePreview from '../components/ui/FilePreview';
 import { dashboardAPI, distributionsAPI, usersAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -439,6 +440,8 @@ const BulkImportDistribution = () => {
           </Button>
         </div>
       </Card>
+
+      {file && <FilePreview file={file} />}
 
       {result && (
         <Card title="Upload Result">

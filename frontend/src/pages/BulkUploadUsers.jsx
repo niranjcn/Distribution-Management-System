@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
+import FilePreview from '../components/ui/FilePreview';
 import { usersAPI } from '../services/api';
 
 const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
@@ -161,6 +162,8 @@ const BulkUploadUsers = () => {
           )}
         </Card>
       </div>
+
+      {file && <FilePreview file={file} />}
 
       {uploading && (
         <div className="flex justify-center py-8">

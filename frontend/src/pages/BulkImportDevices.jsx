@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
+import FilePreview from '../components/ui/FilePreview';
 import { dashboardAPI, devicesAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertCircle, Download, ArrowLeft } from 'lucide-react';
@@ -164,6 +165,8 @@ const BulkImportDevices = () => {
           </div>
         )}
       </Card>
+
+      {file && <FilePreview file={file} />}
 
       {/* Results */}
       {result && (
