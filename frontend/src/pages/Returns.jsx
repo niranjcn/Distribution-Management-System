@@ -565,17 +565,6 @@ const Returns = () => {
             </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes (Optional)</label>
-            <textarea
-              value={actionComment}
-              onChange={(e) => setActionComment(e.target.value)}
-              rows={3}
-              placeholder="Any notes about the returned device condition..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-            />
-          </div>
-
           <div className="bg-green-50 border border-green-200 rounded-lg p-3">
             <p className="text-sm text-green-800 font-medium">Confirming receipt will:</p>
             <ul className="text-sm text-green-700 mt-1 space-y-1 list-disc list-inside">
