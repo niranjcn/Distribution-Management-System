@@ -27,6 +27,7 @@ const PendingDues = () => {
   const [tableSearchBy, setTableSearchBy] = useState('all');
   const [tableSearchInput, setTableSearchInput] = useState('');
   const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
+  const [openingBillId, setOpeningBillId] = useState(null);
 
   const role = String(user?.role || '').toLowerCase();
   const isOperatorView = role === 'operator';
@@ -251,18 +252,21 @@ const PendingDues = () => {
                       {item.payment_bill_url && (
                         <Button
                           variant="secondary"
+                          loading={openingBillId === item.id}
                           onClick={async () => {
+                            setOpeningBillId(item.id);
                             try {
-                              const { blob } = await defectsAPI.fetchPaymentBillBlob(item.payment_bill_url);
-                              const blobUrl = URL.createObjectURL(blob);
-                              window.open(blobUrl, '_blank', 'noopener,noreferrer');
-                              setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+                              const apiOrigin = import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080';
+                              const url = /^https?:\/\//i.test(item.payment_bill_url) ? item.payment_bill_url : `${apiOrigin}${item.payment_bill_url}`;
+                              window.open(url, '_blank', 'noopener,noreferrer');
                             } catch (error) {
                               showToast(error.message || 'Failed to open bill', 'error');
+                            } finally {
+                              setOpeningBillId(null);
                             }
                           }}
                         >
-                          View Bill
+                          {openingBillId === item.id ? 'Loading...' : 'View Bill'}
                         </Button>
                       )}
                       {canConfirmPayment && (

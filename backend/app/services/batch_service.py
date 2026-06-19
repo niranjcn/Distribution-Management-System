@@ -69,7 +69,7 @@ async def create_batch(batch_data: BatchCreate, created_by: str, created_by_name
     """Create a new batch"""
     db = get_database()
     
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now().replace(tzinfo=None)
     batch_doc = {
         "batch_id": generate_batch_id(),
         "name": batch_data.name,
@@ -96,7 +96,7 @@ async def update_batch(batch_id: str, batch_data: BatchUpdate) -> Optional[Dict[
     if not update_dict:
         return await get_batch_by_id(batch_id)
     
-    update_dict["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    update_dict["updated_at"] = datetime.now().replace(tzinfo=None)
     
     result = await db.batches.update_one(
         {"_id": ObjectId(batch_id)},

@@ -185,7 +185,7 @@ async def _bulk_update_device_holders(
             return []
 
         existing_ids = [int(dev_id) for dev_id in status_map.keys()]
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         update_placeholders = ",".join(["?"] * len(existing_ids))
         await db.execute(
@@ -682,7 +682,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
             "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
         }
         
-        now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_dt = datetime.now().replace(tzinfo=None)
         now = now_dt.isoformat()
         distribution_date = dist_data.date_of_distribution.isoformat() if dist_data.date_of_distribution else now_dt.date().isoformat()
         dist_id = generate_distribution_id()
@@ -755,7 +755,7 @@ async def update_distribution_status(
     if not dist:
         return None
     
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None).isoformat()
     user_id = str(user.get("id", user.get("_id", "")))
     user_role = str(user.get("role", "")).lower()
 
@@ -843,7 +843,7 @@ async def confirm_receipt(
         except (json.JSONDecodeError, TypeError):
             device_ids = []
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None).isoformat()
 
     role_to_type = {
         "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
@@ -980,7 +980,7 @@ async def confirm_disputed_return(
     )
 
     sender_holder_type = role_to_type.get(sender_role, "pdic_staff")
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None).isoformat()
 
     async with get_db() as db:
         await db.execute(
@@ -1039,7 +1039,7 @@ async def cancel_distribution(distribution_id: str, user: dict) -> bool:
         raise ValueError("Cannot cancel a distribution that has already been confirmed")
     
     async with get_db() as db:
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         await db.execute(
             "UPDATE distributions SET status = ?, updated_at = ? WHERE id = ?",
             (DistributionStatus.CANCELLED.value, now, int(distribution_id))

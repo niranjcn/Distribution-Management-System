@@ -589,7 +589,7 @@ async def upload_defect_payment_bill(
         if len(content) > 8 * 1024 * 1024:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be 8MB or less")
 
-        file_name = f"defect_{defect_id}_{datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}{suffix}"
+        file_name = f"defect_{defect_id}_{datetime.now().replace(tzinfo=None).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}{suffix}"
         
         from app.services.rclone_storage import upload_file_to_rclone
         await upload_file_to_rclone("defect_payments", file_name, content)

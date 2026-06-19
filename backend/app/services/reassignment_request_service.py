@@ -22,10 +22,10 @@ async def create_reassignment_request(
     actor_name: str
 ) -> Dict[str, Any]:
     async with get_db() as db:
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         children_json = json.dumps(children)
 
-        year = datetime.now(timezone.utc).year
+        year = datetime.now().year
         cursor = await db.execute(
             "SELECT COUNT(*) FROM reassignment_requests WHERE request_id LIKE ?",
             (f"REASSIGN-{year}-%",)
@@ -157,7 +157,7 @@ async def reassign_users(
         direct_children = _get_direct_children(children)
 
         deleted_user_id = int(req["deleted_user_id"])
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         for child in direct_children:
             child_id = int(child["id"])
@@ -191,7 +191,7 @@ async def reject_request(request_id: str) -> Tuple[bool, str]:
         if req.get("status") != "pending":
             return False, f"Request is already {req.get('status')}"
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         await db.execute(
             "UPDATE reassignment_requests SET status = 'rejected', updated_at = ? WHERE id = ?",
             (now, int(request_id))

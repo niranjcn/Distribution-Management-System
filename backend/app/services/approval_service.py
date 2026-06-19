@@ -27,7 +27,7 @@ async def _ensure_default_routing_rows(db) -> None:
             """INSERT OR IGNORE INTO approval_role_routing
                (approval_type, admin_enabled, manager_enabled, staff_enabled, updated_by, updated_at)
                VALUES (?, 1, 1, 1, 'system', ?)""",
-            (approval_type, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()),
+            (approval_type, datetime.now().replace(tzinfo=None).isoformat()),
         )
 
 
@@ -70,7 +70,7 @@ async def update_role_routing_config(config: Dict[str, Any], actor: Dict[str, An
     actor_id = actor.get("id") or actor.get("_id")
     actor_name = actor.get("name") or "super_admin"
     updated_by = f"{actor_name} ({actor_id})" if actor_id else str(actor_name)
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None).isoformat()
 
     async with get_db() as db:
         await _ensure_default_routing_rows(db)
@@ -321,7 +321,7 @@ async def approve_request(
                     f"{approver_role.capitalize()} role is not allowed to process {approval.get('approval_type')} requests"
                 )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         await db.execute(
             """UPDATE approvals SET status = ?, approved_by = ?, approved_by_name = ?,
@@ -412,7 +412,7 @@ async def reject_request(
                     f"{approver_role.capitalize()} role is not allowed to process {approval.get('approval_type')} requests"
                 )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         await db.execute(
             """UPDATE approvals SET status = ?, approved_by = ?, approved_by_name = ?,

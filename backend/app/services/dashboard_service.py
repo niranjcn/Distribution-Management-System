@@ -112,7 +112,7 @@ async def get_dashboard_stats(user: Dict[str, Any]) -> Dict[str, Any]:
         approval_stats = await approval_service.get_approval_stats()
 
         # This month's distributions
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now().replace(tzinfo=None)
         month_start = datetime(now.year, now.month, 1).isoformat()
         async with get_db() as db:
             cursor = await db.execute(
@@ -560,7 +560,7 @@ async def track_client_activity(
 async def get_distribution_chart_data() -> list:
     """Get distribution data for charts"""
     data = []
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now().replace(tzinfo=None)
 
     async with get_db() as db:
         for i in range(11, -1, -1):
@@ -584,7 +584,7 @@ async def get_distribution_chart_data() -> list:
 async def get_defect_chart_data() -> list:
     """Get defect data for charts"""
     data = []
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now().replace(tzinfo=None)
 
     async with get_db() as db:
         for i in range(11, -1, -1):
@@ -730,7 +730,7 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str) -> Dic
         total_defects = (await cursor.fetchone())[0]
 
         # Defect trend (12 months)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now().replace(tzinfo=None)
         month_start = _month_start(now)
         defect_trend = []
         for i in range(11, -1, -1):
@@ -963,7 +963,7 @@ async def get_advanced_dashboard_metrics(user: Dict[str, Any]) -> Dict[str, Any]
             "reliability": {"summary": {}, "trend": []},
         }
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now().replace(tzinfo=None)
     month_start = _month_start(now)
     year_start = datetime(now.year, 1, 1)
 

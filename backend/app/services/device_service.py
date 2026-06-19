@@ -215,7 +215,7 @@ async def create_device(device_data: DeviceCreate, created_by: str, created_by_n
             if await cursor.fetchone():
                 raise ValueError("MAC address already exists")
         
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         dev_id = generate_device_id(device_data.device_type.value)
         metadata_payload = dict(device_data.metadata or {})
         if is_sb and box_type in {"HD", "OTT"}:
@@ -415,7 +415,7 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
             return await get_device_by_id(device_id)
         
         update_fields.append("updated_at = ?")
-        params.append(datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
+        params.append(datetime.now().replace(tzinfo=None).isoformat())
         params.append(int(device_id))
         
         await db.execute(f"UPDATE devices SET {', '.join(update_fields)} WHERE id = ?", params)
@@ -457,7 +457,7 @@ async def update_device_status(
         
         device = row_to_dict(row)
         old_status = device.get("status")
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         
         await db.execute(
             "UPDATE devices SET status = ?, updated_at = ? WHERE id = ?",
@@ -496,7 +496,7 @@ async def update_device_holder(
         
         device = row_to_dict(row)
         old_status = device.get("status")
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         
         await db.execute(
             """UPDATE devices SET current_holder_id = ?, current_holder_name = ?,
@@ -783,7 +783,7 @@ async def _add_device_history(
     location: str = None, notes: str = None
 ):
     """Add device history entry (uses existing db connection)"""
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None).isoformat()
     await db.execute(
         """INSERT INTO device_history (device_id, action, from_user_id, from_user_name,
             to_user_id, to_user_name, status_before, status_after, location, notes,
@@ -829,7 +829,7 @@ async def repair_device_holder_from_history(device_id: str) -> Optional[Dict[str
         }
         holder_type   = role_to_type.get(recipient["role"], "noc")
         device_status = DeviceStatus.IN_USE.value if recipient["role"] == "operator" else DeviceStatus.DISTRIBUTED.value
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
 
         await db.execute(
             """UPDATE devices

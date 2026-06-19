@@ -51,7 +51,7 @@ async def authenticate_user(email: str, password: str) -> Optional[dict]:
         locked_until_raw = user.get("locked_until")
         if locked_until_raw:
             locked_until = _parse_datetime(locked_until_raw)
-            if locked_until and datetime.now(timezone.utc).replace(tzinfo=None) < locked_until:
+            if locked_until and datetime.now().replace(tzinfo=None) < locked_until:
                 raise HTTPException(
                     status_code=status.HTTP_423_LOCKED,
                     detail="Account temporarily locked. Try again later."
@@ -69,7 +69,7 @@ async def authenticate_user(email: str, password: str) -> Optional[dict]:
             attempts = int(user.get("failed_login_attempts") or 0) + 1
             lock_time = None
             if attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
-                lock_time = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)).isoformat()
+                lock_time = (datetime.now().replace(tzinfo=None) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)).isoformat()
 
             await db.execute(
                 "UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?",
@@ -84,7 +84,7 @@ async def authenticate_user(email: str, password: str) -> Optional[dict]:
         )
         
         # Update last login
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         await db.execute(
             "UPDATE users SET last_login = ? WHERE id = ?",
             (now, int(user["id"]))
@@ -180,7 +180,7 @@ async def refresh_access_token(refresh_token: str) -> Optional[dict]:
 
 async def blacklist_token(token: str) -> None:
     """Blacklist a JWT token until it expires."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now().replace(tzinfo=None)
     expires_at = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     try:
@@ -189,7 +189,7 @@ async def blacklist_token(token: str) -> None:
         if exp is not None:
             # jose can return exp as epoch seconds; support datetime-like values defensively.
             if isinstance(exp, (int, float)):
-                expires_at = datetime.utcfromtimestamp(exp)
+                expires_at = datetime.fromtimestamp(exp)
             elif isinstance(exp, str):
                 expires_at = datetime.fromisoformat(exp.replace("Z", "+00:00")).replace(tzinfo=None)
     except (JWTError, ValueError, TypeError):
@@ -214,7 +214,7 @@ async def blacklist_token(token: str) -> None:
 async def is_token_blacklisted(token: str) -> bool:
     """Check if a token hash exists in blacklist and is still active."""
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now_iso = datetime.now().replace(tzinfo=None).isoformat()
 
     async with get_db() as db:
         await db.execute(
@@ -315,7 +315,7 @@ async def complete_forced_credential_update(
                 detail="New password must be different from current password",
             )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         await db.execute(
             """UPDATE users
             SET email = ?, password_hash = ?, force_email_change = 0, force_password_change = 0, updated_at = ?
@@ -353,7 +353,7 @@ async def change_user_password(user_id: str, current_password: str, new_password
             return False
         
         new_hash = get_password_hash(new_password)
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         
         await db.execute(
             "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",

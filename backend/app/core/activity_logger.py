@@ -142,7 +142,7 @@ async def log_api_activity(
     description: Optional[str] = None,
 ) -> None:
     """Persist API activity log without interrupting request flow."""
-    created_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    created_at = datetime.now().replace(tzinfo=None).isoformat()
     final_description = description or f"{method} {path} returned {status_code}"
 
     try:

@@ -3,7 +3,7 @@ const pad2 = (value) => String(value).padStart(2, '0');
 const formatDate = (date) => {
   const day = pad2(date.getDate());
   const month = pad2(date.getMonth() + 1);
-  const year = String(date.getFullYear()).slice(-2);
+  const year = date.getFullYear();
   return `${day}/${month}/${year}`;
 };
 

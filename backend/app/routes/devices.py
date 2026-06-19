@@ -539,7 +539,7 @@ async def request_device_edit(
         if not proposed_changes:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid device edit fields provided")
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None).isoformat()
         request_id = f"CR-{uuid.uuid4().hex[:8].upper()}"
 
         from app.database import get_db
@@ -977,7 +977,7 @@ async def bulk_upload_devices(
                     }
                 }
 
-            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            now = datetime.now().replace(tzinfo=None).isoformat()
             created_by_name = current_user.get("name") or current_user.get("email") or "PDIC Staff"
             insert_sql = """INSERT INTO devices (
                 device_id, device_type, model, serial_number, mac_address,
