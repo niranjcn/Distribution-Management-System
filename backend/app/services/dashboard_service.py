@@ -175,7 +175,30 @@ async def get_dashboard_stats(user: Dict[str, Any]) -> Dict[str, Any]:
             received = (await cursor.fetchone())[0]
             cursor = await db.execute("SELECT COUNT(*) FROM distributions WHERE from_user_id = ? AND status = 'pending'", (user_id,))
             pending = (await cursor.fetchone())[0]
-        operator_stats_data = await operator_service.get_operator_stats(user_id)
+
+            cursor = await db.execute("SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = ?", (int(user_id),))
+            sub_dist_manager_ids = [row[0] for row in await cursor.fetchall()]
+            candidate_cluster_parent_ids = [int(user_id)] + sub_dist_manager_ids
+            if candidate_cluster_parent_ids:
+                placeholders = ",".join("?" * len(candidate_cluster_parent_ids))
+                cursor = await db.execute(
+                    f"SELECT id FROM users WHERE role = 'cluster' AND parent_id IN ({placeholders})",
+                    tuple(candidate_cluster_parent_ids)
+                )
+                cluster_ids = [row[0] for row in await cursor.fetchall()]
+            else:
+                cluster_ids = []
+
+            if cluster_ids:
+                placeholders = ",".join("?" * len(cluster_ids))
+                cursor = await db.execute(
+                    f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND parent_id IN ({placeholders})",
+                    tuple(cluster_ids)
+                )
+                operator_count = (await cursor.fetchone())[0]
+            else:
+                operator_count = 0
+
         stats = {
             "my_devices": my_devices,
             "received_devices": my_devices,
@@ -183,8 +206,7 @@ async def get_dashboard_stats(user: Dict[str, Any]) -> Dict[str, Any]:
             "distributions_sent": sent,
             "distributions_received": received,
             "pending_distributions": pending,
-            "operator_count": operator_stats_data.get("total", 0),
-            "operators": operator_stats_data
+            "operator_count": operator_count,
         }
 
     elif role == "sub_distribution_manager":

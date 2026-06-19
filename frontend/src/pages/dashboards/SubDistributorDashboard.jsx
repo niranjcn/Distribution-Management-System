@@ -63,7 +63,7 @@ const SubDistributorDashboard = () => {
             ? devicesAPI.getMyOverview({ show_all: true }).catch(() => ({ data: { all_under_me: [] } }))
             : devicesAPI.getDevices().catch(() => ({ data: [] })),
           distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(() => ({ data: [] })),
-          usersAPI.getUsers({ role: 'operator' }).catch(() => ({ data: [] })),
+          usersAPI.getUsers({ role: 'operator', page_size: 1000000 }).catch(() => ({ data: [] })),
           defectsAPI.getDefects().catch(() => ({ data: [] })),
           returnsAPI.getReturns().catch(() => ({ data: [] }))
         ]);
