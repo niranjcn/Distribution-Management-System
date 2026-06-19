@@ -1266,13 +1266,14 @@ async def confirm_replacement_receipt(
         await db.commit()
 
     # Assign replacement device to the confirming user account (not stale holder data)
+    replacement_status = DeviceStatus.IN_USE.value if confirmer_role == "operator" else DeviceStatus.DISTRIBUTED.value
     updated_device = await device_service.update_device_holder(
         device_id=str(new_device["id"]),
         holder_id=confirmer_id,
         holder_name=confirmer_name,
         holder_type=confirmer_role,
         location=confirmer_name,
-        status=DeviceStatus.DISTRIBUTED.value,
+        status=replacement_status,
         performed_by=confirmer_id,
         performed_by_name=confirmer_name,
         from_user_id=None,
