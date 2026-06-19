@@ -4,6 +4,7 @@ from typing import Optional
 
 from app.services import reassignment_request_service
 from app.middleware.auth_middleware import get_current_user
+from app.core.activity_logger import log_business_activity
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -81,9 +82,15 @@ async def reassign_users(
             new_parent_id=int(new_parent_id),
             new_parent_name=new_parent_name,
             new_parent_role=new_parent_role,
+            deleted_by_user=current_user,
         )
         if not success:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/reassign",
+            description=f"{current_user.get('name') or current_user.get('email')} approved reassignment request #{request_id}: {message}",
+        )
         return {"success": True, "message": message}
     except HTTPException:
         raise
@@ -105,6 +112,11 @@ async def reject_request(
         success, message = await reassignment_request_service.reject_request(request_id)
         if not success:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/reassign",
+            description=f"{current_user.get('name') or current_user.get('email')} rejected reassignment request #{request_id}",
+        )
         return {"success": True, "message": message}
     except HTTPException:
         raise
