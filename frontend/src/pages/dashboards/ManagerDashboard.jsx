@@ -368,28 +368,6 @@ const ManagerDashboard = () => {
           )}
         </Card>
 
-        <Card
-          title="Pending Returns"
-          icon={RotateCcw}
-          action={
-            <Link to="/returns" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
-              View all <ArrowRight className="w-4 h-4" />
-            </Link>
-          }
-        >
-          <div className="space-y-3">
-            {returnRequests.filter((r) => r.status !== 'approved').slice(0, 4).map((ret) => (
-              <div key={ret.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{ret.device_name || ret.device_type || 'Unknown'}</p>
-                  <p className="text-xs text-gray-500">{ret.reason}</p>
-                  <p className="text-xs text-gray-400 mt-1">By: {ret.initiated_by_name || 'Unknown'}</p>
-                </div>
-                <StatusBadge status={ret.status} />
-              </div>
-            ))}
-          </div>
-        </Card>
       </div>
 
       <Card>

@@ -104,12 +104,11 @@ const OperatorDashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Assigned Devices" value={stats.assigned_devices || myDevices.length} icon={Box} color="blue" />
         <StatCard title="Active" value={stats.active_devices || myDevices.filter(d => d.status === 'active').length} icon={Cpu} color="green" />
         <StatCard title="In Use" value={stats.in_use_devices || myDevices.filter(d => d.status === 'in_use').length} icon={Cpu} color="purple" />
         <StatCard title="My Defect Reports" value={stats.defect_reports || myDefects.length} icon={AlertTriangle} color="red" />
-        <StatCard title="Pending Returns" value={stats.pending_returns || myReturns.filter(r => r.status === 'pending').length} icon={RotateCcw} color="yellow" />
       </div>
 
       <Card title="My Device Active vs Inactive" icon={Cpu} padding={false}>
