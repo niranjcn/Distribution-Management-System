@@ -362,6 +362,38 @@ async def update_user_permissions(user_id: str, permissions: dict) -> Optional[D
         return await get_user_by_id(user_id)
 
 
+async def reassign_user(
+    user_id: str,
+    target_user: Dict[str, Any],
+    new_parent_id: str,
+    new_parent: Dict[str, Any],
+    performed_by: Dict[str, Any],
+) -> Dict[str, Any]:
+    target_role = normalize_role(target_user.get("role"))
+    now = datetime.now().replace(tzinfo=None).isoformat()
+
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE users SET parent_id = ?, updated_at = ? WHERE id = ?",
+            (int(new_parent_id), now, int(user_id))
+        )
+        await db.commit()
+
+    result = {
+        "message": f"{target_role.title()} {target_user.get('name')} reassigned to {new_parent.get('name')}",
+        "data": {
+            "user_id": user_id,
+            "user_name": target_user.get("name"),
+            "user_role": target_role,
+            "old_parent_id": str(target_user.get("parent_id", "")),
+            "new_parent_id": new_parent_id,
+            "new_parent_name": new_parent.get("name"),
+        }
+    }
+
+    return result
+
+
 async def get_children_users(parent_id: str) -> List[Dict[str, Any]]:
     """Get all users that are children of a given parent"""
     async with get_db() as db:

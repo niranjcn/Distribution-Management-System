@@ -119,6 +119,13 @@ const Users = () => {
   // Pending reassignment count for super admin
   const [pendingReassignCount, setPendingReassignCount] = useState(0);
 
+  // Manual reassign state
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [reassignTarget, setReassignTarget] = useState(null);
+  const [reassignNewParentId, setReassignNewParentId] = useState('');
+  const [reassignParentOptions, setReassignParentOptions] = useState([]);
+  const [reassigning, setReassigning] = useState(false);
+
   // Which roles the current user can create
   const creatableRoles = ALLOWED_ROLES_BY_CREATOR[currentUser?.role] || [];
   const canCreateUsers = creatableRoles.length > 0;
@@ -338,6 +345,15 @@ const Users = () => {
           )}
           {['super_admin'].includes(currentUser?.role) && (
             <>
+              {(row.role === 'cluster' || row.role === 'operator') && (
+                <button
+                  onClick={() => openReassignModal(row)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                  title="Reassign"
+                >
+                  <Network className="w-4 h-4 text-amber-500" />
+                </button>
+              )}
               {String(row.id) !== String(currentUser.id) && row.role !== 'super_admin' && (
                 <button
                   onClick={() => { setSelectedUser(row); setShowDeleteModal(true); }}
@@ -434,6 +450,40 @@ const Users = () => {
       }
     } catch (error) {
       showToast(error.message || 'Failed to delete user', 'error');
+    }
+  };
+
+  const openReassignModal = async (user) => {
+    setReassignTarget(user);
+    setReassignNewParentId('');
+
+    try {
+      if (user.role === 'cluster') {
+        const res = await usersAPI.getUsers({ role: 'sub_distributor', page_size: USERS_FETCH_PAGE_SIZE });
+        setReassignParentOptions(res.data || []);
+      } else if (user.role === 'operator') {
+        const res = await usersAPI.getUsers({ role: 'cluster', page_size: USERS_FETCH_PAGE_SIZE });
+        setReassignParentOptions(res.data || []);
+      }
+    } catch (err) {
+      showToast('Failed to load parent options', 'error');
+    }
+    setShowReassignModal(true);
+  };
+
+  const handleReassignUser = async () => {
+    if (!reassignTarget || !reassignNewParentId) return;
+    setReassigning(true);
+    try {
+      const res = await usersAPI.reassignUser(reassignTarget.id, { new_parent_id: reassignNewParentId });
+      showToast(res.message || 'User reassigned successfully', 'success');
+      setShowReassignModal(false);
+      setReassignTarget(null);
+      setReassignNewParentId('');
+    } catch (err) {
+      showToast(err.message || 'Failed to reassign user', 'error');
+    } finally {
+      setReassigning(false);
     }
   };
 
@@ -699,6 +749,13 @@ const Users = () => {
                         >
                           <Eye className="w-4 h-4 text-gray-500" />
                         </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); openReassignModal(cluster); }}
+                          className="p-1.5 hover:bg-amber-50 rounded"
+                          title="Reassign cluster"
+                        >
+                          <Network className="w-4 h-4 text-amber-500" />
+                        </button>
                         {isCollapsed
                           ? <ChevronRight className="w-4 h-4 text-gray-400" />
                           : <ChevronDown className="w-4 h-4 text-gray-400" />}
@@ -733,6 +790,13 @@ const Users = () => {
                                 title="View operator"
                               >
                                 <Eye className="w-3.5 h-3.5 text-gray-500" />
+                              </button>
+                              <button
+                                onClick={() => { openReassignModal(op); }}
+                                className="p-1 hover:bg-amber-50 rounded"
+                                title="Reassign operator"
+                              >
+                                <Network className="w-3.5 h-3.5 text-amber-500" />
                               </button>
                             </div>
                           </div>
@@ -1470,6 +1534,64 @@ const Users = () => {
             </>
           )}
         </div>
+      </Modal>
+
+      {/* Reassign Modal */}
+      <Modal
+        isOpen={showReassignModal}
+        onClose={() => { setShowReassignModal(false); setReassignTarget(null); setReassignNewParentId(''); }}
+        title={`Reassign ${reassignTarget?.role === 'cluster' ? 'Cluster' : 'Operator'}`}
+        size="md"
+      >
+        {reassignTarget && (
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <p className="text-sm text-amber-800">
+                Reassigning <strong>{reassignTarget.name}</strong> ({reassignTarget.role === 'cluster' ? 'Cluster' : 'Operator'})
+                {reassignTarget.role === 'cluster'
+                  ? ' will move all operators under this cluster along with it.'
+                  : ' to a different cluster.'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {reassignTarget.role === 'cluster' ? 'New Sub-Distributor' : 'New Cluster'}
+                <span className="text-red-500"> *</span>
+              </label>
+              <select
+                value={reassignNewParentId}
+                onChange={(e) => setReassignNewParentId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="">
+                  Select {reassignTarget.role === 'cluster' ? 'Sub-Distributor' : 'Cluster'}...
+                </option>
+                {reassignParentOptions
+                  .filter(p => String(p.id) !== String(reassignTarget.parent_id))
+                  .map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+              </select>
+              {reassignParentOptions.length === 0 && (
+                <p className="text-xs text-gray-400 mt-1">Loading options...</p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => { setShowReassignModal(false); setReassignTarget(null); setReassignNewParentId(''); }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleReassignUser} disabled={reassigning || !reassignNewParentId}>
+                {reassigning ? 'Reassigning...' : 'Reassign'}
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Admin User Detail Modal */}

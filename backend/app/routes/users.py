@@ -447,6 +447,73 @@ def _count_total_children(children: list) -> int:
     return count
 
 
+@router.post("/{user_id}/reassign")
+async def reassign_user(
+    user_id: str,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    actor_role = normalize_role(current_user.get("role"))
+    if actor_role != SUPER_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super admins can reassign users")
+
+    new_parent_id = body.get("new_parent_id")
+    if not new_parent_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="new_parent_id is required")
+
+    target_user = await user_service.get_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    target_role = normalize_role(target_user.get("role"))
+    if target_role not in {CLUSTER, OPERATOR}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only clusters and operators can be reassigned")
+
+    new_parent = await user_service.get_user_by_id(new_parent_id)
+    if not new_parent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="New parent not found")
+
+    new_parent_role = normalize_role(new_parent.get("role"))
+
+    if target_role == CLUSTER and new_parent_role != SUB_DISTRIBUTOR:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A cluster can only be reassigned to a sub-distributor",
+        )
+
+    if target_role == OPERATOR and new_parent_role != CLUSTER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An operator can only be reassigned to a cluster",
+        )
+
+    try:
+        result = await user_service.reassign_user(
+            user_id=user_id,
+            target_user=target_user,
+            new_parent_id=new_parent_id,
+            new_parent=new_parent,
+            performed_by=current_user,
+        )
+
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/reassign",
+            description=(
+                f"{actor_name} reassigned {target_role} {target_user.get('name')} "
+                f"to {new_parent_role} {new_parent.get('name')}"
+            ),
+        )
+
+        return {"success": True, "message": result["message"], "data": result.get("data")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
+
+
 @router.delete("/{user_id}")
 async def delete_user(request: Request, user_id: str, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))

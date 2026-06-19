@@ -1272,7 +1272,7 @@ async def confirm_replacement_receipt(
         holder_name=confirmer_name,
         holder_type=confirmer_role,
         location=confirmer_name,
-        status=DeviceStatus.IN_USE.value,
+        status=DeviceStatus.DISTRIBUTED.value,
         performed_by=confirmer_id,
         performed_by_name=confirmer_name,
         from_user_id=None,
