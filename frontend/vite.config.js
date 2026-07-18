@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'kannurvision-logo.png'],
+      includeAssets: ['favicon.ico', 'logo.png'],
       manifest: {
         name: 'KannurVision PDIC — Distribution Management',
         short_name: 'KannurVision PDIC',
