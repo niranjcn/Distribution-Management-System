@@ -43,3 +43,7 @@ pnpm-debug.log*
 
 # Certificates
 nginx/certs/
+
+#md files
+DEPLOYMENT.md
+DEPLOYMENT.pdf
