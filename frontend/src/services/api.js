@@ -1315,6 +1315,11 @@ export const dashboardAPI = {
     const response = await apiRequest(`/dashboard/user-kpi/${userId}`);
     return response;
   },
+
+  getDistributionDeviceAnalytics: async () => {
+    const response = await apiRequest('/dashboard/distribution-device-analytics');
+    return response;
+  },
 };
 
 // Change Requests API

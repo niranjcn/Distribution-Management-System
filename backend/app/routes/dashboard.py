@@ -187,6 +187,28 @@ async def get_advanced_dashboard_metrics(
         )
 
 
+@router.get("/distribution-device-analytics")
+async def get_distribution_device_analytics(
+    current_user: dict = Depends(require_admin_or_md)
+):
+    """Get distribution device analytics for admin/manager dashboards."""
+    try:
+        data = await dashboard_service.get_distribution_device_analytics()
+        return {
+            "success": True,
+            "message": "Distribution device analytics retrieved successfully",
+            "data": data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
 @router.get("/activities")
 async def get_admin_activities(
     page: int = Query(1, ge=1),

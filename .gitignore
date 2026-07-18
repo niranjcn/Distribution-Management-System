@@ -47,3 +47,6 @@ nginx/certs/
 #md files
 DEPLOYMENT.md
 DEPLOYMENT.pdf
+TODO.md
+TODO.pdf
+ENGINEERING_AUDIT.md

@@ -1283,3 +1283,143 @@ async def get_advanced_dashboard_metrics(user: Dict[str, Any]) -> Dict[str, Any]
         },
     }
 
+
+async def get_distribution_device_analytics() -> Dict[str, Any]:
+    """Get distribution device analytics: sent, remaining, by type and manufacturer."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            """SELECT
+                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
+                   COUNT(*) AS total
+               FROM devices
+               WHERE status IN ('distributed', 'in_use')
+               GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
+               ORDER BY total DESC"""
+        )
+        sent_by_type_rows = await cursor.fetchall()
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM devices WHERE status IN ('distributed', 'in_use')"
+        )
+        total_sent = (await cursor.fetchone())[0]
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM devices WHERE status = 'available'"
+        )
+        remaining_available = (await cursor.fetchone())[0]
+
+        cursor = await db.execute(
+            """SELECT
+                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
+                   COUNT(*) AS total
+               FROM devices
+               WHERE status = 'available'
+               GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
+               ORDER BY total DESC"""
+        )
+        remaining_by_type_rows = await cursor.fetchall()
+
+        cursor = await db.execute(
+            """SELECT
+                   COALESCE(NULLIF(TRIM(manufacturer), ''), 'Unknown') AS manufacturer,
+                   COUNT(*) AS total
+               FROM devices
+               WHERE status IN ('distributed', 'in_use')
+               GROUP BY COALESCE(NULLIF(TRIM(manufacturer), ''), 'Unknown')
+               ORDER BY total DESC"""
+        )
+        by_manufacturer_rows = await cursor.fetchall()
+
+        cursor = await db.execute(
+            """SELECT
+                   CAST(d.current_holder_id AS TEXT) AS holder_id,
+                   COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown') AS holder_name,
+                   COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown') AS device_type,
+                   COUNT(*) AS total
+               FROM devices d
+               INNER JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id AND u.role = 'sub_distributor'
+               WHERE d.status IN ('distributed', 'in_use')
+               AND d.current_holder_id IS NOT NULL
+               GROUP BY
+                   CAST(d.current_holder_id AS TEXT),
+                   COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown'),
+                   COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown')
+               ORDER BY holder_name, device_type"""
+        )
+        per_holder_rows = await cursor.fetchall()
+
+        cursor = await db.execute(
+            """SELECT
+                   CAST(d.current_holder_id AS TEXT) AS holder_id,
+                   COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown') AS holder_name,
+                   COUNT(*) AS total
+               FROM devices d
+               INNER JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id AND u.role = 'sub_distributor'
+               WHERE d.status = 'available'
+               AND d.current_holder_id IS NOT NULL
+               GROUP BY
+                   CAST(d.current_holder_id AS TEXT),
+                   COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown')
+               ORDER BY total DESC"""
+        )
+        per_holder_available_rows = await cursor.fetchall()
+
+    remaining_by_type: Dict[str, int] = {
+        row["device_type"]: int(row["total"]) for row in remaining_by_type_rows
+    }
+    sent_by_type = [
+        {
+            "device_type": row["device_type"],
+            "sent": int(row["total"]),
+            "remaining": remaining_by_type.get(row["device_type"], 0),
+        }
+        for row in sent_by_type_rows
+    ]
+
+    by_manufacturer = [
+        {"manufacturer": row["manufacturer"], "total": int(row["total"])}
+        for row in by_manufacturer_rows
+    ]
+
+    holder_map: Dict[str, Dict[str, Any]] = {}
+    for row in per_holder_rows:
+        hid = row["holder_id"]
+        if hid not in holder_map:
+            holder_map[hid] = {
+                "holder_id": hid,
+                "holder_name": row["holder_name"],
+                "total_sent": 0,
+                "by_type": {},
+            }
+        count = int(row["total"])
+        holder_map[hid]["total_sent"] += count
+        holder_map[hid]["by_type"][row["device_type"]] = (
+            holder_map[hid]["by_type"].get(row["device_type"], 0) + count
+        )
+
+    available_map: Dict[str, int] = {}
+    for row in per_holder_available_rows:
+        available_map[row["holder_id"]] = int(row["total"])
+
+    per_holder = []
+    for hid, payload in holder_map.items():
+        per_holder.append({
+            "holder_id": hid,
+            "holder_name": payload["holder_name"],
+            "total_sent": payload["total_sent"],
+            "remaining_available": available_map.get(hid, 0),
+            "type_breakdown": [
+                {"device_type": dt, "count": c}
+                for dt, c in sorted(payload["by_type"].items(), key=lambda x: x[1], reverse=True)
+            ],
+        })
+    per_holder.sort(key=lambda x: x["total_sent"], reverse=True)
+
+    return {
+        "total_sent_to_distribution": total_sent,
+        "remaining_available_devices": remaining_available,
+        "sent_by_type": sent_by_type,
+        "by_manufacturer": by_manufacturer,
+        "per_holder_breakdown": per_holder,
+    }
+

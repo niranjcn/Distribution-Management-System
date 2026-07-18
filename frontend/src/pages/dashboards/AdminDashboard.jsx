@@ -32,6 +32,7 @@ import {
   Radar,
   RotateCcw,
   ShieldCheck,
+  Truck,
   UserCog,
   Users,
   Wrench,
@@ -94,21 +95,24 @@ const AdminDashboard = () => {
   const [userKpi, setUserKpi] = useState(null);
   const [kpiLoading, setKpiLoading] = useState(false);
   const [pendingReassignments, setPendingReassignments] = useState(0);
+  const [distribAnalytics, setDistribAnalytics] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [statsRes, advancedRes, usersRes, defectsRes] = await Promise.all([
+        const [statsRes, advancedRes, usersRes, defectsRes, distribAnalyticsRes] = await Promise.all([
           dashboardAPI.getStats().catch(() => ({ data: {} })),
           dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } } })),
           usersAPI.getUsers().catch(() => ({ data: [] })),
           defectsAPI.getDefects().catch(() => ({ data: [] })),
+          dashboardAPI.getDistributionDeviceAnalytics().catch(() => ({ data: null })),
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } });
         setUsers(usersRes.data || []);
         setDefectReports(defectsRes.data || []);
+        setDistribAnalytics(distribAnalyticsRes.data || null);
 
         try {
           const activitiesRes = await dashboardAPI.getRecentActivities();
@@ -391,6 +395,105 @@ const AdminDashboard = () => {
         <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"><p className="text-xs text-gray-400 uppercase tracking-wide">Clusters</p><p className="text-xl font-bold text-gray-800 mt-1">{kpis.total_clusters ?? 0}</p></div>
         <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"><p className="text-xs text-gray-400 uppercase tracking-wide">Staff</p><p className="text-xl font-bold text-gray-800 mt-1">{kpis.total_staff ?? 0}</p></div>
       </div>
+
+      {distribAnalytics && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-slideUp">
+            <div className="bg-gradient-to-br from-blue-50 to-white border border-blue-200 rounded-xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-blue-500 uppercase tracking-wider">Sent to Distribution</p>
+              <p className="text-2xl font-bold text-blue-700 mt-1">{distribAnalytics.total_sent_to_distribution ?? 0}</p>
+              <p className="text-xs text-blue-400 mt-0.5">Devices distributed/in use</p>
+            </div>
+            <div className="bg-gradient-to-br from-green-50 to-white border border-green-200 rounded-xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-green-500 uppercase tracking-wider">Remaining Available</p>
+              <p className="text-2xl font-bold text-green-700 mt-1">{distribAnalytics.remaining_available_devices ?? 0}</p>
+              <p className="text-xs text-green-400 mt-0.5">In stock</p>
+            </div>
+            {(distribAnalytics.sent_by_type || []).map((item, i) => (
+              <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{item.device_type}</p>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-center flex-1">
+                    <p className="text-lg font-bold text-indigo-700">{item.sent}</p>
+                    <p className="text-[10px] text-indigo-400 font-medium uppercase tracking-wide mt-0.5">Distributed</p>
+                  </div>
+                  <div className="w-px h-10 bg-gray-200" />
+                  <div className="text-center flex-1">
+                    <p className="text-lg font-bold text-emerald-700">{item.remaining}</p>
+                    <p className="text-[10px] text-emerald-400 font-medium uppercase tracking-wide mt-0.5">Remaining</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
+            {distribAnalytics.by_manufacturer && distribAnalytics.by_manufacturer.length > 0 && (
+              <Card title="Sent Devices by Manufacturer" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
+                        <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Manufacturer</th>
+                        <th className="text-right px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Sent</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {distribAnalytics.by_manufacturer.map((item, i) => (
+                        <tr key={i} className="hover:bg-gray-50/80 transition-colors">
+                          <td className="px-5 py-3.5 text-sm font-medium text-gray-800">{item.manufacturer}</td>
+                          <td className="px-5 py-3.5 text-right">
+                            <span className="inline-flex items-center justify-center min-w-[2.5rem] px-2.5 py-1 rounded-full text-sm font-bold bg-indigo-50 text-indigo-700">{item.total}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+
+            {distribAnalytics.per_holder_breakdown && distribAnalytics.per_holder_breakdown.length > 0 && (
+              <Card title="Per-Holder Distribution Breakdown" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
+                        <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Holder</th>
+                        <th className="text-right px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Sent</th>
+                        <th className="text-right px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Remaining</th>
+                        <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Type Breakdown</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {distribAnalytics.per_holder_breakdown.map((item, i) => (
+                        <tr key={i} className="hover:bg-gray-50/80 transition-colors">
+                          <td className="px-5 py-3.5 text-sm font-medium text-gray-800">{item.holder_name}</td>
+                          <td className="px-5 py-3.5 text-right font-semibold text-gray-800">{item.total_sent}</td>
+                          <td className="px-5 py-3.5 text-right">
+                            <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2.5 py-1 rounded-full text-sm font-bold ${
+                              item.remaining_available > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
+                            }`}>{item.remaining_available}</span>
+                          </td>
+                          <td className="px-5 py-3.5 text-gray-600">
+                            <div className="flex flex-wrap gap-1.5">
+                              {(item.type_breakdown || []).map((t, j) => (
+                                <span key={j} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
+                                  {t.device_type}: {t.count}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </div>
+        </>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-slideUp">
         <Card title="Device Active vs Inactive" icon={ShieldCheck} className="industrial-chart-card" padding={false}>
