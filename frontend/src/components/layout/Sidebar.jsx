@@ -91,6 +91,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     const roleMenus = {
       [ROLES.SUPER_ADMIN]: [
         ...commonItems,
+        { path: '/activities', icon: FileText, label: 'Activities' },
         {
           key: 'users',
           icon: Users,
@@ -131,12 +132,12 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/returns', icon: RotateCcw, label: 'Returns' },
         { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
         { path: '/reports', icon: BarChart3, label: 'Reports' },
-        { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],
       [ROLES.MD_DIRECTOR]: [
         ...commonItems,
+        { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/users', icon: Users, label: 'Users (Read Only)' },
         { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
         { path: '/devices', icon: Box, label: 'All Devices' },
@@ -147,7 +148,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
         { path: '/returns', icon: RotateCcw, label: 'Returns' },
         { path: '/reports', icon: BarChart3, label: 'Reports' },
-        { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],

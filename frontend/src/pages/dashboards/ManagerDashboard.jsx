@@ -21,14 +21,9 @@ import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
 import {
   Activity,
-  Boxes,
-  CheckSquare,
   Clock,
   Cpu,
-  HardHat,
   Loader2,
-  Radar,
-  RotateCcw,
   Truck,
   Wrench,
   ArrowRight
@@ -166,22 +161,6 @@ const ManagerDashboard = () => {
     ],
   }), [charts.defect_trend_12m]);
 
-  const distributionTrendData = useMemo(() => ({
-    labels: (charts.distribution_trend_12m || []).map((d) => d.month),
-    datasets: [
-      {
-        label: 'Total',
-        data: (charts.distribution_trend_12m || []).map((d) => d.total),
-        backgroundColor: '#64748b',
-      },
-      {
-        label: 'Delivered',
-        data: (charts.distribution_trend_12m || []).map((d) => d.delivered),
-        backgroundColor: '#10b981',
-      },
-    ],
-  }), [charts.distribution_trend_12m]);
-
   const replacementData = useMemo(() => ({
     labels: ['Confirmed', 'Pending Confirmation'],
     datasets: [{
@@ -195,72 +174,6 @@ const ManagerDashboard = () => {
     }],
   }), [charts.replacement_pipeline]);
 
-  const returnStatusData = useMemo(() => ({
-    labels: ['Pending', 'Approved', 'Received', 'Rejected'],
-    datasets: [{
-      label: 'Returns',
-      data: [
-        charts.returns_by_status?.pending || 0,
-        charts.returns_by_status?.approved || 0,
-        charts.returns_by_status?.received || 0,
-        charts.returns_by_status?.rejected || 0,
-      ],
-      backgroundColor: ['#f59e0b', '#3b82f6', '#10b981', '#ef4444'],
-      borderColor: '#FFFFFF',
-      borderWidth: 1,
-    }],
-  }), [charts.returns_by_status]);
-
-  const workforceAccountSplitData = useMemo(() => ({
-    labels: ['Sub Distributors', 'Clusters', 'Operators'],
-    datasets: [
-      {
-        label: 'Active Accounts',
-        data: [
-          charts.sub_distributor_account_active_split?.active || 0,
-          charts.cluster_account_active_split?.active || 0,
-          charts.operator_account_active_split?.active || 0,
-        ],
-        backgroundColor: '#10b981',
-      },
-      {
-        label: 'Inactive Accounts',
-        data: [
-          charts.sub_distributor_account_active_split?.inactive || 0,
-          charts.cluster_account_active_split?.inactive || 0,
-          charts.operator_account_active_split?.inactive || 0,
-        ],
-        backgroundColor: '#ef4444',
-      },
-    ],
-  }), [charts]);
-
-  const workforceDeviceSplitData = useMemo(() => ({
-    labels: ['Sub Distributor Devices', 'Cluster Devices', 'Operator Devices'],
-    datasets: [
-      {
-        label: 'Active Devices',
-        data: [
-          charts.sub_distributor_device_active_split?.active || 0,
-          charts.cluster_device_active_split?.active || 0,
-          charts.operator_device_active_split?.active || 0,
-        ],
-        backgroundColor: '#3b82f6',
-      },
-      {
-        label: 'Inactive Devices',
-        data: [
-          charts.sub_distributor_device_active_split?.inactive || 0,
-          charts.cluster_device_active_split?.inactive || 0,
-          charts.operator_device_active_split?.inactive || 0,
-        ],
-        backgroundColor: '#f59e0b',
-      },
-    ],
-  }), [charts]);
-
-
-
   return (
     <div className="space-y-6">
       <div className="industrial-hero relative overflow-hidden rounded-2xl p-5 sm:p-6 animate-fadeIn">
@@ -271,16 +184,13 @@ const ManagerDashboard = () => {
         </div>
       </div>
 
-      <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
-      {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
-
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 animate-slideUp">
-        <StatCard title="Total Devices" value={kpis.total_devices || stats.total_devices || 0} description="Registered devices" icon={Boxes} color="total" />
-        <StatCard title="Active Devices" value={kpis.active_devices || stats.active_devices || 0} description="Currently active" icon={Cpu} color="online" />
-        <StatCard title="Defects (Month)" value={kpis.defects_this_month || 0} description="This month" icon={HardHat} color="offline" />
-        <StatCard title="Defects (Year)" value={kpis.defects_this_year || 0} description="This year" icon={Radar} color="indigo" />
-        <StatCard title="Awaiting Receipt" value={kpis.pending_receipts || stats.pending_receipts || 0} description="Pending receipt" icon={CheckSquare} color="pending" />
-        <StatCard title="Replacements" value={kpis.replacements_total || 0} description="Total" icon={Wrench} color="purple" />
+        <StatCard title="Total Devices" value={kpis.total_devices || stats.total_devices || 0} description="Registered devices" color="total" />
+        <StatCard title="Active Devices" value={kpis.active_devices || stats.active_devices || 0} description="Currently active" color="online" />
+        <StatCard title="Defects (Month)" value={kpis.defects_this_month || 0} description="This month" color="offline" />
+        <StatCard title="Defects (Year)" value={kpis.defects_this_year || 0} description="This year" color="indigo" />
+        <StatCard title="Awaiting Receipt" value={kpis.pending_receipts || stats.pending_receipts || 0} description="Pending receipt" color="pending" />
+        <StatCard title="Replacements" value={kpis.replacements_total || 0} description="Total" color="purple" />
       </div>
 
       {distribAnalytics && (
@@ -317,7 +227,7 @@ const ManagerDashboard = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
             {distribAnalytics.by_manufacturer && distribAnalytics.by_manufacturer.length > 0 && (
               <Card title="Sent Devices by Manufacturer" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-                <div className="overflow-x-auto">
+                <div className="overflow-auto max-h-[50vh]">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
@@ -342,7 +252,7 @@ const ManagerDashboard = () => {
 
             {distribAnalytics.per_holder_breakdown && distribAnalytics.per_holder_breakdown.length > 0 && (
               <Card title="Per-Holder Distribution Breakdown" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-                <div className="overflow-x-auto">
+                <div className="overflow-auto max-h-[50vh]">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
@@ -382,6 +292,9 @@ const ManagerDashboard = () => {
         </>
       )}
 
+      <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
+      {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card title="Device Health" icon={Cpu} className="industrial-chart-card" padding={false}>
           <div className="h-80 p-4"><Doughnut data={activeInactiveData} options={chartOptions} /></div>
@@ -392,26 +305,8 @@ const ManagerDashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
-        <Card title="Sub Distribution, Cluster and Operator Account Health" icon={HardHat} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={workforceAccountSplitData} options={chartOptions} /></div>
-        </Card>
-        <Card title="Sub Distribution, Cluster and Operator Device Health" icon={Boxes} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={workforceDeviceSplitData} options={chartOptions} /></div>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
         <Card title="Defect Trend (12 Months)" icon={Activity} className="industrial-chart-card" padding={false}>
           <div className="h-80 p-4"><Line data={defectTrendData} options={chartOptions} /></div>
-        </Card>
-        <Card title="Distribution Throughput" icon={Truck} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={distributionTrendData} options={chartOptions} /></div>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 animate-slideUp">
-        <Card title="Returns By Status" icon={RotateCcw} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={returnStatusData} options={chartOptions} /></div>
         </Card>
       </div>
 

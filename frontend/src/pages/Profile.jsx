@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { authAPI, usersAPI, changeRequestsAPI, adminUpdateCredentials } from '../services/api';
+import { authAPI, usersAPI, adminUpdateCredentials } from '../services/api';
 import { updateStoredUser } from '../utils/authStorage';
 import { 
   User, Mail, Phone, Building, MapPin, Lock, 
@@ -74,21 +74,8 @@ const Profile = () => {
 
     setSaving(true);
     try {
-      const restrictedRoles = new Set(['manager', 'md_director', 'pdic_staff']);
-      const myRole = String(user?.role || '').toLowerCase();
-
-      if (restrictedRoles.has(myRole)) {
-        await changeRequestsAPI.submit({
-          request_type: 'password_reset',
-          new_password: passwordData.newPassword,
-          reason: 'Submitted from profile security tab',
-        });
-        showToast('Password change request submitted to super admin for approval', 'success');
-      } else {
-        await authAPI.changePassword(passwordData.currentPassword, passwordData.newPassword);
-        showToast('Password changed successfully', 'success');
-      }
-
+      await authAPI.changePassword(passwordData.currentPassword, passwordData.newPassword);
+      showToast('Password changed successfully', 'success');
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
     } catch (err) {
       showToast(err.message || 'Failed to change password', 'error');

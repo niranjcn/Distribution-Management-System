@@ -23,19 +23,13 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
-  Boxes,
   CheckSquare,
   Clock,
   Cpu,
-  HardHat,
   Loader2,
-  Radar,
-  RotateCcw,
   ShieldCheck,
   Truck,
   UserCog,
-  Users,
-  Wrench,
 } from 'lucide-react';
 
 ChartJS.register(
@@ -186,39 +180,6 @@ const AdminDashboard = () => {
     }],
   }), [charts.device_status]);
 
-  const userRoleData = useMemo(() => ({
-    labels: ['pdic_staff', 'Sub Distributor', 'Cluster', 'Operator', 'Manager', 'super_admin'],
-    datasets: [{
-      label: 'Users',
-      data: [
-        charts.user_roles?.pdic_staff ?? charts.user_roles?.staff ?? 0,
-        charts.user_roles?.sub_distributor || 0,
-        charts.user_roles?.cluster || 0,
-        charts.user_roles?.operator || 0,
-        charts.user_roles?.manager || 0,
-        charts.user_roles?.super_admin ?? charts.user_roles?.admin ?? 0,
-      ],
-      backgroundColor: ['#f97316', '#14b8a6', '#8b5cf6', '#3b82f6', '#facc15', '#ef4444'],
-      borderColor: '#FFFFFF',
-      borderWidth: 1,
-    }],
-  }), [charts.user_roles]);
-
-  const defectSeverityData = useMemo(() => ({
-    labels: ['Critical', 'High', 'Medium', 'Low'],
-    datasets: [{
-      data: [
-        charts.defect_severity?.critical || 0,
-        charts.defect_severity?.high || 0,
-        charts.defect_severity?.medium || 0,
-        charts.defect_severity?.low || 0,
-      ],
-      backgroundColor: ['#dc2626', '#ea580c', '#f59e0b', '#10b981'],
-      borderColor: '#FFFFFF',
-      borderWidth: 1,
-    }],
-  }), [charts.defect_severity]);
-
   const defectTrendData = useMemo(() => ({
     labels: (charts.defect_trend_12m || []).map((d) => d.month),
     datasets: [
@@ -249,102 +210,6 @@ const AdminDashboard = () => {
     ],
   }), [charts.defect_trend_12m]);
 
-  const distributionTrendData = useMemo(() => ({
-    labels: (charts.distribution_trend_12m || []).map((d) => d.month),
-    datasets: [
-      {
-        label: 'Total',
-        data: (charts.distribution_trend_12m || []).map((d) => d.total),
-        backgroundColor: '#64748b',
-      },
-      {
-        label: 'Delivered',
-        data: (charts.distribution_trend_12m || []).map((d) => d.delivered),
-        backgroundColor: '#10b981',
-      },
-    ],
-  }), [charts.distribution_trend_12m]);
-
-  const replacementPipelineData = useMemo(() => ({
-    labels: ['Replaced', 'Confirmed', 'Pending Confirmation'],
-    datasets: [{
-      data: [
-        charts.replacement_pipeline?.replaced || 0,
-        charts.replacement_pipeline?.confirmed || 0,
-        charts.replacement_pipeline?.pending_confirmation || 0,
-      ],
-      backgroundColor: ['#38bdf8', '#10b981', '#f59e0b'],
-      borderColor: '#FFFFFF',
-      borderWidth: 1,
-    }],
-  }), [charts.replacement_pipeline]);
-
-  const returnsStatusData = useMemo(() => ({
-    labels: ['Pending', 'Approved', 'Received', 'Rejected'],
-    datasets: [{
-      label: 'Returns',
-      data: [
-        charts.returns_by_status?.pending || 0,
-        charts.returns_by_status?.approved || 0,
-        charts.returns_by_status?.received || 0,
-        charts.returns_by_status?.rejected || 0,
-      ],
-      backgroundColor: ['#f59e0b', '#3b82f6', '#10b981', '#ef4444'],
-      borderColor: '#FFFFFF',
-      borderWidth: 1,
-    }],
-  }), [charts.returns_by_status]);
-
-  const workforceAccountSplitData = useMemo(() => ({
-    labels: ['Sub Distributors', 'Clusters', 'Operators'],
-    datasets: [
-      {
-        label: 'Active Accounts',
-        data: [
-          charts.sub_distributor_account_active_split?.active || 0,
-          charts.cluster_account_active_split?.active || 0,
-          charts.operator_account_active_split?.active || 0,
-        ],
-        backgroundColor: '#10b981',
-      },
-      {
-        label: 'Inactive Accounts',
-        data: [
-          charts.sub_distributor_account_active_split?.inactive || 0,
-          charts.cluster_account_active_split?.inactive || 0,
-          charts.operator_account_active_split?.inactive || 0,
-        ],
-        backgroundColor: '#ef4444',
-      },
-    ],
-  }), [charts]);
-
-  const workforceDeviceSplitData = useMemo(() => ({
-    labels: ['Sub Distributor Devices', 'Cluster Devices', 'Operator Devices'],
-    datasets: [
-      {
-        label: 'Active Devices',
-        data: [
-          charts.sub_distributor_device_active_split?.active || 0,
-          charts.cluster_device_active_split?.active || 0,
-          charts.operator_device_active_split?.active || 0,
-        ],
-        backgroundColor: '#3b82f6',
-      },
-      {
-        label: 'Inactive Devices',
-        data: [
-          charts.sub_distributor_device_active_split?.inactive || 0,
-          charts.cluster_device_active_split?.inactive || 0,
-          charts.operator_device_active_split?.inactive || 0,
-        ],
-        backgroundColor: '#f59e0b',
-      },
-    ],
-  }), [charts]);
-
-
-
   return (
     <div className="space-y-5 sm:space-y-6">
       <div className="industrial-hero relative overflow-hidden rounded-2xl p-5 sm:p-6 animate-fadeIn">
@@ -356,16 +221,13 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
-      {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
-
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 animate-slideUp">
-        <StatCard title="Total Devices" value={kpis.total_devices ?? stats.total_devices ?? 0} description="Registered devices" icon={Boxes} color="total" />
-        <StatCard title="Active Devices" value={kpis.active_devices ?? stats.active_devices ?? 0} description="Currently active" icon={Cpu} color="online" />
-        <StatCard title="Inactive Devices" value={kpis.inactive_devices ?? 0} description="Not responding" icon={AlertTriangle} color="offline" />
-        <StatCard title="Defects (Month)" value={kpis.defects_this_month ?? 0} description="This month" icon={HardHat} color="yellow" />
-        <StatCard title="Defects (Year)" value={kpis.defects_this_year ?? 0} description="This year" icon={Radar} color="indigo" />
-        <StatCard title="Replacements" value={kpis.replacements_total ?? 0} description="Total" icon={Wrench} color="purple" />
+        <StatCard title="Total Devices" value={kpis.total_devices ?? stats.total_devices ?? 0} description="Registered devices" color="total" />
+        <StatCard title="Active Devices" value={kpis.active_devices ?? stats.active_devices ?? 0} description="Currently active" color="online" />
+        <StatCard title="Inactive Devices" value={kpis.inactive_devices ?? 0} description="Not responding" color="offline" />
+        <StatCard title="Defects (Month)" value={kpis.defects_this_month ?? 0} description="This month" color="yellow" />
+        <StatCard title="Defects (Year)" value={kpis.defects_this_year ?? 0} description="This year" color="indigo" />
+        <StatCard title="Replacements" value={kpis.replacements_total ?? 0} description="Total" color="purple" />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 animate-slideUp">
@@ -430,7 +292,7 @@ const AdminDashboard = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
             {distribAnalytics.by_manufacturer && distribAnalytics.by_manufacturer.length > 0 && (
               <Card title="Sent Devices by Manufacturer" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-                <div className="overflow-x-auto">
+                <div className="overflow-auto max-h-[50vh]">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
@@ -455,7 +317,7 @@ const AdminDashboard = () => {
 
             {distribAnalytics.per_holder_breakdown && distribAnalytics.per_holder_breakdown.length > 0 && (
               <Card title="Per-Holder Distribution Breakdown" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-                <div className="overflow-x-auto">
+                <div className="overflow-auto max-h-[50vh]">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
@@ -495,6 +357,9 @@ const AdminDashboard = () => {
         </>
       )}
 
+      <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
+      {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
+
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-slideUp">
         <Card title="Device Active vs Inactive" icon={ShieldCheck} className="industrial-chart-card" padding={false}>
           <div className="h-80 p-4"><Doughnut data={activeInactiveData} options={chartOptions} /></div>
@@ -505,38 +370,8 @@ const AdminDashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-slideUp">
-        <Card title="Workforce Role Distribution" icon={Users} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={userRoleData} options={chartOptions} /></div>
-        </Card>
-        <Card title="Defect Severity Split" icon={AlertTriangle} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Doughnut data={defectSeverityData} options={chartOptions} /></div>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-slideUp">
         <Card title="12-Month Defect Trend" icon={Activity} className="industrial-chart-card" padding={false}>
           <div className="h-80 p-4"><Line data={defectTrendData} options={chartOptions} /></div>
-        </Card>
-        <Card title="12-Month Distribution Throughput" icon={CheckSquare} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={distributionTrendData} options={chartOptions} /></div>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-slideUp">
-        <Card title="Replacement Pipeline" icon={Wrench} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Doughnut data={replacementPipelineData} options={chartOptions} /></div>
-        </Card>
-        <Card title="Returns Status Distribution" icon={RotateCcw} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={returnsStatusData} options={chartOptions} /></div>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-slideUp">
-        <Card title="Sub Distribution, Cluster and Operator Account Health" icon={Users} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={workforceAccountSplitData} options={chartOptions} /></div>
-        </Card>
-        <Card title="Sub Distribution, Cluster and Operator Device Health" icon={Boxes} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Bar data={workforceDeviceSplitData} options={chartOptions} /></div>
         </Card>
       </div>
 
