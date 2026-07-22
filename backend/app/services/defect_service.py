@@ -287,6 +287,8 @@ async def get_defects(
     holder_user_id: Optional[str] = None,
     search: Optional[str] = None,
     search_by: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     visibility_user: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Get all defect reports with pagination and filters"""
@@ -311,6 +313,12 @@ async def get_defects(
                 "(reported_by = ? OR CAST(device_id AS UNSIGNED) IN (SELECT id FROM devices WHERE current_holder_id = ?))"
             )
             params.extend([str(holder_user_id), str(holder_user_id)])
+        if start_date:
+            conditions.append("created_at >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("created_at <= ?")
+            params.append(end_date)
         if search:
             like = f"%{search}%"
             search_field_map = {
@@ -1490,12 +1498,21 @@ async def mark_replacement_waiting(
 async def get_replacement_defects(
     current_user: Dict[str, Any],
     page: int = 1,
-    page_size: int = 100
+    page_size: int = 100,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
 ) -> Dict[str, Any]:
     """Return defects that have replacement mapping with hierarchy-aware scope."""
     async with get_db() as db:
         conditions = ["replacement_device_id IS NOT NULL"]
         params: List[Any] = []
+
+        if start_date:
+            conditions.append("created_at >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("created_at <= ?")
+            params.append(end_date)
 
         scoped_user_ids = await _get_report_scope_user_ids(db, current_user)
         if scoped_user_ids is not None:
@@ -1567,26 +1584,33 @@ async def get_pending_replacement_defects(
         }
 
 
-async def get_defect_stats() -> Dict[str, Any]:
+async def get_defect_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Get defect statistics"""
     async with get_db() as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM defects")
-        total = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM defects WHERE status = 'reported'")
-        reported = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM defects WHERE status = 'under_review'")
-        under_review = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM defects WHERE status = 'resolved'")
-        resolved = (await cursor.fetchone())[0]
+        async def _count(extra_conditions=None, extra_params=None):
+            conds = []
+            params = []
+            if extra_conditions:
+                conds.append(extra_conditions)
+                params.extend(extra_params)
+            if start_date:
+                conds.append("created_at >= ?")
+                params.append(start_date)
+            if end_date:
+                conds.append("created_at <= ?")
+                params.append(end_date)
+            where = " AND ".join(conds) if conds else "1=1"
+            cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {where}", params)
+            return (await cursor.fetchone())[0]
 
-        cursor = await db.execute("SELECT COUNT(*) FROM defects WHERE severity = 'critical'")
-        critical = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM defects WHERE severity = 'high'")
-        high = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM defects WHERE severity = 'medium'")
-        medium = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM defects WHERE severity = 'low'")
-        low = (await cursor.fetchone())[0]
+        total = await _count()
+        reported = await _count("status = 'reported'", [])
+        under_review = await _count("status = 'under_review'", [])
+        resolved = await _count("status = 'resolved'", [])
+        critical = await _count("severity = 'critical'", [])
+        high = await _count("severity = 'high'", [])
+        medium = await _count("severity = 'medium'", [])
+        low = await _count("severity = 'low'", [])
 
         return {
             "total": total,

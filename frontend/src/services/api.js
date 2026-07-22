@@ -1124,13 +1124,15 @@ export const reportsAPI = {
     return response;
   },
 
-  getUserActivityReport: async () => {
-    const response = await apiRequest('/reports/user-activity');
+  getUserActivityReport: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/user-activity?${queryString}`);
     return response;
   },
 
-  getDeviceUtilizationReport: async () => {
-    const response = await apiRequest('/reports/device-utilization');
+  getDeviceUtilizationReport: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/device-utilization?${queryString}`);
     return response;
   },
 
@@ -1262,13 +1264,15 @@ export const reportsAPI = {
 
 // Dashboard API
 export const dashboardAPI = {
-  getStats: async () => {
-    const response = await apiRequest('/dashboard/stats');
+  getStats: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/dashboard/stats?${queryString}`);
     return response;
   },
 
-  getAdvancedMetrics: async () => {
-    const response = await apiRequest('/dashboard/advanced-metrics');
+  getAdvancedMetrics: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/dashboard/advanced-metrics?${queryString}`);
     return response;
   },
 
@@ -1291,13 +1295,15 @@ export const dashboardAPI = {
     return response;
   },
 
-  getDistributionChartData: async () => {
-    const response = await apiRequest('/dashboard/charts/distributions');
+  getDistributionChartData: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/dashboard/charts/distributions?${queryString}`);
     return response;
   },
 
-  getDefectChartData: async () => {
-    const response = await apiRequest('/dashboard/charts/defects');
+  getDefectChartData: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/dashboard/charts/defects?${queryString}`);
     return response;
   },
 
@@ -1311,14 +1317,48 @@ export const dashboardAPI = {
     return response;
   },
 
-  getUserKpi: async (userId) => {
-    const response = await apiRequest(`/dashboard/user-kpi/${userId}`);
+  getUserKpi: async (userId, params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/dashboard/user-kpi/${userId}?${queryString}`);
     return response;
   },
 
-  getDistributionDeviceAnalytics: async () => {
-    const response = await apiRequest('/dashboard/distribution-device-analytics');
+  getDistributionDeviceAnalytics: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/dashboard/distribution-device-analytics?${queryString}`);
     return response;
+  },
+
+  getViewAsDashboard: async (userId, params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/dashboard/view-as/${userId}?${queryString}`);
+    return response;
+  },
+
+  downloadReport: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const url = `${API_BASE_URL}/reports/download?${queryString}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      let errorMessage = 'Failed to download report';
+      try {
+        const text = await response.text();
+        const parsed = text ? JSON.parse(text) : {};
+        errorMessage = parsed?.message || parsed?.detail || errorMessage;
+      } catch {
+        // Keep default
+      }
+      throw new Error(errorMessage);
+    }
+
+    return {
+      blob: await response.blob(),
+      contentDisposition: response.headers.get('content-disposition') || '',
+    };
   },
 };
 

@@ -11,6 +11,7 @@ import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Button from '../../components/ui/Button';
+import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { dashboardAPI, devicesAPI, distributionsAPI, usersAPI, defectsAPI, returnsAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -43,6 +44,7 @@ const SubDistributorDashboard = () => {
   const isSubDistributionManager = role === 'sub_distribution_manager';
   const isCluster = role === 'cluster';
   const canAssign = role !== 'sub_distribution_manager';
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
   const [myDevices, setMyDevices] = useState([]);
@@ -56,9 +58,10 @@ const SubDistributorDashboard = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
+        const dateParams = buildDateParams(dateRange);
         const [statsRes, advancedRes, devRes, distRes, usersRes, defRes, retRes] = await Promise.all([
-          dashboardAPI.getStats().catch(() => ({ data: {} })),
-          dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
+          dashboardAPI.getStats(dateParams).catch(() => ({ data: {} })),
+          dashboardAPI.getAdvancedMetrics(dateParams).catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
           ['sub_distribution_manager', 'sub_distributor', 'cluster'].includes(role)
             ? devicesAPI.getMyOverview({ show_all: true }).catch(() => ({ data: { all_under_me: [] } }))
             : devicesAPI.getDevices().catch(() => ({ data: [] })),
@@ -81,7 +84,7 @@ const SubDistributorDashboard = () => {
       }
     };
     fetchData();
-  }, []);
+  }, [dateRange]);
 
   const charts = advanced.charts || {};
   const myDeviceSplitData = {
@@ -130,6 +133,10 @@ const SubDistributorDashboard = () => {
             <Button icon={Send}>Assign to Operator</Button>
           </Link>
         )}
+      </div>
+
+      <div className="flex justify-end">
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">

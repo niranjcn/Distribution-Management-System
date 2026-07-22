@@ -187,15 +187,19 @@ async def get_return_summary(start_date: Optional[str] = None, end_date: Optiona
         }
 
 
-async def get_user_activity_report() -> Dict[str, Any]:
+async def get_user_activity_report(start_date: Optional[str] = None,
+                                    end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate user activity report"""
     async with get_db() as db:
         by_role = {}
         for role in ["super_admin", "manager", "pdic_staff", "sub_distributor", "cluster", "operator"]:
             by_role[role] = await _count(db, "users", "role = ?", (role,))
 
-        thirty_days_ago = (datetime.now().replace(tzinfo=None) - timedelta(days=30)).isoformat()
-        active_users = await _count(db, "users", "last_login >= ?", (thirty_days_ago,))
+        if start_date:
+            active_users = await _count(db, "users", "last_login >= ?", (start_date,))
+        else:
+            thirty_days_ago = (datetime.now().replace(tzinfo=None) - timedelta(days=30)).isoformat()
+            active_users = await _count(db, "users", "last_login >= ?", (thirty_days_ago,))
         total_users = await _count(db, "users")
 
         cursor = await db.execute("SELECT * FROM device_history ORDER BY timestamp DESC LIMIT 50")
@@ -210,13 +214,22 @@ async def get_user_activity_report() -> Dict[str, Any]:
         }
 
 
-async def get_device_utilization_report() -> Dict[str, Any]:
+async def get_device_utilization_report(start_date: Optional[str] = None,
+                                         end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate device utilization report"""
     async with get_db() as db:
         total_devices = await _count(db, "devices")
-        in_use = await _count(db, "devices", "status IN ('distributed', 'in_use')")
-        available = await _count(db, "devices", "status = 'available'")
-        defective = await _count(db, "devices", "status = 'defective'")
+        if start_date or end_date:
+            cond, prm = _build_date_filter("status IN ('distributed', 'in_use')", (), start_date, end_date)
+            in_use = await _count(db, "devices", cond, prm)
+            ac, ap = _build_date_filter("status = 'available'", (), start_date, end_date)
+            available = await _count(db, "devices", ac, ap)
+            dfc, dfp = _build_date_filter("status = 'defective'", (), start_date, end_date)
+            defective = await _count(db, "devices", dfc, dfp)
+        else:
+            in_use = await _count(db, "devices", "status IN ('distributed', 'in_use')")
+            available = await _count(db, "devices", "status = 'available'")
+            defective = await _count(db, "devices", "status = 'defective'")
 
         utilization_rate = (in_use / total_devices * 100) if total_devices > 0 else 0
 

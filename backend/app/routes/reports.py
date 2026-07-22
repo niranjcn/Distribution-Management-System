@@ -4,7 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Response, UploadFile, File
-from app.services import report_service
+from app.services import report_service, dashboard_service
 from app.services.backup_vault_service import (
     list_vault_documents,
     upload_vault_document,
@@ -134,11 +134,13 @@ async def get_return_summary(
 
 @router.get("/user-activity")
 async def get_user_activity_report(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """Get user activity report"""
     try:
-        report = await report_service.get_user_activity_report()
+        report = await report_service.get_user_activity_report(start_date, end_date)
 
         return {
             "success": True,
@@ -157,11 +159,13 @@ async def get_user_activity_report(
 
 @router.get("/device-utilization")
 async def get_device_utilization_report(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """Get device utilization report"""
     try:
-        report = await report_service.get_device_utilization_report()
+        report = await report_service.get_device_utilization_report(start_date, end_date)
 
         return {
             "success": True,
@@ -445,4 +449,36 @@ async def download_backup_document(
         )
 
 
+@router.get("/download")
+async def download_report(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
+):
+    """Download a comprehensive system report as Excel."""
+    try:
+        export_data = await dashboard_service.generate_report(
+            current_user, start_date, end_date
+        )
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/reports/download",
+            description=f"{actor_name} downloaded system report",
+        )
+        return Response(
+            content=export_data["content"],
+            media_type=export_data["media_type"],
+            headers={
+                "Content-Disposition": f"attachment; filename={export_data['filename']}"
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
 

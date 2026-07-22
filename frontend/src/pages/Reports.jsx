@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import jsPDF from 'jspdf';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { devicesAPI, reportsAPI, changeRequestsAPI } from '../services/api';
+import { devicesAPI, reportsAPI, dashboardAPI, changeRequestsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { 
@@ -75,10 +75,20 @@ const isSbDeviceType = (value) => {
 
 const toDeviceTypeLabel = (value) => (isSbDeviceType(value) ? 'SB' : (value || '-'));
 
+const buildDateParams = (range) => {
+  const start = buildRangeStart(range);
+  if (!start || range === 'all') return {};
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  return { start_date: start.toISOString(), end_date: end.toISOString() };
+};
+
 const Reports = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const [dateRange, setDateRange] = useState('last30');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
   const [reportType, setReportType] = useState('overview');
   const [deviceReportRows, setDeviceReportRows] = useState([]);
   const [inventoryReport, setInventoryReport] = useState(null);
@@ -119,6 +129,33 @@ const Reports = () => {
     };
     fetchData();
   }, [dateRange]);
+
+  const handleDownloadReport = async () => {
+    try {
+      let params;
+      if (dateRange === 'custom' && customStart && customEnd) {
+        params = {
+          start_date: new Date(customStart).toISOString(),
+          end_date: new Date(customEnd + 'T23:59:59').toISOString(),
+        };
+      } else {
+        params = buildDateParams(dateRange);
+      }
+      const { blob, contentDisposition } = await dashboardAPI.downloadReport(params);
+      const filename = (contentDisposition.match(/filename=(.+)/) || [])[1] || 'report.xlsx';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download report:', error);
+      showToast('Failed to download report. Please try again.', 'error');
+    }
+  };
 
   const monthlyActivity = useMemo(() => {
     const distByMonth = distributionSummary?.by_month || [];
@@ -339,18 +376,39 @@ const Reports = () => {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
-            <select
-              value={dateRange}
-              onChange={(e) => setDateRange(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="today">Today</option>
-              <option value="last7">Last 7 Days</option>
-              <option value="last30">Last 30 Days</option>
-              <option value="last90">Last 90 Days</option>
-              <option value="thisYear">This Year</option>
-              <option value="all">All Time</option>
-            </select>
+            <div className="flex gap-2">
+              <select
+                value={dateRange}
+                onChange={(e) => setDateRange(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="today">Today</option>
+                <option value="last7">Last 7 Days</option>
+                <option value="last30">Last 30 Days</option>
+                <option value="last90">Last 90 Days</option>
+                <option value="thisYear">This Year</option>
+                <option value="all">All Time</option>
+                <option value="custom">Custom</option>
+              </select>
+              <Button variant="secondary" onClick={handleDownloadReport} icon={Download}>Download Report</Button>
+            </div>
+            {dateRange === 'custom' && (
+              <div className="flex gap-2 mt-2">
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                />
+                <span className="self-center text-gray-500">to</span>
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                />
+              </div>
+            )}
           </div>
         </div>
       </Card>

@@ -24,7 +24,8 @@ import {
   PackageCheck,
   ArrowLeftRight,
   Database,
-  DollarSign
+  DollarSign,
+  Eye
 } from 'lucide-react';
 import { normalizeRole, ROLE_LABELS, ROLES } from '../../utils/roles';
 
@@ -91,6 +92,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     const roleMenus = {
       [ROLES.SUPER_ADMIN]: [
         ...commonItems,
+        { path: '/view-as', icon: Eye, label: 'View User Dashboard' },
         { path: '/activities', icon: FileText, label: 'Activities' },
         {
           key: 'users',
@@ -137,6 +139,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.MD_DIRECTOR]: [
         ...commonItems,
+        { path: '/view-as', icon: Eye, label: 'View User Dashboard' },
         { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/users', icon: Users, label: 'Users (Read Only)' },
         { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
@@ -153,6 +156,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.MANAGER]: [
         ...commonItems,
+        { path: '/view-as', icon: Eye, label: 'View User Dashboard' },
         {
           key: 'users',
           icon: Users,

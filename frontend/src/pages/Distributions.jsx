@@ -6,6 +6,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import { distributionsAPI, devicesAPI } from '../services/api';
+import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import useAutoRefresh from '../hooks/useAutoRefresh';
@@ -62,6 +63,7 @@ const Distributions = () => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptSubmitting, setReceiptSubmitting] = useState(false);
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [searchBy, setSearchBy] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState({ by: 'all', query: '' });
@@ -73,6 +75,7 @@ const Distributions = () => {
     const params = {
       page: windowPage,
       page_size: pageSize,
+      ...buildDateParams(dateRange),
     };
     if (appliedSearch.query) {
       params.search = appliedSearch.query;
@@ -109,6 +112,7 @@ const Distributions = () => {
       page: 1,
       page_size: 1,
       status,
+      ...buildDateParams(dateRange),
     };
     if (appliedSearch.query) {
       params.search = appliedSearch.query;
@@ -281,7 +285,7 @@ const Distributions = () => {
 
   useEffect(() => {
     resetAndLoadDistributions();
-  }, [appliedSearch, user?.id]);
+  }, [appliedSearch, user?.id, dateRange]);
 
   useAutoRefresh(resetAndLoadDistributions);
 
@@ -480,6 +484,10 @@ const Distributions = () => {
             </Link>
           </div>
         )}
+      </div>
+
+      <div className="flex justify-end">
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
       {/* Pending Receipt Alert Banner */}

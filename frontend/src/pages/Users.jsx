@@ -12,7 +12,7 @@ import {
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
   Building, MapPin, Calendar, Users as UsersIcon, Loader2, Lock,
   Network, ChevronDown, ChevronRight, Filter, X, EyeOff, Search,
-  AlertTriangle
+  AlertTriangle, Bell
 } from 'lucide-react';
 import useAutoRefresh from '../hooks/useAutoRefresh';
 
@@ -67,6 +67,8 @@ const emptyForm = {
   role: 'operator',
   digitalId: '',
   broadbandId: '',
+  clusterId: '',
+  operatorId: '',
   phone: '',
   department: '',
   location: '',
@@ -387,6 +389,12 @@ const Users = () => {
       if (formData.role === 'sub_distributor') {
         payload.digital_id = formData.digitalId || null;
         payload.broadband_id = formData.broadbandId || null;
+      }
+      if (formData.role === 'cluster') {
+        payload.cluster_id = formData.clusterId || null;
+      }
+      if (formData.role === 'operator') {
+        payload.operator_id = formData.operatorId || null;
       }
       if (formData.phone)      payload.phone = formData.phone;
       if (formData.department) payload.department = formData.department;
@@ -1017,7 +1025,7 @@ const Users = () => {
         isOpen={showViewModal}
         onClose={() => { setShowViewModal(false); setSelectedUser(null); }}
         title="User Details"
-        size="md"
+        size="lg"
       >
         {selectedUser && (
           <div className="space-y-6">
@@ -1036,6 +1044,7 @@ const Users = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-4">
+              {/* ── Contact ── */}
               <div className="flex items-center gap-3">
                 <Mail className="w-5 h-5 text-gray-400" />
                 <div>
@@ -1064,6 +1073,15 @@ const Users = () => {
                   <p className="font-medium text-gray-800">{selectedUser.location || 'Not assigned'}</p>
                 </div>
               </div>
+
+              {/* ── Account ── */}
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Status</p>
+                  <StatusBadge status={selectedUser.status} />
+                </div>
+              </div>
               <div className="flex items-center gap-3">
                 <Calendar className="w-5 h-5 text-gray-400" />
                 <div>
@@ -1072,30 +1090,151 @@ const Users = () => {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <Calendar className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Last Updated</p>
+                  <p className="font-medium text-gray-800">{selectedUser.updated_at ? new Date(selectedUser.updated_at).toLocaleDateString() : 'Unknown'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Calendar className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Last Login</p>
+                  <p className="font-medium text-gray-800">{selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleString() : 'Never'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
                 <Shield className="w-5 h-5 text-gray-400" />
                 <div>
-                  <p className="text-sm text-gray-500">Status</p>
-                  <StatusBadge status={selectedUser.status} />
+                  <p className="text-sm text-gray-500">Email Verified</p>
+                  <p className="font-medium text-gray-800">{selectedUser.is_verified ? 'Yes' : 'No'}</p>
                 </div>
               </div>
 
-              {selectedUser.role === 'sub_distributor' && (
-                <>
-                  <div className="flex items-center gap-3">
-                    <Building className="w-5 h-5 text-gray-400" />
-                    <div>
-                      <p className="text-sm text-gray-500">Digital ID</p>
-                      <p className="font-medium text-gray-800">{selectedUser.digital_id || 'Not provided'}</p>
-                    </div>
+              {/* ── IDs ── */}
+              <div className="flex items-center gap-3">
+                <Building className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Digital ID</p>
+                  <p className="font-medium text-gray-800">{selectedUser.digital_id || 'Not provided'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Building className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Broadband ID</p>
+                  <p className="font-medium text-gray-800">{selectedUser.broadband_id || 'Not provided'}</p>
+                </div>
+              </div>
+              {selectedUser.role === 'cluster' && (
+                <div className="flex items-center gap-3">
+                  <Building className="w-5 h-5 text-gray-400" />
+                  <div>
+                    <p className="text-sm text-gray-500">Cluster ID</p>
+                    <p className="font-medium text-gray-800">{selectedUser.cluster_id || 'Not provided'}</p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Building className="w-5 h-5 text-gray-400" />
-                    <div>
-                      <p className="text-sm text-gray-500">Broadband ID</p>
-                      <p className="font-medium text-gray-800">{selectedUser.broadband_id || 'Not provided'}</p>
-                    </div>
+                </div>
+              )}
+              {selectedUser.role === 'operator' && (
+                <div className="flex items-center gap-3">
+                  <Building className="w-5 h-5 text-gray-400" />
+                  <div>
+                    <p className="text-sm text-gray-500">Operator ID</p>
+                    <p className="font-medium text-gray-800">{selectedUser.operator_id || 'Not provided'}</p>
                   </div>
-                </>
+                </div>
+              )}
+
+              {/* ── Security ── */}
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Force Email Change</p>
+                  <p className="font-medium text-gray-800">{selectedUser.force_email_change ? 'Yes' : 'No'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Force Password Change</p>
+                  <p className="font-medium text-gray-800">{selectedUser.force_password_change ? 'Yes' : 'No'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Failed Login Attempts</p>
+                  <p className="font-medium text-gray-800">{selectedUser.failed_login_attempts ?? 0}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Account Locked Until</p>
+                  <p className="font-medium text-gray-800">{selectedUser.locked_until ? new Date(selectedUser.locked_until).toLocaleString() : 'Not locked'}</p>
+                </div>
+              </div>
+
+              {/* ── Notifications ── */}
+              <div className="flex items-center gap-3">
+                <Mail className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Email Notifications</p>
+                  <p className="font-medium text-gray-800">{selectedUser.email_notifications ? 'Enabled' : 'Disabled'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Bell className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Push Notifications</p>
+                  <p className="font-medium text-gray-800">{selectedUser.push_notifications ? 'Enabled' : 'Disabled'}</p>
+                </div>
+              </div>
+
+              {/* ── Preferences ── */}
+              <div className="flex items-center gap-3">
+                <Building className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Theme</p>
+                  <p className="font-medium text-gray-800 capitalize">{selectedUser.theme || 'Light'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Building className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Compact Mode</p>
+                  <p className="font-medium text-gray-800">{selectedUser.compact_mode ? 'Enabled' : 'Disabled'}</p>
+                </div>
+              </div>
+
+              {/* ── Permissions ── */}
+              {selectedUser.permissions && Object.keys(selectedUser.permissions).length > 0 && (
+                <div className="col-span-2 p-3 bg-gray-50 rounded-lg">
+                  <p className="text-xs text-gray-500 font-medium mb-2">Permissions</p>
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(selectedUser.permissions).map(([key, val]) => (
+                      <span key={key} className={`px-2 py-0.5 rounded text-xs font-medium ${val ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {key}: {val ? '✓' : '✗'}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Created By ── */}
+              {selectedUser.created_by && (
+                <div className="col-span-2 flex items-center gap-3">
+                  <UsersIcon className="w-5 h-5 text-gray-400" />
+                  <div>
+                    <p className="text-sm text-gray-500">Created By</p>
+                    <p className="font-medium text-gray-800">
+                      {(() => {
+                        const creator = users.find(u => String(u.id) === String(selectedUser.created_by));
+                        return creator ? `${creator.name} (${creator.email})` : `User #${selectedUser.created_by}`;
+                      })()}
+                    </p>
+                  </div>
+                </div>
               )}
 
               {/* ── Hierarchy breadcrumb ── */}
@@ -1346,7 +1485,7 @@ const Users = () => {
             {formData.role === 'sub_distributor' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID (Optional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID</label>
                   <input
                     type="text"
                     value={formData.digitalId}
@@ -1356,7 +1495,7 @@ const Users = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID (Optional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID</label>
                   <input
                     type="text"
                     value={formData.broadbandId}
@@ -1365,6 +1504,32 @@ const Users = () => {
                     placeholder="Enter broadband ID"
                   />
                 </div>
+              </div>
+            )}
+
+            {formData.role === 'cluster' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cluster ID</label>
+                <input
+                  type="text"
+                  value={formData.clusterId}
+                  onChange={(e) => setFormData({ ...formData, clusterId: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter cluster ID"
+                />
+              </div>
+            )}
+
+            {formData.role === 'operator' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Operator ID</label>
+                <input
+                  type="text"
+                  value={formData.operatorId}
+                  onChange={(e) => setFormData({ ...formData, operatorId: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter operator ID"
+                />
               </div>
             )}
           </div>
@@ -1655,7 +1820,7 @@ const Users = () => {
               {detailUser.role === 'sub_distributor' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID (Optional)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID</label>
                     <input
                       value={detailForm.digital_id || ''}
                       onChange={e => setDetailForm(p => ({ ...p, digital_id: e.target.value }))}
@@ -1664,7 +1829,7 @@ const Users = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID (Optional)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID</label>
                     <input
                       value={detailForm.broadband_id || ''}
                       onChange={e => setDetailForm(p => ({ ...p, broadband_id: e.target.value }))}
@@ -1672,6 +1837,28 @@ const Users = () => {
                       placeholder="Enter broadband ID"
                     />
                   </div>
+                </div>
+              )}
+              {detailUser.role === 'cluster' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cluster ID</label>
+                  <input
+                    value={detailForm.cluster_id || ''}
+                    onChange={e => setDetailForm(p => ({ ...p, cluster_id: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="Enter cluster ID"
+                  />
+                </div>
+              )}
+              {detailUser.role === 'operator' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Operator ID</label>
+                  <input
+                    value={detailForm.operator_id || ''}
+                    onChange={e => setDetailForm(p => ({ ...p, operator_id: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="Enter operator ID"
+                  />
                 </div>
               )}
               <div className="text-sm text-gray-500">
@@ -1693,6 +1880,12 @@ const Users = () => {
                     if (detailUser.role === 'sub_distributor') {
                       updatePayload.digital_id = detailForm.digital_id || null;
                       updatePayload.broadband_id = detailForm.broadband_id || null;
+                    }
+                    if (detailUser.role === 'cluster') {
+                      updatePayload.cluster_id = detailForm.cluster_id || null;
+                    }
+                    if (detailUser.role === 'operator') {
+                      updatePayload.operator_id = detailForm.operator_id || null;
                     }
                     // Update basic fields
                     await usersAPI.updateUser(detailUser.id, updatePayload);

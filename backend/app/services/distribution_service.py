@@ -306,6 +306,8 @@ async def get_distributions(
     search: Optional[str] = None,
     search_by: Optional[str] = None,
     current_user: Optional[Dict[str, Any]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Get all distributions with pagination and filters"""
     async with get_db() as db:
@@ -334,6 +336,12 @@ async def get_distributions(
         elif user_id:
             conditions.append("(from_user_id = ? OR to_user_id = ?)")
             params.extend([user_id, user_id])
+        if start_date:
+            conditions.append("created_at >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("created_at <= ?")
+            params.append(end_date)
         if search:
             like = f"%{search}%"
             search_field_map = {
@@ -1137,15 +1145,24 @@ async def get_pending_distributions() -> List[Dict[str, Any]]:
         return result
 
 
-async def get_distribution_stats() -> Dict[str, int]:
+async def get_distribution_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, int]:
     """Get distribution statistics"""
     async with get_db() as db:
         stats = {}
         for key in ["total", "pending", "pending_receipt", "approved", "delivered", "rejected", "disputed"]:
-            if key == "total":
-                cursor = await db.execute("SELECT COUNT(*) FROM distributions")
-            else:
-                cursor = await db.execute("SELECT COUNT(*) FROM distributions WHERE status = ?", (key,))
+            conditions = []
+            params = []
+            if key != "total":
+                conditions.append("status = ?")
+                params.append(key)
+            if start_date:
+                conditions.append("created_at >= ?")
+                params.append(start_date)
+            if end_date:
+                conditions.append("created_at <= ?")
+                params.append(end_date)
+            where = " AND ".join(conditions) if conditions else "1=1"
+            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {where}", params)
             stats[key] = (await cursor.fetchone())[0]
         return stats
 

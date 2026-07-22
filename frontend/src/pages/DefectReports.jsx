@@ -7,6 +7,7 @@ import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { defectsAPI, devicesAPI } from '../services/api';
+import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import useAutoRefresh from '../hooks/useAutoRefresh';
@@ -97,6 +98,7 @@ const DefectReports = () => {
   const [selectedReplacementDevice, setSelectedReplacementDevice] = useState(null);
   const [tableSearchBy, setTableSearchBy] = useState('all');
   const [tableSearchInput, setTableSearchInput] = useState('');
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
   const [openingBillId, setOpeningBillId] = useState(null);
   const [replacePaymentBillPreview, setReplacePaymentBillPreview] = useState(null);
@@ -132,6 +134,7 @@ const DefectReports = () => {
     const params = {
       page: windowPage,
       page_size: pageSize,
+      ...buildDateParams(dateRange),
     };
     if (appliedTableSearch.query) {
       params.search = appliedTableSearch.query;
@@ -146,6 +149,7 @@ const DefectReports = () => {
     const params = {
       page: 1,
       page_size: 1,
+      ...buildDateParams(dateRange),
       ...extraParams,
     };
     if (appliedTableSearch.query) {
@@ -252,7 +256,7 @@ const DefectReports = () => {
 
   useEffect(() => {
     resetAndLoadDefects();
-  }, [appliedTableSearch]);
+  }, [appliedTableSearch, dateRange]);
 
   useAutoRefresh(resetAndLoadDefects);
 
@@ -844,6 +848,10 @@ const DefectReports = () => {
             <Button icon={Plus}>Report Defect</Button>
           </Link>
         )}
+      </div>
+
+      <div className="flex justify-end">
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
       {/* Stats */}

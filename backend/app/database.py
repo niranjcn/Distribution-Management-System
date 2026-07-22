@@ -689,6 +689,10 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN force_password_change TINYINT(1) DEFAULT 0",
             "ALTER TABLE users ADD COLUMN digital_id VARCHAR(128)",
             "ALTER TABLE users ADD COLUMN broadband_id VARCHAR(128)",
+            "ALTER TABLE users ADD COLUMN cluster_id VARCHAR(128)",
+            "ALTER TABLE users ADD COLUMN operator_id VARCHAR(128)",
+            "CREATE UNIQUE INDEX idx_users_cluster_id ON users (cluster_id)",
+            "CREATE UNIQUE INDEX idx_users_operator_id ON users (operator_id)",
             "CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications (user_id, created_at DESC)",
         ]:
             try:

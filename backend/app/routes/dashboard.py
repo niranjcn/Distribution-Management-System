@@ -1,8 +1,10 @@
 import logging
-from fastapi import APIRouter, HTTPException, Query, status, Depends
+from fastapi import APIRouter, HTTPException, Query, status, Depends, Response
 from pydantic import BaseModel
-from app.services import dashboard_service
-from app.middleware.auth_middleware import get_current_user, require_admin_or_md, require_any_role
+from app.services import dashboard_service, user_service
+from app.database import get_db, rows_to_list
+from app.middleware.auth_middleware import get_current_user, require_admin_or_md, require_any_role, require_admin_or_manager_or_md_or_staff
+from app.core.activity_logger import log_business_activity
 
 router = APIRouter()
 
@@ -34,11 +36,13 @@ async def get_scope_users(
 @router.get("/user-kpi/{user_id}")
 async def get_user_kpi(
     user_id: str,
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """Get KPI data for a specific user in the hierarchy."""
     try:
-        data = await dashboard_service.get_user_kpi(current_user, user_id)
+        data = await dashboard_service.get_user_kpi(current_user, user_id, start_date, end_date)
         return {"success": True, "data": data}
     except Exception as e:
         logger.exception("Unhandled route exception")
@@ -50,11 +54,13 @@ async def get_user_kpi(
 
 @router.get("/stats")
 async def get_dashboard_stats(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """Get dashboard statistics based on user role"""
     try:
-        stats = await dashboard_service.get_dashboard_stats(current_user)
+        stats = await dashboard_service.get_dashboard_stats(current_user, start_date, end_date)
 
         return {
             "success": True,
@@ -97,11 +103,13 @@ async def get_recent_activities(
 
 @router.get("/charts/distributions")
 async def get_distribution_chart_data(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """Get distribution chart data"""
     try:
-        data = await dashboard_service.get_distribution_chart_data()
+        data = await dashboard_service.get_distribution_chart_data(start_date, end_date)
 
         return {
             "success": True,
@@ -120,11 +128,13 @@ async def get_distribution_chart_data(
 
 @router.get("/charts/defects")
 async def get_defect_chart_data(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """Get defect chart data"""
     try:
-        data = await dashboard_service.get_defect_chart_data()
+        data = await dashboard_service.get_defect_chart_data(start_date, end_date)
 
         return {
             "success": True,
@@ -166,11 +176,13 @@ async def get_system_alerts(
 
 @router.get("/advanced-metrics")
 async def get_advanced_dashboard_metrics(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
     """Get advanced management analytics for graph-heavy dashboards."""
     try:
-        data = await dashboard_service.get_advanced_dashboard_metrics(current_user)
+        data = await dashboard_service.get_advanced_dashboard_metrics(current_user, start_date, end_date)
 
         return {
             "success": True,
@@ -189,11 +201,13 @@ async def get_advanced_dashboard_metrics(
 
 @router.get("/distribution-device-analytics")
 async def get_distribution_device_analytics(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_md)
 ):
     """Get distribution device analytics for admin/manager dashboards."""
     try:
-        data = await dashboard_service.get_distribution_device_analytics()
+        data = await dashboard_service.get_distribution_device_analytics(start_date, end_date)
         return {
             "success": True,
             "message": "Distribution device analytics retrieved successfully",
@@ -273,4 +287,43 @@ async def track_client_activity(
         )
 
 
+@router.get("/view-as/{target_user_id}")
+async def view_as_dashboard(
+    target_user_id: str,
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    current_user: dict = Depends(require_admin_or_md)
+):
+    """Get dashboard data as seen by the target user (admin/manager only)."""
+    try:
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT id, name, email, role FROM users WHERE id = ?",
+                (int(target_user_id),)
+            )
+            row = await cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="User not found")
 
+            target_role = str(row["role"])
+            if target_role not in ("sub_distributor", "cluster", "operator", "sub_distribution_manager"):
+                raise HTTPException(status_code=400, detail="Can only view dashboards for sub-distributors, clusters, and operators")
+
+            target_user = {
+                "_id": str(row["id"]),
+                "id": str(row["id"]),
+                "role": target_role,
+                "name": str(row.get("name", "")),
+                "email": str(row.get("email", "")),
+            }
+
+        data = await dashboard_service.get_view_as_dashboard(target_user, start_date, end_date)
+        return {"success": True, "data": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )

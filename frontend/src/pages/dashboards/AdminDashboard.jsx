@@ -16,6 +16,7 @@ import { Doughnut, Pie, Line, Bar } from 'react-chartjs-2';
 import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
+import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { dashboardAPI, usersAPI, defectsAPI, reassignmentRequestsAPI } from '../../services/api';
 import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
@@ -78,7 +79,18 @@ const chartOptions = {
   },
 };
 
+const periodLabel = (range) => ({
+  all: 'all time',
+  today: 'today',
+  last7: 'last 7 days',
+  last30: 'last 30 days',
+  last90: 'last 90 days',
+  thisYear: 'this year',
+  custom: 'selected period',
+}[range] || 'selected period');
+
 const AdminDashboard = () => {
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } });
   const [recentActivities, setRecentActivities] = useState([]);
@@ -95,9 +107,10 @@ const AdminDashboard = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
+        const dateParams = buildDateParams(dateRange);
         const [statsRes, advancedRes, usersRes, defectsRes, distribAnalyticsRes] = await Promise.all([
-          dashboardAPI.getStats().catch(() => ({ data: {} })),
-          dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } } })),
+          dashboardAPI.getStats(dateParams).catch(() => ({ data: {} })),
+          dashboardAPI.getAdvancedMetrics(dateParams).catch(() => ({ data: { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } } })),
           usersAPI.getUsers().catch(() => ({ data: [] })),
           defectsAPI.getDefects().catch(() => ({ data: [] })),
           dashboardAPI.getDistributionDeviceAnalytics().catch(() => ({ data: null })),
@@ -129,7 +142,7 @@ const AdminDashboard = () => {
     };
 
     fetchData();
-  }, []);
+  }, [dateRange]);
 
   const handleHierarchySelect = async (selection) => {
     setSelectedUser(selection);
@@ -137,7 +150,8 @@ const AdminDashboard = () => {
       setKpiLoading(true);
       setUserKpi(null);
       try {
-        const res = await dashboardAPI.getUserKpi(selection.id);
+        const dateParams = buildDateParams(dateRange);
+        const res = await dashboardAPI.getUserKpi(selection.id, dateParams);
         setUserKpi(res.data || null);
       } catch {
         setUserKpi(null);
@@ -221,13 +235,25 @@ const AdminDashboard = () => {
         </div>
       </div>
 
+      <div className="flex justify-end">
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 animate-slideUp">
-        <StatCard title="Total Devices" value={kpis.total_devices ?? stats.total_devices ?? 0} description="Registered devices" color="total" />
-        <StatCard title="Active Devices" value={kpis.active_devices ?? stats.active_devices ?? 0} description="Currently active" color="online" />
-        <StatCard title="Inactive Devices" value={kpis.inactive_devices ?? 0} description="Not responding" color="offline" />
-        <StatCard title="Defects (Month)" value={kpis.defects_this_month ?? 0} description="This month" color="yellow" />
-        <StatCard title="Defects (Year)" value={kpis.defects_this_year ?? 0} description="This year" color="indigo" />
-        <StatCard title="Replacements" value={kpis.replacements_total ?? 0} description="Total" color="purple" />
+        <StatCard title="Total Devices" value={stats.total_devices ?? 0} description="All registered devices" color="total" />
+        <StatCard title="Total Active Devices" value={stats.total_active_devices ?? 0} description="Currently active" color="online" />
+        <StatCard title="Total Distributed Devices" value={stats.total_distributed_devices ?? 0} description="Currently distributed" color="teal" />
+        <StatCard title="Total Inactive Devices" value={stats.total_inactive_devices ?? 0} description="Currently inactive" color="offline" />
+        <StatCard title="Total Defective Devices" value={stats.total_defective_devices ?? 0} description="Currently defective" color="red" />
+        <StatCard title="Total Replaced Devices" value={stats.total_replaced_devices ?? 0} description="Ever replaced" color="purple" />
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4 animate-slideUp">
+        <StatCard title="Registered in Period" value={stats.registered_in_range ?? 0} description={`Devices created in ${periodLabel(dateRange.range)}`} color="total" />
+        <StatCard title="Distributed in Period" value={stats.distributed_in_range ?? 0} description={`Devices distributed in ${periodLabel(dateRange.range)}`} color="blue" />
+        <StatCard title="Inactive in Period" value={stats.inactive_in_range ?? 0} description={`Became inactive in ${periodLabel(dateRange.range)}`} color="offline" />
+        <StatCard title="Defective in Period" value={stats.defective_in_range ?? 0} description={`Became defective in ${periodLabel(dateRange.range)}`} color="red" />
+        <StatCard title="Replacements in Period" value={stats.replacements_in_range ?? 0} description={`Replaced in ${periodLabel(dateRange.range)}`} color="purple" />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 animate-slideUp">
@@ -236,18 +262,21 @@ const AdminDashboard = () => {
           value={`${reliabilitySummary.defect_incidence_percentage ?? 0}%`}
           icon={Activity}
           color="red"
+          description={`Defects in ${periodLabel(dateRange.range)}`}
         />
         <StatCard
           title="Repaired in 60 Days"
           value={reliabilitySummary.repaired_within_sla_devices ?? 0}
           icon={CheckSquare}
           color="green"
+          description={`Resolved within 60 days in ${periodLabel(dateRange.range)}`}
         />
         <StatCard
           title="60-Day Repair Rate"
           value={`${reliabilitySummary.repaired_within_sla_percentage ?? 0}%`}
           icon={ShieldCheck}
           color="indigo"
+          description={`Of resolved defects in ${periodLabel(dateRange.range)}`}
         />
       </div>
 
@@ -287,72 +316,6 @@ const AdminDashboard = () => {
                 </div>
               </div>
             ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
-            {distribAnalytics.by_manufacturer && distribAnalytics.by_manufacturer.length > 0 && (
-              <Card title="Sent Devices by Manufacturer" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-                <div className="overflow-auto max-h-[50vh]">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
-                        <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Manufacturer</th>
-                        <th className="text-right px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Sent</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {distribAnalytics.by_manufacturer.map((item, i) => (
-                        <tr key={i} className="hover:bg-gray-50/80 transition-colors">
-                          <td className="px-5 py-3.5 text-sm font-medium text-gray-800">{item.manufacturer}</td>
-                          <td className="px-5 py-3.5 text-right">
-                            <span className="inline-flex items-center justify-center min-w-[2.5rem] px-2.5 py-1 rounded-full text-sm font-bold bg-indigo-50 text-indigo-700">{item.total}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            )}
-
-            {distribAnalytics.per_holder_breakdown && distribAnalytics.per_holder_breakdown.length > 0 && (
-              <Card title="Per-Holder Distribution Breakdown" className="overflow-hidden border border-gray-200 rounded-xl shadow-sm">
-                <div className="overflow-auto max-h-[50vh]">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gradient-to-r from-gray-50 to-gray-100/50 border-b border-gray-200">
-                        <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Holder</th>
-                        <th className="text-right px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Sent</th>
-                        <th className="text-right px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Remaining</th>
-                        <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Type Breakdown</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {distribAnalytics.per_holder_breakdown.map((item, i) => (
-                        <tr key={i} className="hover:bg-gray-50/80 transition-colors">
-                          <td className="px-5 py-3.5 text-sm font-medium text-gray-800">{item.holder_name}</td>
-                          <td className="px-5 py-3.5 text-right font-semibold text-gray-800">{item.total_sent}</td>
-                          <td className="px-5 py-3.5 text-right">
-                            <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2.5 py-1 rounded-full text-sm font-bold ${
-                              item.remaining_available > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
-                            }`}>{item.remaining_available}</span>
-                          </td>
-                          <td className="px-5 py-3.5 text-gray-600">
-                            <div className="flex flex-wrap gap-1.5">
-                              {(item.type_breakdown || []).map((t, j) => (
-                                <span key={j} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
-                                  {t.device_type}: {t.count}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            )}
           </div>
         </>
       )}

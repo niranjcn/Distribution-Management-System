@@ -162,6 +162,8 @@ async def get_devices(
     holder_ids: Optional[str] = None,
     search_by: Optional[str] = None,
     search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """Get all devices with pagination and filters"""
@@ -182,7 +184,9 @@ async def get_devices(
             holder_id=holder_id,
             holder_ids=parsed_holder_ids,
             search_by=search_by,
-            search=search
+            search=search,
+            start_date=start_date,
+            end_date=end_date
         )
 
         return {
@@ -276,6 +280,8 @@ async def get_my_device_overview(
     cluster_id: Optional[str] = None,
     search_by: Optional[str] = None,
     search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """Get comprehensive device overview: devices in hand + under hierarchy + distribution stats.
@@ -297,6 +303,8 @@ async def get_my_device_overview(
                 holder_ids=holder_scope,
                 search_by=search_by,
                 search=search,
+                start_date=start_date,
+                end_date=end_date,
             )
             all_devices = result["data"]
             stats = await device_service.get_device_stats()

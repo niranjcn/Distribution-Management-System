@@ -27,6 +27,8 @@ import ForcedCredentialUpdate from './pages/ForcedCredentialUpdate';
 import ChangeRequests from './pages/ChangeRequests';
 import EditRequests from './pages/EditRequests';
 import ReassignmentRequests from './pages/ReassignmentRequests';
+import UserSearch from './pages/UserSearch';
+import ViewAsDashboard from './pages/ViewAsDashboard';
 
 
 import DeliveryConfirmations from './pages/DeliveryConfirmations';
@@ -327,6 +329,22 @@ function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['super_admin']}>
               <ReassignmentRequests />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="view-as"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager']}>
+              <UserSearch />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="view-as/:userId"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager']}>
+              <ViewAsDashboard />
             </ProtectedRoute>
           }
         />

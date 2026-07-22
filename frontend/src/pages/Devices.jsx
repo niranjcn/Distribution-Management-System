@@ -6,6 +6,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import { devicesAPI, defectsAPI } from '../services/api';
+import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import useAutoRefresh from '../hooks/useAutoRefresh';
@@ -76,6 +77,7 @@ const Devices = () => {
   const [loading, setLoading] = useState(true);
   const [deviceMeta, setDeviceMeta] = useState({ loaded_count: 0, total_count: 0, has_next: false, show_all: false });
   const [activeTab, setActiveTab] = useState('all');
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [searchBy, setSearchBy] = useState('all');
   const [searchInput, setSearchInput] = useState('');
@@ -133,8 +135,9 @@ const Devices = () => {
       scope: hasHierarchy ? activeTab : 'all',
       filters: filterPayload,
       search: appliedSearch,
+      dateRange,
     });
-  }, [activeTab, appliedSearch, hasHierarchy, isAllDevicesView, tableFilters]);
+  }, [activeTab, appliedSearch, hasHierarchy, isAllDevicesView, tableFilters, dateRange]);
 
   const loadOverviewCards = async () => {
     const response = await devicesAPI.getMyOverview({ page: 1, page_size: 1 });
@@ -176,6 +179,7 @@ const Devices = () => {
       page: windowPage,
       page_size: pageSize,
       scope: hasHierarchy ? activeTab : 'all',
+      ...buildDateParams(dateRange),
     };
 
     if (isAllDevicesView) {
@@ -668,7 +672,7 @@ const Devices = () => {
 
       {/* Stats Cards */}
       {!loading && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {isManagement ? (
             <>
               <Card className="!p-4">
@@ -681,11 +685,7 @@ const Devices = () => {
               </Card>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">Distributed</p>
-                <p className="text-2xl font-bold text-blue-600">{overviewStats.distributed ?? (overview?.all_under_me || []).filter(d => d.status === 'distributed').length}</p>
-              </Card>
-              <Card className="!p-4">
-                <p className="text-sm text-gray-500">In Use</p>
-                <p className="text-2xl font-bold text-purple-600">{overviewStats.in_use ?? (overview?.all_under_me || []).filter(d => d.status === 'in_use').length}</p>
+                <p className="text-2xl font-bold text-blue-600">{(overviewStats.distributed ?? 0) + (overviewStats.in_use ?? 0) || (overview?.all_under_me || []).filter(d => d.status === 'distributed' || d.status === 'in_use').length}</p>
               </Card>
               <Card className="!p-4">
                 <p className="text-sm text-gray-500">Defective</p>
@@ -890,13 +890,16 @@ const Devices = () => {
                 <Filter className="w-4 h-4 text-blue-600" />
                 <h3 className="text-sm font-semibold text-gray-800">Table Filters (ALL Devices)</h3>
               </div>
-              <Button
-                variant="secondary"
-                onClick={() => setShowAdvancedFilters((prev) => !prev)}
-                className="text-xs"
-              >
-                {showAdvancedFilters ? 'Hide Filters' : 'Show Filters'}
-              </Button>
+              <div className="flex items-center gap-2">
+                <DateRangeFilter value={dateRange} onChange={setDateRange} />
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                  className="text-xs"
+                >
+                  {showAdvancedFilters ? 'Hide Filters' : 'Show Filters'}
+                </Button>
+              </div>
             </div>
 
             {showAdvancedFilters && (

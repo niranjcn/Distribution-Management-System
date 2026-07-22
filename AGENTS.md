@@ -42,6 +42,17 @@ Always determine:
 - Whether reports, dashboards, or notifications depend on it.
 - Whether authentication or permissions are impacted.
 
+## FIRST: Find the existing pattern
+
+Before writing any code, search the codebase for an **existing implementation** of the same feature or a closely related one. If a working implementation exists, replicate its approach exactly — same pattern, same style, same abstractions. Do NOT introduce a second, different way of doing the same thing.
+
+Examples of what to search for:
+- Is there already a date-range filter on another page? Copy its approach.
+- Is there already a modal, card, table, or form component? Use it, don't build a new one.
+- Is there an existing API pattern for similar routes/services? Follow it.
+
+If no existing implementation exists, then create one — but design it so future features can reuse it.
+
 ---
 
 # Regression Checklist

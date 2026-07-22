@@ -82,7 +82,9 @@ async def get_devices(
     holder_id: Optional[str] = None,
     holder_ids: Optional[List[str]] = None,
     search_by: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
 ) -> Dict[str, Any]:
     """Get all devices with pagination and filters"""
     async with get_db() as db:
@@ -107,6 +109,12 @@ async def get_devices(
                 placeholders = ",".join(["?"] * len(normalized_holder_ids))
                 conditions.append(f"CAST(current_holder_id AS TEXT) IN ({placeholders})")
                 params.extend(normalized_holder_ids)
+        if start_date:
+            conditions.append("created_at >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("created_at <= ?")
+            params.append(end_date)
         if search:
             pattern = f"%{str(search).strip()}%"
             search_field_map = {
@@ -871,15 +879,24 @@ async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]
         return device
 
 
-async def get_device_stats() -> Dict[str, int]:
+async def get_device_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, int]:
     """Get device statistics"""
     async with get_db() as db:
         stats = {}
         for key in ["total", "available", "distributed", "in_use", "defective", "returned"]:
-            if key == "total":
-                cursor = await db.execute("SELECT COUNT(*) FROM devices")
-            else:
-                cursor = await db.execute("SELECT COUNT(*) FROM devices WHERE status = ?", (key,))
+            conditions = []
+            params = []
+            if key != "total":
+                conditions.append("status = ?")
+                params.append(key)
+            if start_date:
+                conditions.append("created_at >= ?")
+                params.append(start_date)
+            if end_date:
+                conditions.append("created_at <= ?")
+                params.append(end_date)
+            where = " AND ".join(conditions) if conditions else "1=1"
+            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {where}", params)
             stats[key] = (await cursor.fetchone())[0]
         return stats
 

@@ -275,6 +275,11 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
     if target_role != SUB_DISTRIBUTOR:
         user_data = user_data.model_copy(update={"digital_id": None, "broadband_id": None})
 
+    if target_role != CLUSTER:
+        user_data = user_data.model_copy(update={"cluster_id": None})
+    if target_role != OPERATOR:
+        user_data = user_data.model_copy(update={"operator_id": None})
+
     if actor_role not in ALLOWED_CREATE_BY_ROLE:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to create users")
 
@@ -851,6 +856,8 @@ async def bulk_upload_users(
         name = str(row.get("name") or "").strip()
         digital_id = str(row.get("digital_id") or "").strip() or None
         broadband_id = str(row.get("broadband_id") or "").strip() or None
+        cluster_id = str(row.get("cluster_id") or "").strip() or None
+        operator_id = str(row.get("operator_id") or "").strip() or None
         phone = str(row.get("phone") or "").strip() or None
         department = str(row.get("department") or "").strip() or None
         location = str(row.get("location") or "").strip() or None
@@ -883,6 +890,8 @@ async def bulk_upload_users(
             "normalized_role": normalized_role,
             "digital_id": digital_id,
             "broadband_id": broadband_id,
+            "cluster_id": cluster_id,
+            "operator_id": operator_id,
             "phone": phone,
             "department": department,
             "location": location,
@@ -1004,11 +1013,11 @@ async def bulk_upload_users(
                 }
             }
 
-        insert_sql = """INSERT INTO users (email, password_hash, name, role, digital_id, broadband_id,
+        insert_sql = """INSERT INTO users (email, password_hash, name, role, digital_id, broadband_id, cluster_id, operator_id,
             phone, department, location, status, parent_id, permissions,
             theme, compact_mode, email_notifications, push_notifications,
             is_verified, created_at, updated_at, last_login)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
         should_commit = True
         for batch in _chunks(insertable_rows, 500):
@@ -1021,8 +1030,10 @@ async def bulk_upload_users(
                     item["password_hash"],
                     item["name"],
                     item["normalized_role"],
-                    item["digital_id"],
-                    item["broadband_id"],
+                    item["digital_id"] if item["normalized_role"] == "sub_distributor" else None,
+                    item["broadband_id"] if item["normalized_role"] == "sub_distributor" else None,
+                    item["cluster_id"] if item["normalized_role"] == "cluster" else None,
+                    item["operator_id"] if item["normalized_role"] == "operator" else None,
                     item["phone"],
                     item["department"],
                     item["location"],
@@ -1057,8 +1068,10 @@ async def bulk_upload_users(
                                 item["password_hash"],
                                 item["name"],
                                 item["normalized_role"],
-                                item["digital_id"],
-                                item["broadband_id"],
+                                item["digital_id"] if item["normalized_role"] == "sub_distributor" else None,
+                                item["broadband_id"] if item["normalized_role"] == "sub_distributor" else None,
+                                item["cluster_id"] if item["normalized_role"] == "cluster" else None,
+                                item["operator_id"] if item["normalized_role"] == "operator" else None,
                                 item["phone"],
                                 item["department"],
                                 item["location"],

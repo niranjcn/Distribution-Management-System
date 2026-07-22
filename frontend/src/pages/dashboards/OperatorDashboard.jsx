@@ -12,6 +12,7 @@ import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import DeviceIdentity from '../../components/ui/DeviceIdentity';
 import Button from '../../components/ui/Button';
+import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { dashboardAPI, devicesAPI, defectsAPI, returnsAPI, distributionsAPI } from '../../services/api';
 import {
@@ -38,6 +39,7 @@ const doughnutOptions = {
 
 const OperatorDashboard = () => {
   const { user } = useAuth();
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
   const [myDevices, setMyDevices] = useState([]);
@@ -50,9 +52,10 @@ const OperatorDashboard = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
+        const dateParams = buildDateParams(dateRange);
         const [statsRes, advancedRes, devRes, defRes, retRes, distRes] = await Promise.all([
-          dashboardAPI.getStats().catch(() => ({ data: {} })),
-          dashboardAPI.getAdvancedMetrics().catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
+          dashboardAPI.getStats(dateParams).catch(() => ({ data: {} })),
+          dashboardAPI.getAdvancedMetrics(dateParams).catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
           devicesAPI.getMyOverview({ show_all: true }).catch(() => ({ data: { all_under_me: [] } })),
           defectsAPI.getDefects().catch(() => ({ data: [] })),
           returnsAPI.getReturns().catch(() => ({ data: [] })),
@@ -71,7 +74,7 @@ const OperatorDashboard = () => {
       }
     };
     fetchData();
-  }, []);
+  }, [dateRange]);
 
   const pendingReceipts = distributions.filter(
     d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)
@@ -102,6 +105,10 @@ const OperatorDashboard = () => {
             <Button icon={AlertTriangle} variant="danger">Report Defect</Button>
           </Link>
         </div>
+      </div>
+
+      <div className="flex justify-end">
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

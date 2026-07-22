@@ -101,6 +101,8 @@ def _get_device_identifier_for_activity(device: dict, *, fallback: str = "unknow
 async def get_replacement_defects(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_any_role)
 ):
     """Get all replacement mappings (defects with replacement_device_id), scoped by hierarchy."""
@@ -108,7 +110,9 @@ async def get_replacement_defects(
         result = await defect_service.get_replacement_defects(
             current_user=current_user,
             page=page,
-            page_size=page_size
+            page_size=page_size,
+            start_date=start_date,
+            end_date=end_date
         )
 
         return {
@@ -252,6 +256,8 @@ async def get_defects(
     defect_type: Optional[str] = None,
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """Get all defect reports with pagination and filters"""
@@ -285,6 +291,8 @@ async def get_defects(
             holder_user_id=holder_user_id,
             search=search,
             search_by=search_by,
+            start_date=start_date,
+            end_date=end_date,
             visibility_user=current_user
         )
 

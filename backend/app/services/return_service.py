@@ -412,26 +412,34 @@ async def cancel_return(return_id: str, user_id: str) -> bool:
         return True
 
 
-async def get_return_stats() -> Dict[str, Any]:
+async def get_return_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Get return statistics"""
     async with get_db() as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM returns")
-        total = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM returns WHERE status = 'pending'")
-        pending = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM returns WHERE status = 'approved'")
-        approved = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM returns WHERE status = 'received'")
-        received = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM returns WHERE status = 'rejected'")
-        rejected = (await cursor.fetchone())[0]
+        async def _count(extra_conditions=None, extra_params=None):
+            conds = []
+            params = []
+            if extra_conditions:
+                conds.append(extra_conditions)
+                params.extend(extra_params)
+            if start_date:
+                conds.append("created_at >= ?")
+                params.append(start_date)
+            if end_date:
+                conds.append("created_at <= ?")
+                params.append(end_date)
+            where = " AND ".join(conds) if conds else "1=1"
+            cursor = await db.execute(f"SELECT COUNT(*) FROM returns WHERE {where}", params)
+            return (await cursor.fetchone())[0]
 
-        cursor = await db.execute("SELECT COUNT(*) FROM returns WHERE reason = 'defective'")
-        defective = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM returns WHERE reason = 'unused'")
-        unused = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM returns WHERE reason = 'end_of_contract'")
-        end_of_contract = (await cursor.fetchone())[0]
+        total = await _count()
+        pending = await _count("status = 'pending'", [])
+        approved = await _count("status = 'approved'", [])
+        received = await _count("status = 'received'", [])
+        rejected = await _count("status = 'rejected'", [])
+
+        defective = await _count("reason = 'defective'", [])
+        unused = await _count("reason = 'unused'", [])
+        end_of_contract = await _count("reason = 'end_of_contract'", [])
 
         return {
             "total": total,

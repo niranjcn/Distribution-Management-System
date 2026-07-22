@@ -4,12 +4,14 @@ import Modal from '../components/ui/Modal';
 import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
+import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { defectsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { ArrowLeftRight, Loader2 } from 'lucide-react';
 
 const Replacements = () => {
   const { showToast } = useNotifications();
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -17,7 +19,7 @@ const Replacements = () => {
   const fetchReplacements = async () => {
     try {
       setLoading(true);
-      const response = await defectsAPI.getReplacements({ page_size: 100 });
+      const response = await defectsAPI.getReplacements({ page_size: 100, ...buildDateParams(dateRange) });
       setRows(response.data || []);
     } catch (error) {
       showToast(error.message || 'Failed to load replacements', 'error');
@@ -29,7 +31,7 @@ const Replacements = () => {
 
   useEffect(() => {
     fetchReplacements();
-  }, []);
+  }, [dateRange]);
 
   const sortedRows = useMemo(() => {
     return [...rows].sort((a, b) => {
@@ -46,7 +48,10 @@ const Replacements = () => {
           <h1 className="text-2xl font-bold text-gray-800">Replacements</h1>
           <p className="text-gray-500 mt-1">Track defective-to-replacement device mappings</p>
         </div>
-        <Button variant="secondary" onClick={fetchReplacements}>Refresh</Button>
+        <div className="flex items-center gap-2">
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
+          <Button variant="secondary" onClick={fetchReplacements}>Refresh</Button>
+        </div>
       </div>
 
       <Card>

@@ -28,6 +28,8 @@ class UserBase(BaseModel):
     role: UserRole
     digital_id: Optional[str] = Field(default=None, max_length=128)
     broadband_id: Optional[str] = Field(default=None, max_length=128)
+    cluster_id: Optional[str] = Field(default=None, max_length=128)
+    operator_id: Optional[str] = Field(default=None, max_length=128)
     phone: Optional[str] = None
     department: Optional[str] = None
     location: Optional[str] = None
@@ -60,6 +62,8 @@ class UserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     digital_id: Optional[str] = Field(default=None, max_length=128)
     broadband_id: Optional[str] = Field(default=None, max_length=128)
+    cluster_id: Optional[str] = Field(default=None, max_length=128)
+    operator_id: Optional[str] = Field(default=None, max_length=128)
     phone: Optional[str] = None
     department: Optional[str] = None
     location: Optional[str] = None
@@ -78,6 +82,8 @@ class UserResponse(BaseModel):
     role: UserRole
     digital_id: Optional[str] = None
     broadband_id: Optional[str] = None
+    cluster_id: Optional[str] = None
+    operator_id: Optional[str] = None
     phone: Optional[str] = None
     department: Optional[str] = None
     location: Optional[str] = None
