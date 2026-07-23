@@ -109,7 +109,7 @@ const AdminDashboard = () => {
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      <ErrorBoundary name="Stat Cards"><DashboardStatCards stats={stats} kpis={kpis} reliabilitySummary={reliabilitySummary} dateRange={dateRange} /></ErrorBoundary>
+      <ErrorBoundary name="Stat Cards"><DashboardStatCards stats={stats} kpis={kpis} reliabilitySummary={reliabilitySummary} dateRange={dateRange} loading={loading} /></ErrorBoundary>
 
       <ErrorBoundary name="Distribution Analytics"><DistribAnalyticsCards data={distribAnalytics} /></ErrorBoundary>
 

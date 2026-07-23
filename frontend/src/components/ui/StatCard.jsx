@@ -1,9 +1,6 @@
-/**
- * StatCard — KannurVision PDIC style
- * Bold left accent border, large colored number, faded icon circle on right.
- * Colorful and expressive — matches the reference image.
- */
-const StatCard = ({ title, value, description, icon: Icon, color = 'blue' }) => {
+import Skeleton, { SkeletonCircle, SkeletonText } from './Skeleton'
+
+const StatCard = ({ title, value, description, icon: Icon, color = 'blue', loading = false }) => {
   const colorConfig = {
     // Semantic device/network statuses
     total:   {
@@ -87,6 +84,21 @@ const StatCard = ({ title, value, description, icon: Icon, color = 'blue' }) => 
   };
 
   const cfg = colorConfig[color] || colorConfig.blue;
+
+  if (loading) {
+    return (
+      <div className="stat-card relative bg-white rounded-2xl border border-gray-200 border-l-4 border-l-gray-200 shadow-sm px-5 py-4 overflow-hidden">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-2 min-w-0 flex-1">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-8 w-28" />
+            <Skeleton className="h-3 w-36" />
+          </div>
+          <SkeletonCircle size="w-14 h-14" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
