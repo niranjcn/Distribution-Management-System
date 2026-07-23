@@ -73,5 +73,6 @@ def get_pagination(page: int, page_size: int, total: int) -> Dict[str, int]:
         "page": page,
         "page_size": page_size,
         "total": total,
-        "total_pages": total_pages
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
     }

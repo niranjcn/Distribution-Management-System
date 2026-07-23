@@ -4,6 +4,26 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 
+_SUBMODULES_WITH_DB = ["stats", "activities", "charts", "kpi", "analytics", "view_as"]
+_SUBMODULES_WITH_DEVICE = ["stats", "analytics", "view_as"]
+_SUBMODULES_WITH_DISTRIBUTION = ["stats", "analytics"]
+_SUBMODULES_WITH_DEFECT = ["stats", "analytics"]
+_SUBMODULES_WITH_RETURN = ["stats", "analytics"]
+_SUBMODULES_WITH_USER = ["stats", "analytics"]
+_SUBMODULES_WITH_APPROVAL = ["stats", "analytics"]
+_SUBMODULES_WITH_OPERATOR = ["stats"]
+_SUBMODULES_WITH_LOG_API = ["activities"]
+
+
+def _patch_submodules_value(modules: list, attr: str, value):
+    patchers = []
+    for mod in modules:
+        p = patch(f"app.services.dashboard_service.{mod}.{attr}", value)
+        p.start()
+        patchers.append(p)
+    return patchers
+
+
 class MockCursor:
     """Mocks CursorWrapper with controlled fetchone / fetchall results."""
 
@@ -64,34 +84,50 @@ def mock_db():
 
 @pytest.fixture
 def mock_get_db(mock_db):
-    """Patches get_db inside dashboard_service (where the local import lives)."""
+    """Patches get_db in each dashboard_service submodule that uses it."""
     @asynccontextmanager
     async def _fake_get_db():
         yield mock_db
 
-    patcher = patch("app.services.dashboard_service.get_db", _fake_get_db)
-    patcher.start()
+    patchers = _patch_submodules_value(_SUBMODULES_WITH_DB, "get_db", _fake_get_db)
     yield mock_db
-    patcher.stop()
+    for p in patchers:
+        p.stop()
 
 
 @pytest.fixture
 def mock_services():
-    """Patches all service dependencies used by dashboard_service."""
-    patchers = [
-        patch("app.services.dashboard_service.device_service", spec=True),
-        patch("app.services.dashboard_service.distribution_service", spec=True),
-        patch("app.services.dashboard_service.defect_service", spec=True),
-        patch("app.services.dashboard_service.return_service", spec=True),
-        patch("app.services.dashboard_service.user_service", spec=True),
-        patch("app.services.dashboard_service.approval_service", spec=True),
-        patch("app.services.dashboard_service.operator_service", spec=True),
-        patch("app.services.dashboard_service.log_api_activity", new=AsyncMock()),
+    """Patches all service dependencies in the dashboard_service submodules that use them."""
+    _SERVICE_SPECS = [
+        ("device_service", _SUBMODULES_WITH_DEVICE),
+        ("distribution_service", _SUBMODULES_WITH_DISTRIBUTION),
+        ("defect_service", _SUBMODULES_WITH_DEFECT),
+        ("return_service", _SUBMODULES_WITH_RETURN),
+        ("user_service", _SUBMODULES_WITH_USER),
+        ("approval_service", _SUBMODULES_WITH_APPROVAL),
+        ("operator_service", _SUBMODULES_WITH_OPERATOR),
     ]
-    mocks = [p.start() for p in patchers]
-    yield {m._extract_mock_name() if hasattr(m, '_extract_mock_name') else str(i): m
-           for i, m in enumerate(mocks)}
-    for p in patchers:
+
+    all_patchers = []
+    mock_map = {}
+
+    for svc_name, submodules in _SERVICE_SPECS:
+        mock_obj = MagicMock(spec=True)
+        mock_map[svc_name] = mock_obj
+        for mod in submodules:
+            p = patch(f"app.services.dashboard_service.{mod}.{svc_name}", new=mock_obj)
+            p.start()
+            all_patchers.append(p)
+
+    log_api_mock = AsyncMock()
+    for mod in _SUBMODULES_WITH_LOG_API:
+        p = patch(f"app.services.dashboard_service.{mod}.log_api_activity", new=log_api_mock)
+        p.start()
+        all_patchers.append(p)
+    mock_map["log_api_activity"] = log_api_mock
+
+    yield mock_map
+    for p in all_patchers:
         p.stop()
 
 

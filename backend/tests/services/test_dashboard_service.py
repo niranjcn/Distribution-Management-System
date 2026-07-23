@@ -394,7 +394,7 @@ class TestGetAdvancedDashboardMetrics:
         })
 
         with (
-            patch("app.services.dashboard_service.get_system_alerts", new=AsyncMock(return_value=[])),
+            patch("app.services.dashboard_service.analytics.get_system_alerts", new=AsyncMock(return_value=[])),
         ):
             mock_get_db.add_result(fetchone_result=(3,))
             mock_get_db.add_result(fetchone_result=(8,))

@@ -7,7 +7,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { Bell, Clock3, Loader2, CheckCheck, AlertTriangle, Info, CheckCircle2, ExternalLink } from 'lucide-react';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
 const VALID_BASE_ROUTES = new Set([
   '/',
   '/devices',
@@ -280,43 +280,35 @@ const Notifications = () => {
   const [markingAll, setMarkingAll] = useState(false);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
+  const [hasNext, setHasNext] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  const [showAllNotifications, setShowAllNotifications] = useState(false);
 
-  const loadNotifications = useCallback(async (targetPage = 1, forceShowAll = showAllNotifications) => {
+  const loadNotifications = useCallback(async (targetPage = 1) => {
     setLoading(true);
     try {
       const response = await notificationsAPI.getNotifications({
-        page: forceShowAll ? 1 : targetPage,
-        page_size: forceShowAll ? 1000000 : PAGE_SIZE,
+        page: targetPage,
+        page_size: PAGE_SIZE,
       });
 
       const incoming = response?.data || [];
       const pagination = response?.pagination || {};
 
-      if (forceShowAll) {
-        setItems(incoming);
-      } else if (targetPage === 1) {
-        setItems(incoming);
-      } else {
-        setItems((prev) => [...prev, ...incoming]);
-      }
-
+      setItems(incoming);
       setPage(targetPage);
       setTotalCount(Number(pagination.total || incoming.length || 0));
-      setHasMore(forceShowAll ? false : Boolean(pagination.has_next));
+      setHasNext(Boolean(pagination.has_next));
       await refreshUnreadCount();
     } catch (error) {
       showToast(error.message || 'Failed to load notifications', 'error');
     } finally {
       setLoading(false);
     }
-  }, [refreshUnreadCount, showToast, showAllNotifications]);
+  }, [refreshUnreadCount, showToast]);
 
   useEffect(() => {
-    loadNotifications(1, showAllNotifications);
-  }, [loadNotifications, showAllNotifications]);
+    loadNotifications(1);
+  }, [loadNotifications]);
 
   const orderedItems = useMemo(
     () => [...items].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
@@ -381,13 +373,8 @@ const Notifications = () => {
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
         <p>
-          Loaded {orderedItems.length} of {totalCount || orderedItems.length} notifications
+          Page {page} of {Math.ceil(totalCount / PAGE_SIZE) || 1} &mdash; {totalCount} notifications
         </p>
-        {!showAllNotifications && (
-          <Button variant="secondary" onClick={() => setShowAllNotifications(true)}>
-            Show All Notifications
-          </Button>
-        )}
       </div>
 
       {loading ? (
@@ -440,10 +427,14 @@ const Notifications = () => {
         </div>
       )}
 
-      {!loading && hasMore && !showAllNotifications && (
-        <div className="flex justify-center">
-          <Button variant="outline" onClick={() => loadNotifications(page + 1)}>
-            Load Older Notifications
+      {!loading && (
+        <div className="flex items-center justify-center gap-4">
+          <Button variant="outline" disabled={page <= 1} onClick={() => loadNotifications(page - 1)}>
+            Previous
+          </Button>
+          <span className="text-sm text-gray-500">Page {page}</span>
+          <Button variant="outline" disabled={!hasNext} onClick={() => loadNotifications(page + 1)}>
+            Next
           </Button>
         </div>
       )}
