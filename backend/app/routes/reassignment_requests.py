@@ -35,7 +35,7 @@ async def get_reassignment_requests(
         raise
     except Exception as e:
         logger.exception("Unhandled route exception")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.get("/{request_id}", summary="Get reassignment request")
@@ -56,7 +56,7 @@ async def get_reassignment_request(
         raise
     except Exception as e:
         logger.exception("Unhandled route exception")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.post("/{request_id}/reassign", summary="Reassign users")
@@ -96,7 +96,7 @@ async def reassign_users(
         raise
     except Exception as e:
         logger.exception("Unhandled route exception")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
 @router.post("/{request_id}/reject", summary="Reject request")
@@ -122,4 +122,4 @@ async def reject_request(
         raise
     except Exception as e:
         logger.exception("Unhandled route exception")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")

@@ -73,11 +73,13 @@ async def upload_defect_photo(
         
         from app.config import settings
         return {"url": f"{settings.API_V1_PREFIX}/uploads/defect_photos/{unique_filename}"}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error uploading defect photo: {str(e)}")
+        logger.exception("Unhandled route exception")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload defect photo: {str(e)}"
+            detail="An internal error occurred. Please try again later."
         )
 
 

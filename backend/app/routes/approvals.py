@@ -58,6 +58,8 @@ async def get_approval_role_routing_config(
             "message": "Approval role routing config retrieved successfully",
             "data": config,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(
@@ -83,6 +85,8 @@ async def update_approval_role_routing_config(
             "message": "Approval role routing config updated successfully",
             "data": updated,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(

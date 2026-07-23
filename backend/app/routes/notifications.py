@@ -152,21 +152,30 @@ async def delete_notification(
     current_user: dict = Depends(get_current_user)
 ):
     """Delete notification"""
-    success = await notification_service.delete_notification(
-        notification_id=notification_id,
-        user_id=current_user["id"]
-    )
-    
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Notification not found"
+    try:
+        success = await notification_service.delete_notification(
+            notification_id=notification_id,
+            user_id=current_user["id"]
         )
-    
-    return {
-        "success": True,
-        "message": "Notification deleted successfully"
-    }
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Notification not found"
+            )
+        
+        return {
+            "success": True,
+            "message": "Notification deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
 
 
 

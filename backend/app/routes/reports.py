@@ -295,6 +295,8 @@ async def fetch_db_backup_schedule(
             "message": "Database backup schedule fetched successfully",
             "data": schedule,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(

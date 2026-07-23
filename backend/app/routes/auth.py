@@ -154,6 +154,8 @@ async def logout(
             "success": True,
             "message": "Logout successful"
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(

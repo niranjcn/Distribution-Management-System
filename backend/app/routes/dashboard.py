@@ -25,6 +25,8 @@ async def get_scope_users(
     try:
         data = await dashboard_service.get_scope_users(current_user)
         return {"success": True, "data": data}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(
@@ -44,6 +46,8 @@ async def get_user_kpi(
     try:
         data = await dashboard_service.get_user_kpi(current_user, user_id, start_date, end_date)
         return {"success": True, "data": data}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(
@@ -279,6 +283,8 @@ async def track_client_activity(
             "success": True,
             "message": "Client activity tracked",
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(

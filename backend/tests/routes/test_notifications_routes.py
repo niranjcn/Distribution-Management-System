@@ -249,5 +249,6 @@ class TestDeleteNotification:
             side_effect=RuntimeError("DB error")
         )
 
-        with pytest.raises(RuntimeError, match="DB error"):
-            client.delete(self.URL)
+        resp = client.delete(self.URL)
+        assert resp.status_code == 500
+        assert "internal error" in resp.json()["detail"].lower()

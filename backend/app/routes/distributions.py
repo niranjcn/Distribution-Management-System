@@ -279,6 +279,8 @@ async def sync_distribution_devices(
             "message": f"Synced {result['devices_synced']} device(s) from {result['total_distributions']} approved distribution(s)",
             "data": result
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(
