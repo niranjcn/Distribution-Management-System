@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { Doughnut, Pie, Line } from 'react-chartjs-2'
 import { ShieldCheck, Cpu, Activity } from 'lucide-react'
 import Card from '../ui/Card'
@@ -81,4 +81,4 @@ const DeviceCharts = ({ charts }) => {
   )
 }
 
-export default DeviceCharts
+export default memo(DeviceCharts)

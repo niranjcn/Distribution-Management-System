@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from app.database import get_db
 
-from .helpers import _build_date_filter
+from .helpers import _build_date_filter, _month_start, _shift_months
 
 
 async def get_distribution_chart_data(start_date: Optional[str] = None,
@@ -24,19 +24,21 @@ async def get_distribution_chart_data(start_date: Optional[str] = None,
                 "distributions": total
             })
         else:
+            month_start = _month_start(now)
+            trend_start = _shift_months(month_start, -11)
+            trend_end = _shift_months(month_start, 1)
+
+            cursor = await db.execute(
+                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM distributions WHERE status = 'delivered' AND created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
+                (trend_start.isoformat(), trend_end.isoformat())
+            )
+            by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+
             for i in range(11, -1, -1):
-                month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
-                month_end = month_start + timedelta(days=30)
-
-                cursor = await db.execute(
-                    "SELECT COUNT(*) FROM distributions WHERE status = 'delivered' AND created_at >= ? AND created_at < ?",
-                    (month_start.isoformat(), month_end.isoformat())
-                )
-                count = (await cursor.fetchone())[0]
-
+                start = _shift_months(month_start, -i)
                 data.append({
-                    "month": month_start.strftime("%b"),
-                    "distributions": count
+                    "month": start.strftime("%b"),
+                    "distributions": by_month.get(start.strftime("%Y-%m"), 0),
                 })
 
     return data
@@ -72,26 +74,29 @@ async def get_defect_chart_data(start_date: Optional[str] = None,
                 "resolved": resolved
             })
         else:
+            month_start = _month_start(now)
+            trend_start = _shift_months(month_start, -11)
+            trend_end = _shift_months(month_start, 1)
+
+            cursor = await db.execute(
+                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
+                (trend_start.isoformat(), trend_end.isoformat())
+            )
+            reported_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+
+            cursor = await db.execute(
+                "SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE status = 'resolved' AND resolved_at >= ? AND resolved_at < ? GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m",
+                (trend_start.isoformat(), trend_end.isoformat())
+            )
+            resolved_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+
             for i in range(11, -1, -1):
-                month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
-                month_end = month_start + timedelta(days=30)
-
-                cursor = await db.execute(
-                    "SELECT COUNT(*) FROM defects WHERE created_at >= ? AND created_at < ?",
-                    (month_start.isoformat(), month_end.isoformat())
-                )
-                reported = (await cursor.fetchone())[0]
-
-                cursor = await db.execute(
-                    "SELECT COUNT(*) FROM defects WHERE status = 'resolved' AND resolved_at >= ? AND resolved_at < ?",
-                    (month_start.isoformat(), month_end.isoformat())
-                )
-                resolved = (await cursor.fetchone())[0]
-
+                start = _shift_months(month_start, -i)
+                month_key = start.strftime("%Y-%m")
                 data.append({
-                    "month": month_start.strftime("%b"),
-                    "reported": reported,
-                    "resolved": resolved
+                    "month": start.strftime("%b"),
+                    "reported": reported_by_month.get(month_key, 0),
+                    "resolved": resolved_by_month.get(month_key, 0),
                 })
 
     return data

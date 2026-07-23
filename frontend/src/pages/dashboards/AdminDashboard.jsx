@@ -37,9 +37,9 @@ const AdminDashboard = () => {
         const [statsRes, advancedRes, usersRes, defectsRes, distribAnalyticsRes] = await Promise.all([
           dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
           dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } } }; }),
-          usersAPI.getUsers().catch(err => { console.error('Failed to load users:', err); showToast('Failed to load users', 'error'); return { data: [] }; }),
-          defectsAPI.getDefects().catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
-          dashboardAPI.getDistributionDeviceAnalytics().catch(err => { console.error('Failed to load distribution analytics:', err); showToast('Failed to load distribution analytics', 'error'); return { data: null }; }),
+          usersAPI.getUsers({ page_size: 10 }).catch(err => { console.error('Failed to load users:', err); showToast('Failed to load users', 'error'); return { data: [] }; }),
+          defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
+          dashboardAPI.getDistributionDeviceAnalytics(dateParams).catch(err => { console.error('Failed to load distribution analytics:', err); showToast('Failed to load distribution analytics', 'error'); return { data: null }; }),
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } });

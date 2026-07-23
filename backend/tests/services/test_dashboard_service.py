@@ -306,8 +306,10 @@ class TestGetUserKpi:
         mock_get_db.add_result(fetchone_result=(7,))
         mock_get_db.add_result(fetchone_result=(3,))
 
-        for _ in range(24):
-            mock_get_db.add_result(fetchone_result=(0,))
+        # 3 aggregate trend queries (replacing old 48-query loops)
+        mock_get_db.add_result(fetchall_result=[])
+        mock_get_db.add_result(fetchall_result=[])
+        mock_get_db.add_result(fetchall_result=[])
 
         result = await get_user_kpi(super_admin_user, target_user_id)
         assert result["user"]["id"] == "10"
@@ -413,12 +415,15 @@ class TestGetAdvancedDashboardMetrics:
                 ("cluster", "distributed", 15),
             ])
 
-            for _ in range(60):
-                mock_get_db.add_result(fetchone_result=(0,))
+            # 4 aggregate trend queries (replacing old 60-query loop)
+            mock_get_db.add_result(fetchall_result=[])
+            mock_get_db.add_result(fetchall_result=[])
+            mock_get_db.add_result(fetchall_result=[])
+            mock_get_db.add_result(fetchall_result=[])
 
             mock_get_db.add_result(fetchone_result=(0,))
 
-            for _ in range(20):
+            for _ in range(2):
                 mock_get_db.add_result(fetchone_result=(0,))
 
             mock_get_db.add_result(fetchone_result=(5,))
@@ -492,3 +497,22 @@ class TestGetDistributionDeviceAnalytics:
 
         result = await get_distribution_device_analytics("2025-01-01", "2025-06-30")
         assert result["total_sent_to_distribution"] == 5
+
+    async def test_per_holder_query_uses_aliased_created_at(self, mock_get_db):
+        mock_get_db.add_result(fetchall_result=[{"device_type": "ONT", "total": 5}])
+        mock_get_db.add_result(fetchone_result=(5,))
+        mock_get_db.add_result(fetchone_result=(50,))
+        mock_get_db.add_result(fetchall_result=[{"device_type": "ONT", "total": 30}])
+        mock_get_db.add_result(fetchall_result=[{"manufacturer": "Huawei", "total": 5}])
+        mock_get_db.add_result(fetchall_result=[])
+        mock_get_db.add_result(fetchall_result=[])
+
+        await get_distribution_device_analytics("2025-06-01", "2025-06-30")
+
+        per_holder_query = mock_get_db.executed_queries[5]
+        assert "d.created_at" in per_holder_query, (
+            "Per-holder query must use d.created_at (not bare created_at) "
+            "to avoid ambiguous column error when JOINing users table"
+        )
+        assert "WHERE d.status" in per_holder_query
+        assert "d.created_at >= ?" in per_holder_query or "d.created_at <= ?" in per_holder_query

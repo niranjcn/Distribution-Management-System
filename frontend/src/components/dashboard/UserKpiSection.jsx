@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Doughnut, Line, Bar } from 'react-chartjs-2';
 import StatCard from '../ui/StatCard';
 import Card from '../ui/Card';
@@ -49,6 +49,16 @@ const UserKpiSection = ({ userKpi, loading }) => {
       ],
     };
   }, [charts.defect_trend_12m]);
+
+  const activeInactiveData = useMemo(() => ({
+    labels: ['Active', 'Inactive'],
+    datasets: [{
+      data: [kpis.hierarchy_active_devices ?? 0, kpis.hierarchy_inactive_devices ?? 0],
+      backgroundColor: ['#10b981', '#ef4444'],
+      borderColor: '#FFFFFF',
+      borderWidth: 1,
+    }],
+  }), [kpis.hierarchy_active_devices, kpis.hierarchy_inactive_devices]);
 
   const distributionTrendData = useMemo(() => {
     const trend = charts.distribution_trend_12m || [];
@@ -110,18 +120,7 @@ const UserKpiSection = ({ userKpi, loading }) => {
         </Card>
         <Card title="Active vs Inactive" icon={Activity} className="industrial-chart-card" padding={false}>
           <div className="h-72 p-4">
-            <Doughnut
-              data={{
-                labels: ['Active', 'Inactive'],
-                datasets: [{
-                  data: [kpis.hierarchy_active_devices ?? 0, kpis.hierarchy_inactive_devices ?? 0],
-                  backgroundColor: ['#10b981', '#ef4444'],
-                  borderColor: '#FFFFFF',
-                  borderWidth: 1,
-                }],
-              }}
-              options={chartOptions}
-            />
+            <Doughnut data={activeInactiveData} options={chartOptions} />
           </div>
         </Card>
       </div>
@@ -150,4 +149,4 @@ const UserKpiSection = ({ userKpi, loading }) => {
   );
 };
 
-export default UserKpiSection;
+export default memo(UserKpiSection);

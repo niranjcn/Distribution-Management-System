@@ -246,60 +246,53 @@ async def get_advanced_dashboard_metrics(user: Dict[str, Any],
             total = int(row[2])
             holder_role_status_counts.setdefault(holder_role, {})[status_name] = total
 
-        # Monthly defect trend (last 12 months, or filtered range)
+        # Monthly defect/distribution trend (aggregated, not N+1)
         defect_trend = []
         distribution_trend = []
-        trend_months = range(11, -1, -1) if not (start_date or end_date) else range(0, 0)
-        for i in trend_months:
-            start = _shift_months(month_start, -i)
-            end = _shift_months(start, 1)
+
+        if not (start_date or end_date):
+            trend_start = _shift_months(month_start, -11)
+            trend_end = _shift_months(month_start, 1)
 
             cursor = await db.execute(
-                "SELECT COUNT(*) FROM defects WHERE created_at >= ? AND created_at < ?",
-                (start.isoformat(), end.isoformat())
+                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
+                (trend_start.isoformat(), trend_end.isoformat())
             )
-            reported = (await cursor.fetchone())[0]
+            reported_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
 
             cursor = await db.execute(
-                "SELECT COUNT(*) FROM defects WHERE status = 'resolved' AND resolved_at >= ? AND resolved_at < ?",
-                (start.isoformat(), end.isoformat())
+                "SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE status = 'resolved' AND resolved_at >= ? AND resolved_at < ? GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m",
+                (trend_start.isoformat(), trend_end.isoformat())
             )
-            resolved = (await cursor.fetchone())[0]
+            resolved_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
 
             cursor = await db.execute(
-                """SELECT COUNT(*) FROM defects
-                   WHERE replacement_device_id IS NOT NULL
-                   AND replacement_requested_at >= ? AND replacement_requested_at < ?""",
-                (start.isoformat(), end.isoformat())
+                "SELECT SUBSTRING(replacement_requested_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE replacement_device_id IS NOT NULL AND replacement_requested_at >= ? AND replacement_requested_at < ? GROUP BY SUBSTRING(replacement_requested_at, 1, 7) ORDER BY m",
+                (trend_start.isoformat(), trend_end.isoformat())
             )
-            replaced = (await cursor.fetchone())[0]
-
-            defect_trend.append({
-                "month": start.strftime("%b"),
-                "reported": reported,
-                "resolved": resolved,
-                "replaced": replaced
-            })
+            replaced_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
 
             cursor = await db.execute(
-                "SELECT COUNT(*) FROM distributions WHERE created_at >= ? AND created_at < ?",
-                (start.isoformat(), end.isoformat())
+                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total, SUM(CASE WHEN status IN ('approved', 'delivered') THEN 1 ELSE 0 END) AS delivered FROM distributions WHERE created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
+                (trend_start.isoformat(), trend_end.isoformat())
             )
-            total_dist = (await cursor.fetchone())[0]
+            dist_by_month = {str(row["m"]): {"total": int(row["total"]), "delivered": int(row["delivered"])} for row in await cursor.fetchall()}
 
-            cursor = await db.execute(
-                """SELECT COUNT(*) FROM distributions
-                   WHERE status IN ('approved', 'delivered')
-                   AND created_at >= ? AND created_at < ?""",
-                (start.isoformat(), end.isoformat())
-            )
-            delivered = (await cursor.fetchone())[0]
-
-            distribution_trend.append({
-                "month": start.strftime("%b"),
-                "total": total_dist,
-                "delivered": delivered
-            })
+            for i in range(11, -1, -1):
+                start = _shift_months(month_start, -i)
+                month_key = start.strftime("%Y-%m")
+                defect_trend.append({
+                    "month": start.strftime("%b"),
+                    "reported": reported_by_month.get(month_key, 0),
+                    "resolved": resolved_by_month.get(month_key, 0),
+                    "replaced": replaced_by_month.get(month_key, 0),
+                })
+                dist_data = dist_by_month.get(month_key, {"total": 0, "delivered": 0})
+                distribution_trend.append({
+                    "month": start.strftime("%b"),
+                    "total": dist_data["total"],
+                    "delivered": dist_data["delivered"],
+                })
 
         # If date range provided, add a single aggregated entry
         if start_date or end_date:
@@ -564,6 +557,7 @@ async def get_distribution_device_analytics(start_date: Optional[str] = None,
         by_manufacturer_rows = await cursor.fetchall()
 
         per_holder_cond = date_cond.replace("status IN ('distributed', 'in_use')", "d.status IN ('distributed', 'in_use')")
+        per_holder_cond = per_holder_cond.replace("created_at", "d.created_at")
         cursor = await db.execute(
             f"""SELECT
                    CAST(d.current_holder_id AS TEXT) AS holder_id,

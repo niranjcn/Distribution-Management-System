@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Chart as ChartJS,
@@ -70,8 +70,8 @@ const SubDistributorDashboard = () => {
             : devicesAPI.getDevices().catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: [] }; }),
           distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; }),
           usersAPI.getUsers({ role: 'operator', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; }),
-          defectsAPI.getDefects().catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
-          returnsAPI.getReturns().catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; })
+          defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
+          returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; })
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
@@ -90,7 +90,7 @@ const SubDistributorDashboard = () => {
   }, [dateRange]);
 
   const charts = advanced.charts || {};
-  const myDeviceSplitData = {
+  const myDeviceSplitData = useMemo(() => ({
     labels: ['Active', 'Inactive'],
     datasets: [{
       data: [
@@ -100,9 +100,9 @@ const SubDistributorDashboard = () => {
       backgroundColor: ['#10b981', '#ef4444'],
       borderWidth: 1,
     }],
-  };
+  }), [charts.my_device_active_split, myDevices]);
 
-  const managedUserSplitData = {
+  const managedUserSplitData = useMemo(() => ({
     labels: ['Active', 'Inactive'],
     datasets: [{
       data: [
@@ -112,7 +112,7 @@ const SubDistributorDashboard = () => {
       backgroundColor: ['#3b82f6', '#f59e0b'],
       borderWidth: 1,
     }],
-  };
+  }), [charts.cluster_account_active_split, charts.operator_account_active_split]);
 
   const pendingReceipts = distributions.filter(
     d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)

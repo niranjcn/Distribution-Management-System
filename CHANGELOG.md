@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared chartOptions in `src/utils/chartConfig.js`
 - Frontend test suite with 24 passing tests (StatCard, Card, DataTable)
 - OpenAPI `summary` annotations on all 144 backend routes
-- 12 backend contract test suites (389 route tests)
-- Backend test infrastructure with mock fixtures for all routess
+- 12 backend contract test suites (429 route tests)
+- Backend test infrastructure with mock fixtures for all routes
+- End-to-end test suite covering critical user flows
+- Database indexes on frequently queried columns across all tables
 
 ### Changed
 - Notification pagination from "Show All" to 20/page with prev/next navigation
@@ -22,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Silent error catch handlers replaced with user-visible error toasts
 - `batch_service.py` rewritten from MongoDB to MySQL
 - Fixed `status` query param shadowing `fastapi.status` in 4 route files
+- Eliminated N+1 SQL patterns in dashboard trend functions — 132 loop queries reduced to 10 aggregate queries (analytics.py, charts.py, kpi.py)
+- Added React.memo to chart components (DeviceCharts, UserKpiSection) and useMemo to inline chart data (OperatorDashboard, SubDistributorDashboard) to prevent unnecessary re-renders on unrelated stat changes
+- Dashboard Promise.all calls now pass dateParams to all API fetches — no more full table scans on date-filtered views
 - Updated CHANGELOG.md, TODO.md, ENGINEERING_AUDIT.md
 
 ### Removed

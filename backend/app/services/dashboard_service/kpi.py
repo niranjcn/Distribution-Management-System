@@ -125,50 +125,48 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str,
         cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dfc}", dfp)
         total_defects = (await cursor.fetchone())[0]
 
-        # Defect trend (12 months)
+        # Defect/distribution trend (aggregated, not N+1)
         now = datetime.now().replace(tzinfo=None)
         month_start = _month_start(now)
         defect_trend = []
-        trend_range = range(11, -1, -1) if not (start_date or end_date) else range(0, 0)
-        for i in trend_range:
-            start = _shift_months(month_start, -i)
-            end = _shift_months(start, 1)
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM defects WHERE CAST(reported_by AS CHAR) = ? AND created_at >= ? AND created_at < ?",
-                (target_user["id"], start.isoformat(), end.isoformat())
-            )
-            reported = (await cursor.fetchone())[0]
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM defects WHERE CAST(reported_by AS CHAR) = ? AND status = 'resolved' AND resolved_at >= ? AND resolved_at < ?",
-                (target_user["id"], start.isoformat(), end.isoformat())
-            )
-            resolved = (await cursor.fetchone())[0]
-            defect_trend.append({
-                "month": start.strftime("%b"),
-                "reported": reported,
-                "resolved": resolved,
-            })
-
-        # Distribution trend (12 months)
         distribution_trend = []
-        for i in trend_range:
-            start = _shift_months(month_start, -i)
-            end = _shift_months(start, 1)
+
+        if not (start_date or end_date):
+            trend_start = _shift_months(month_start, -11)
+            trend_end = _shift_months(month_start, 1)
+
             cursor = await db.execute(
-                "SELECT COUNT(*) FROM distributions WHERE from_user_id = ? AND created_at >= ? AND created_at < ?",
-                (target_user["id"], start.isoformat(), end.isoformat())
+                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = ? AND created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
+                (target_user["id"], trend_start.isoformat(), trend_end.isoformat())
             )
-            total = (await cursor.fetchone())[0]
+            reported_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+
             cursor = await db.execute(
-                "SELECT COUNT(*) FROM distributions WHERE from_user_id = ? AND status = 'delivered' AND created_at >= ? AND created_at < ?",
-                (target_user["id"], start.isoformat(), end.isoformat())
+                "SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = ? AND status = 'resolved' AND resolved_at >= ? AND resolved_at < ? GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m",
+                (target_user["id"], trend_start.isoformat(), trend_end.isoformat())
             )
-            delivered = (await cursor.fetchone())[0]
-            distribution_trend.append({
-                "month": start.strftime("%b"),
-                "total": total,
-                "delivered": delivered,
-            })
+            resolved_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+
+            cursor = await db.execute(
+                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total, SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered FROM distributions WHERE from_user_id = ? AND created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
+                (target_user["id"], trend_start.isoformat(), trend_end.isoformat())
+            )
+            dist_by_month = {str(row["m"]): {"total": int(row["total"]), "delivered": int(row["delivered"])} for row in await cursor.fetchall()}
+
+            for i in range(11, -1, -1):
+                start = _shift_months(month_start, -i)
+                month_key = start.strftime("%Y-%m")
+                defect_trend.append({
+                    "month": start.strftime("%b"),
+                    "reported": reported_by_month.get(month_key, 0),
+                    "resolved": resolved_by_month.get(month_key, 0),
+                })
+                dist_data = dist_by_month.get(month_key, {"total": 0, "delivered": 0})
+                distribution_trend.append({
+                    "month": start.strftime("%b"),
+                    "total": dist_data["total"],
+                    "delivered": dist_data["delivered"],
+                })
 
     return {
         "user": {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Chart as ChartJS,
@@ -60,8 +60,8 @@ const OperatorDashboard = () => {
           dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
           dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
           devicesAPI.getMyOverview({ show_all: true }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: { all_under_me: [] } }; }),
-          defectsAPI.getDefects().catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
-          returnsAPI.getReturns().catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; }),
+          defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
+          returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; }),
           distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; })
         ]);
         setStats(statsRes.data || {});
@@ -84,7 +84,7 @@ const OperatorDashboard = () => {
   );
 
   const charts = advanced.charts || {};
-  const myDeviceSplitData = {
+  const myDeviceSplitData = useMemo(() => ({
     labels: ['Active', 'Inactive'],
     datasets: [{
       data: [
@@ -94,7 +94,7 @@ const OperatorDashboard = () => {
       backgroundColor: ['#10b981', '#ef4444'],
       borderWidth: 1,
     }],
-  };
+  }), [charts.my_device_active_split, myDevices]);
 
   return (
     <div className="space-y-6">
