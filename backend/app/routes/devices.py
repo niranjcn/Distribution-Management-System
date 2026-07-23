@@ -155,7 +155,7 @@ async def _resolve_management_holder_scope(
 async def get_devices(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
-    status: Optional[str] = None,
+    req_status: Optional[str] = Query(None, alias="status"),
     device_type: Optional[str] = None,
     manufacturer: Optional[str] = None,
     holder_id: Optional[str] = None,
@@ -178,7 +178,7 @@ async def get_devices(
         result = await device_service.get_devices(
             page=page,
             page_size=page_size,
-            status=status,
+            status=req_status,
             device_type=device_type,
             manufacturer=manufacturer,
             holder_id=holder_id,
@@ -273,7 +273,7 @@ async def get_my_device_overview(
     show_all: bool = Query(False),
     paginate: bool = Query(False),
     scope: str = Query("all"),
-    status: Optional[str] = None,
+    req_status: Optional[str] = Query(None, alias="status"),
     device_type: Optional[str] = None,
     manufacturer: Optional[str] = None,
     sub_distributor_id: Optional[str] = None,
@@ -297,7 +297,7 @@ async def get_my_device_overview(
             result = await device_service.get_devices(
                 page=page,
                 page_size=effective_page_size,
-                status=status,
+                status=req_status,
                 device_type=device_type,
                 manufacturer=manufacturer,
                 holder_ids=holder_scope,
@@ -356,8 +356,8 @@ async def get_my_device_overview(
             # Track Devices uses paginate=true to avoid loading the full chain in one payload.
             if paginate:
                 filtered_devices = chain_devices
-                if status:
-                    filtered_devices = [d for d in filtered_devices if d.get("status") == status]
+                if req_status:
+                    filtered_devices = [d for d in filtered_devices if d.get("status") == req_status]
                 if device_type:
                     filtered_devices = [d for d in filtered_devices if d.get("device_type") == device_type]
                 if manufacturer:

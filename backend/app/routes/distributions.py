@@ -290,7 +290,7 @@ async def sync_distribution_devices(
 async def get_distributions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
-    status: Optional[str] = None,
+    req_status: Optional[str] = Query(None, alias="status"),
     to_user_id: Optional[str] = None,
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
@@ -303,7 +303,7 @@ async def get_distributions(
         result = await distribution_service.get_distributions(
             page=page,
             page_size=page_size,
-            status=status,
+            status=req_status,
             to_user_id=to_user_id,
             current_user=current_user,
             search=search,

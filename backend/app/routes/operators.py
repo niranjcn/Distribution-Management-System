@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 async def get_operators(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
-    status: Optional[str] = None,
+    req_status: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
@@ -29,7 +29,7 @@ async def get_operators(
             page=page,
             page_size=page_size,
             assigned_to=assigned_to,
-            status=status,
+            status=req_status,
             search=search
         )
 

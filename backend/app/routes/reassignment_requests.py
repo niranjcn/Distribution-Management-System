@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 async def get_reassignment_requests(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
-    status: Optional[str] = None,
+    req_status: Optional[str] = Query(None, alias="status"),
     current_user: dict = Depends(get_current_user),
 ):
     actor_role = current_user.get("role", "")
@@ -23,7 +23,7 @@ async def get_reassignment_requests(
 
     try:
         result = await reassignment_request_service.get_reassignment_requests(
-            page=page, page_size=page_size, status=status
+            page=page, page_size=page_size, status=req_status
         )
         return {
             "success": True,

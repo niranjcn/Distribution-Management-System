@@ -12,14 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ErrorBoundary wrappers across all dashboard sections
 - Shared chartOptions in `src/utils/chartConfig.js`
 - Frontend test suite with 24 passing tests (StatCard, Card, DataTable)
+- OpenAPI `summary` annotations on all 144 backend routes
+- 12 backend contract test suites (389 route tests)
+- Backend test infrastructure with mock fixtures for all routess
 
 ### Changed
 - Notification pagination from "Show All" to 20/page with prev/next navigation
 - Dashboard service split into submodules
 - Silent error catch handlers replaced with user-visible error toasts
+- `batch_service.py` rewritten from MongoDB to MySQL
+- Fixed `status` query param shadowing `fastapi.status` in 4 route files
+- Updated CHANGELOG.md, TODO.md, ENGINEERING_AUDIT.md
 
 ### Removed
 - Unused `DistributorDashboard.jsx` component
+- Unfinished batch management feature (service, routes, models, tests, frontend)
 
 ## [1.0.0] - 2026-07-22
 
