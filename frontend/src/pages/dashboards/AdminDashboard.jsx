@@ -3,6 +3,7 @@ import { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { dashboardAPI, usersAPI, defectsAPI, reassignmentRequestsAPI } from '../../services/api';
 import { useNotifications } from '../../context/NotificationContext';
 import DateRangeFilter from '../../components/ui/DateRangeFilter';
+import ErrorBoundary from '../../components/ui/ErrorBoundary';
 import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
 import DashboardStatCards from '../../components/dashboard/DashboardStatCards';
@@ -108,25 +109,25 @@ const AdminDashboard = () => {
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      <DashboardStatCards stats={stats} kpis={kpis} reliabilitySummary={reliabilitySummary} dateRange={dateRange} />
+      <ErrorBoundary name="Stat Cards"><DashboardStatCards stats={stats} kpis={kpis} reliabilitySummary={reliabilitySummary} dateRange={dateRange} /></ErrorBoundary>
 
-      <DistribAnalyticsCards data={distribAnalytics} />
+      <ErrorBoundary name="Distribution Analytics"><DistribAnalyticsCards data={distribAnalytics} /></ErrorBoundary>
 
-      <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
-      {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
+      <ErrorBoundary name="Hierarchy Selector">
+        <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
+        {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
+      </ErrorBoundary>
 
-      <DeviceCharts charts={charts} />
+      <ErrorBoundary name="Charts"><DeviceCharts charts={charts} /></ErrorBoundary>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RecentActivitiesList activities={recentActivities} loading={loading} />
-
-        <CriticalAlertsCard alerts={alerts} pendingReassignments={pendingReassignments} replacementSuccessRate={kpis.replacement_success_rate} />
+        <ErrorBoundary name="Recent Activities"><RecentActivitiesList activities={recentActivities} loading={loading} /></ErrorBoundary>
+        <ErrorBoundary name="Critical Alerts"><CriticalAlertsCard alerts={alerts} pendingReassignments={pendingReassignments} replacementSuccessRate={kpis.replacement_success_rate} /></ErrorBoundary>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RecentUsersList users={users} />
-
-        <RecentDefectsList defects={defectReports} />
+        <ErrorBoundary name="Recent Users"><RecentUsersList users={users} /></ErrorBoundary>
+        <ErrorBoundary name="Recent Defects"><RecentDefectsList defects={defectReports} /></ErrorBoundary>
       </div>
     </div>
   );

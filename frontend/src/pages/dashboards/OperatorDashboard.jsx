@@ -12,6 +12,7 @@ import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import DeviceIdentity from '../../components/ui/DeviceIdentity';
 import Button from '../../components/ui/Button';
+import ErrorBoundary from '../../components/ui/ErrorBoundary';
 import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
@@ -113,17 +114,22 @@ const OperatorDashboard = () => {
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Assigned Devices" value={stats.assigned_devices || myDevices.length} icon={Box} color="blue" />
-        <StatCard title="Active" value={stats.active_devices || myDevices.filter(d => d.status === 'active').length} icon={Cpu} color="green" />
-        <StatCard title="In Use" value={stats.in_use_devices || myDevices.filter(d => d.status === 'in_use').length} icon={Cpu} color="purple" />
-        <StatCard title="My Defect Reports" value={stats.defect_reports || myDefects.length} icon={AlertTriangle} color="red" />
-      </div>
+      <ErrorBoundary name="Stats">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard title="Assigned Devices" value={stats.assigned_devices || myDevices.length} icon={Box} color="blue" />
+          <StatCard title="Active" value={stats.active_devices || myDevices.filter(d => d.status === 'active').length} icon={Cpu} color="green" />
+          <StatCard title="In Use" value={stats.in_use_devices || myDevices.filter(d => d.status === 'in_use').length} icon={Cpu} color="purple" />
+          <StatCard title="My Defect Reports" value={stats.defect_reports || myDefects.length} icon={AlertTriangle} color="red" />
+        </div>
+      </ErrorBoundary>
 
-      <Card title="My Device Active vs Inactive" icon={Cpu} padding={false}>
-        <div className="h-72 p-4"><Doughnut data={myDeviceSplitData} options={doughnutOptions} /></div>
-      </Card>
+      <ErrorBoundary name="Chart">
+        <Card title="My Device Active vs Inactive" icon={Cpu} padding={false}>
+          <div className="h-72 p-4"><Doughnut data={myDeviceSplitData} options={doughnutOptions} /></div>
+        </Card>
+      </ErrorBoundary>
 
+      <ErrorBoundary name="Receipt Banner">
       {pendingReceipts.length > 0 && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
@@ -144,50 +150,54 @@ const OperatorDashboard = () => {
           </div>
         </div>
       )}
+      </ErrorBoundary>
 
       {/* My Devices */}
-      <Card
-        title="My Assigned Devices"
-        icon={Box}
-        action={
-          <Link to="/devices" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
-            View all <ArrowRight className="w-4 h-4" />
-          </Link>
-        }
-      >
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {myDevices.slice(0, 6).map((device) => (
-            <div key={device.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <Box className="w-5 h-5 text-blue-600" />
+      <ErrorBoundary name="My Devices">
+        <Card
+          title="My Assigned Devices"
+          icon={Box}
+          action={
+            <Link to="/devices" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+              View all <ArrowRight className="w-4 h-4" />
+            </Link>
+          }
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {myDevices.slice(0, 6).map((device) => (
+              <div key={device.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <Box className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <StatusBadge status={device.status} />
                 </div>
-                <StatusBadge status={device.status} />
+                <DeviceIdentity device={device} />
+                <div className="flex items-center gap-2 mt-3">
+                  <Link to={`/devices/track?serial=${encodeURIComponent(device.serial_number)}`} className="flex-1">
+                    <Button variant="outline" size="sm" className="w-full" icon={Eye}>
+                      View
+                    </Button>
+                  </Link>
+                  <Link to="/defects/create" className="flex-1">
+                    <Button variant="ghost" size="sm" className="w-full text-red-600" icon={AlertTriangle}>
+                      Report
+                    </Button>
+                  </Link>
+                </div>
               </div>
-              <DeviceIdentity device={device} />
-              <div className="flex items-center gap-2 mt-3">
-                <Link to={`/devices/track?serial=${encodeURIComponent(device.serial_number)}`} className="flex-1">
-                  <Button variant="outline" size="sm" className="w-full" icon={Eye}>
-                    View
-                  </Button>
-                </Link>
-                <Link to="/defects/create" className="flex-1">
-                  <Button variant="ghost" size="sm" className="w-full text-red-600" icon={AlertTriangle}>
-                    Report
-                  </Button>
-                </Link>
-              </div>
-            </div>
-          ))}
-        </div>
-        {myDevices.length === 0 && (
-          <div className="text-center py-8">
-            <Box className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">No devices assigned to you yet</p>
+            ))}
           </div>
-        )}
-      </Card>
+          {myDevices.length === 0 && (
+            <div className="text-center py-8">
+              <Box className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">No devices assigned to you yet</p>
+            </div>
+          )}
+        </Card>
+      </ErrorBoundary>
 
+      <ErrorBoundary name="Defects & Returns">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* My Defect Reports */}
         <Card
@@ -255,6 +265,7 @@ const OperatorDashboard = () => {
           </div>
         </Card>
       </div>
+      </ErrorBoundary>
     </div>
   );
 };

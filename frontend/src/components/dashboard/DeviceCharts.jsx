@@ -1,62 +1,8 @@
 import { useMemo } from 'react'
-import {
-  Chart as ChartJS,
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js'
 import { Doughnut, Pie, Line } from 'react-chartjs-2'
 import { ShieldCheck, Cpu, Activity } from 'lucide-react'
 import Card from '../ui/Card'
-
-ChartJS.register(
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler
-)
-
-const chartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      labels: {
-        color: '#5F6368',
-        boxWidth: 12,
-        font: { family: 'Inter, Segoe UI, sans-serif', size: 11 },
-      },
-    },
-    tooltip: {
-      backgroundColor: '#FFFFFF',
-      titleColor: '#1A1A1A',
-      bodyColor: '#5F6368',
-      borderColor: '#E0E0E0',
-      borderWidth: 1,
-    },
-  },
-  scales: {
-    x: {
-      ticks: { color: '#5F6368' },
-      grid: { color: 'rgba(0, 0, 0, 0.06)' },
-    },
-    y: {
-      ticks: { color: '#5F6368' },
-      grid: { color: 'rgba(0, 0, 0, 0.06)' },
-    },
-  },
-}
+import { chartOptions } from '../../utils/chartConfig'
 
 const DeviceCharts = ({ charts }) => {
   const activeInactiveData = useMemo(() => ({

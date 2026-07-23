@@ -11,6 +11,7 @@ import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Button from '../../components/ui/Button';
+import ErrorBoundary from '../../components/ui/ErrorBoundary';
 import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { dashboardAPI, devicesAPI, distributionsAPI, usersAPI, defectsAPI, returnsAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -141,29 +142,34 @@ const SubDistributorDashboard = () => {
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        <StatCard title="Received Devices" value={receivedDevicesCount} icon={Box} color="blue" />
-        <StatCard title="Pending Confirmations" value={pendingReceipts.length} icon={CheckSquare} color="orange" />
-        <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" />
-        <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" />
-        <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" />
-        <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" />
-      </div>
+      <ErrorBoundary name="Stats">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          <StatCard title="Received Devices" value={receivedDevicesCount} icon={Box} color="blue" />
+          <StatCard title="Pending Confirmations" value={pendingReceipts.length} icon={CheckSquare} color="orange" />
+          <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" />
+          <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" />
+          <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" />
+          <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" />
+        </div>
+      </ErrorBoundary>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="My Device Active vs Inactive" icon={Box} padding={false}>
-          <div className="h-72 p-4"><Doughnut data={myDeviceSplitData} options={doughnutOptions} /></div>
-        </Card>
-        <Card
-          title={user?.role === 'cluster' ? 'Operator Account Active vs Inactive' : 'Cluster/Operator Account Active vs Inactive'}
-          icon={Users}
-          padding={false}
-        >
-          <div className="h-72 p-4"><Doughnut data={managedUserSplitData} options={doughnutOptions} /></div>
-        </Card>
-      </div>
+      <ErrorBoundary name="Charts">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card title="My Device Active vs Inactive" icon={Box} padding={false}>
+            <div className="h-72 p-4"><Doughnut data={myDeviceSplitData} options={doughnutOptions} /></div>
+          </Card>
+          <Card
+            title={user?.role === 'cluster' ? 'Operator Account Active vs Inactive' : 'Cluster/Operator Account Active vs Inactive'}
+            icon={Users}
+            padding={false}
+          >
+            <div className="h-72 p-4"><Doughnut data={managedUserSplitData} options={doughnutOptions} /></div>
+          </Card>
+        </div>
+      </ErrorBoundary>
 
       {/* Pending Receipt Confirmations Banner */}
+      <ErrorBoundary name="Receipt Banner">
       {pendingReceipts.length > 0 && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
@@ -184,7 +190,9 @@ const SubDistributorDashboard = () => {
           </div>
         </div>
       )}
+      </ErrorBoundary>
 
+      <ErrorBoundary name="Cards Grid">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* My Devices */}
         <Card
@@ -280,7 +288,9 @@ const SubDistributorDashboard = () => {
           </div>
         </Card>
       </div>
+      </ErrorBoundary>
 
+      <ErrorBoundary name="Defects & Returns">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Defect Reports to Review */}
         <Card
@@ -346,6 +356,7 @@ const SubDistributorDashboard = () => {
           </div>
         </Card>
       </div>
+      </ErrorBoundary>
     </div>
   );
 };

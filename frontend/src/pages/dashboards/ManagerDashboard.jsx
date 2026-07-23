@@ -1,26 +1,16 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  Chart as ChartJS,
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js';
 import { Doughnut, Line, Bar } from 'react-chartjs-2';
 import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
+import ErrorBoundary from '../../components/ui/ErrorBoundary';
 import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { dashboardAPI, distributionsAPI, returnsAPI } from '../../services/api';
 import { useNotifications } from '../../context/NotificationContext';
 import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
+import { chartOptions } from '../../utils/chartConfig';
 import {
   Activity,
   Clock,
@@ -30,48 +20,6 @@ import {
   Wrench,
   ArrowRight
 } from 'lucide-react';
-
-ChartJS.register(
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Tooltip,
-  Legend,
-  Filler
-);
-
-const chartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      labels: {
-        color: '#5F6368',
-        boxWidth: 12,
-      },
-    },
-    tooltip: {
-      backgroundColor: '#FFFFFF',
-      titleColor: '#1A1A1A',
-      bodyColor: '#5F6368',
-      borderColor: '#E0E0E0',
-      borderWidth: 1,
-    },
-  },
-  scales: {
-    x: {
-      ticks: { color: '#5F6368' },
-      grid: { color: 'rgba(0, 0, 0, 0.06)' },
-    },
-    y: {
-      ticks: { color: '#5F6368' },
-      grid: { color: 'rgba(0, 0, 0, 0.06)' },
-    },
-  },
-};
 
 const periodLabel = (range) => ({
   all: 'all time',
@@ -204,25 +152,29 @@ const ManagerDashboard = () => {
         <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 animate-slideUp">
-        <StatCard title="Total Devices" value={stats.total_devices ?? 0} description="All registered devices" color="total" />
-        <StatCard title="Total Active Devices" value={stats.total_active_devices ?? 0} description="Currently active" color="online" />
-        <StatCard title="Total Distributed Devices" value={stats.total_distributed_devices ?? 0} description="Currently distributed" color="teal" />
-        <StatCard title="Total Inactive Devices" value={stats.total_inactive_devices ?? 0} description="Currently inactive" color="offline" />
-        <StatCard title="Total Defective Devices" value={stats.total_defective_devices ?? 0} description="Currently defective" color="red" />
-        <StatCard title="Total Replaced Devices" value={stats.total_replaced_devices ?? 0} description="Ever replaced" color="purple" />
-      </div>
+      <ErrorBoundary name="Primary Stats">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 animate-slideUp">
+          <StatCard title="Total Devices" value={stats.total_devices ?? 0} description="All registered devices" color="total" />
+          <StatCard title="Total Active Devices" value={stats.total_active_devices ?? 0} description="Currently active" color="online" />
+          <StatCard title="Total Distributed Devices" value={stats.total_distributed_devices ?? 0} description="Currently distributed" color="teal" />
+          <StatCard title="Total Inactive Devices" value={stats.total_inactive_devices ?? 0} description="Currently inactive" color="offline" />
+          <StatCard title="Total Defective Devices" value={stats.total_defective_devices ?? 0} description="Currently defective" color="red" />
+          <StatCard title="Total Replaced Devices" value={stats.total_replaced_devices ?? 0} description="Ever replaced" color="purple" />
+        </div>
+      </ErrorBoundary>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 animate-slideUp">
-        <StatCard title="Registered in Period" value={stats.registered_in_range ?? 0} description={`Devices created in ${periodLabel(dateRange.range)}`} color="total" />
-        <StatCard title="Distributed in Period" value={stats.distributed_in_range ?? 0} description={`Devices distributed in ${periodLabel(dateRange.range)}`} color="blue" />
-        <StatCard title="Inactive in Period" value={stats.inactive_in_range ?? 0} description={`Became inactive in ${periodLabel(dateRange.range)}`} color="offline" />
-        <StatCard title="Defective in Period" value={stats.defective_in_range ?? 0} description={`Became defective in ${periodLabel(dateRange.range)}`} color="red" />
-        <StatCard title="Replacements in Period" value={stats.replacements_in_range ?? 0} description={`Replaced in ${periodLabel(dateRange.range)}`} color="purple" />
-      </div>
+      <ErrorBoundary name="Period Stats">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 animate-slideUp">
+          <StatCard title="Registered in Period" value={stats.registered_in_range ?? 0} description={`Devices created in ${periodLabel(dateRange.range)}`} color="total" />
+          <StatCard title="Distributed in Period" value={stats.distributed_in_range ?? 0} description={`Devices distributed in ${periodLabel(dateRange.range)}`} color="blue" />
+          <StatCard title="Inactive in Period" value={stats.inactive_in_range ?? 0} description={`Became inactive in ${periodLabel(dateRange.range)}`} color="offline" />
+          <StatCard title="Defective in Period" value={stats.defective_in_range ?? 0} description={`Became defective in ${periodLabel(dateRange.range)}`} color="red" />
+          <StatCard title="Replacements in Period" value={stats.replacements_in_range ?? 0} description={`Replaced in ${periodLabel(dateRange.range)}`} color="purple" />
+        </div>
+      </ErrorBoundary>
 
       {distribAnalytics && (
-        <>
+        <ErrorBoundary name="Distribution Analytics">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-slideUp">
             <div className="bg-gradient-to-br from-blue-50 to-white border border-blue-200 rounded-xl p-4 shadow-sm">
               <p className="text-xs font-semibold text-blue-500 uppercase tracking-wider">Sent to Distribution</p>
@@ -251,29 +203,36 @@ const ManagerDashboard = () => {
               </div>
             ))}
           </div>
-        </>
+        </ErrorBoundary>
       )}
 
-      <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
-      {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
+      <ErrorBoundary name="Hierarchy Selector">
+        <HierarchySelector onSelect={handleHierarchySelect} selectedUserId={selectedUser?.id} />
+        {userKpi && <UserKpiSection userKpi={userKpi} loading={kpiLoading} />}
+      </ErrorBoundary>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="Device Health" icon={Cpu} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Doughnut data={activeInactiveData} options={chartOptions} /></div>
-        </Card>
-        <Card title="Replacement Confirmation Pipeline" icon={Wrench} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Doughnut data={replacementData} options={chartOptions} /></div>
-        </Card>
-      </div>
+      <ErrorBoundary name="Charts Row 1">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card title="Device Health" icon={Cpu} className="industrial-chart-card" padding={false}>
+            <div className="h-80 p-4"><Doughnut data={activeInactiveData} options={chartOptions} /></div>
+          </Card>
+          <Card title="Replacement Confirmation Pipeline" icon={Wrench} className="industrial-chart-card" padding={false}>
+            <div className="h-80 p-4"><Doughnut data={replacementData} options={chartOptions} /></div>
+          </Card>
+        </div>
+      </ErrorBoundary>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
-        <Card title="Defect Trend (12 Months)" icon={Activity} className="industrial-chart-card" padding={false}>
-          <div className="h-80 p-4"><Line data={defectTrendData} options={chartOptions} /></div>
-        </Card>
-      </div>
+      <ErrorBoundary name="Defect Trend Chart">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-slideUp">
+          <Card title="Defect Trend (12 Months)" icon={Activity} className="industrial-chart-card" padding={false}>
+            <div className="h-80 p-4"><Line data={defectTrendData} options={chartOptions} /></div>
+          </Card>
+        </div>
+      </ErrorBoundary>
 
-      <div className="grid grid-cols-1 lg:grid-cols-1 gap-6 animate-slideUp">
-        <Card title="Operational Alerts" icon={Clock}>
+      <ErrorBoundary name="Operational Alerts">
+        <div className="grid grid-cols-1 lg:grid-cols-1 gap-6 animate-slideUp">
+          <Card title="Operational Alerts" icon={Clock}>
           <div className="space-y-3">
             {alerts.length === 0 ? (
               <p className="text-sm text-gray-500">No active alerts.</p>
@@ -298,57 +257,61 @@ const ManagerDashboard = () => {
           </div>
         </Card>
       </div>
+      </ErrorBoundary>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card
-          title="Recent Distributions"
-          icon={Truck}
-          action={
-            <Link to="/distributions" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
-              View all <ArrowRight className="w-4 h-4" />
-            </Link>
-          }
-        >
-          {loading ? (
-            <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>
-          ) : (
-            <div className="space-y-3">
-              {distributions.slice(0, 5).map((dist) => (
-                <div key={dist.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{dist.distribution_id}</p>
-                    <p className="text-xs text-gray-500">{dist.from_user_name} to {dist.to_user_name}</p>
-                    <p className="text-xs text-gray-400 mt-1">{dist.device_count || dist.device_ids?.length || 0} devices</p>
+      <ErrorBoundary name="Recent Distributions">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card
+            title="Recent Distributions"
+            icon={Truck}
+            action={
+              <Link to="/distributions" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+                View all <ArrowRight className="w-4 h-4" />
+              </Link>
+            }
+          >
+            {loading ? (
+              <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>
+            ) : (
+              <div className="space-y-3">
+                {distributions.slice(0, 5).map((dist) => (
+                  <div key={dist.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{dist.distribution_id}</p>
+                      <p className="text-xs text-gray-500">{dist.from_user_name} to {dist.to_user_name}</p>
+                      <p className="text-xs text-gray-400 mt-1">{dist.device_count || dist.device_ids?.length || 0} devices</p>
+                    </div>
+                    <StatusBadge status={dist.status} />
                   </div>
-                  <StatusBadge status={dist.status} />
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-      </div>
-
-      <Card>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="text-center p-4 bg-green-50 rounded-lg">
-            <p className="text-2xl font-bold text-green-600">{distributions.filter((d) => d.status === 'approved').length}</p>
-            <p className="text-sm text-gray-600 mt-1">Approved</p>
-          </div>
-          <div className="text-center p-4 bg-yellow-50 rounded-lg">
-            <p className="text-2xl font-bold text-yellow-600">{distributions.filter((d) => d.status === 'pending').length}</p>
-            <p className="text-sm text-gray-600 mt-1">Pending</p>
-          </div>
-          <div className="text-center p-4 bg-blue-50 rounded-lg">
-            <p className="text-2xl font-bold text-blue-600">{distributions.filter((d) => d.status === 'in_transit' || d.status === 'in-transit').length}</p>
-            <p className="text-sm text-gray-600 mt-1">In Transit</p>
-          </div>
-          <div className="text-center p-4 bg-red-50 rounded-lg">
-            <p className="text-2xl font-bold text-red-600">{distributions.filter((d) => d.status === 'rejected').length}</p>
-            <p className="text-sm text-gray-600 mt-1">Rejected</p>
-          </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
-      </Card>
+      </ErrorBoundary>
+
+      <ErrorBoundary name="Distribution Status Summary">
+        <Card>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center p-4 bg-green-50 rounded-lg">
+              <p className="text-2xl font-bold text-green-600">{distributions.filter((d) => d.status === 'approved').length}</p>
+              <p className="text-sm text-gray-600 mt-1">Approved</p>
+            </div>
+            <div className="text-center p-4 bg-yellow-50 rounded-lg">
+              <p className="text-2xl font-bold text-yellow-600">{distributions.filter((d) => d.status === 'pending').length}</p>
+              <p className="text-sm text-gray-600 mt-1">Pending</p>
+            </div>
+            <div className="text-center p-4 bg-blue-50 rounded-lg">
+              <p className="text-2xl font-bold text-blue-600">{distributions.filter((d) => d.status === 'in_transit' || d.status === 'in-transit').length}</p>
+              <p className="text-sm text-gray-600 mt-1">In Transit</p>
+            </div>
+            <div className="text-center p-4 bg-red-50 rounded-lg">
+              <p className="text-2xl font-bold text-red-600">{distributions.filter((d) => d.status === 'rejected').length}</p>
+              <p className="text-sm text-gray-600 mt-1">Rejected</p>
+            </div>
+          </div>
+        </Card>
+      </ErrorBoundary>
     </div>
   );
 };
