@@ -16,7 +16,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/login", response_model=dict)
+@router.post("/login", response_model=dict, summary="User login endpoint")
 @limiter.limit("5/minute")
 async def login(request: Request, response: Response, credentials: LoginRequest):
     """User login endpoint"""
@@ -123,7 +123,7 @@ async def login(request: Request, response: Response, credentials: LoginRequest)
         )
 
 
-@router.post("/logout")
+@router.post("/logout", summary="User logout endpoint")
 @limiter.limit("30/minute")
 async def logout(
     request: Request,
@@ -162,7 +162,7 @@ async def logout(
         )
 
 
-@router.post("/refresh", response_model=dict)
+@router.post("/refresh", response_model=dict, summary="Issue a new access token from a valid refresh token.")
 @limiter.limit("10/minute")
 async def refresh_token(request: Request, refresh_req: RefreshTokenRequest):
     """Issue a new access token from a valid refresh token."""
@@ -198,7 +198,7 @@ async def refresh_token(request: Request, refresh_req: RefreshTokenRequest):
         )
 
 
-@router.get("/me")
+@router.get("/me", summary="Get current user information")
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     """Get current user information"""
     try:
@@ -220,7 +220,7 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
         )
 
 
-@router.put("/password")
+@router.put("/password", summary="Change user password")
 async def change_password(
     request: Request,
     password_data: PasswordChange,
@@ -265,7 +265,7 @@ async def change_password(
         )
 
 
-@router.post("/complete-forced-update")
+@router.post("/complete-forced-update", summary="Complete mandatory first-login email and password rotation.")
 async def complete_forced_update(
     request: Request,
     response: Response,

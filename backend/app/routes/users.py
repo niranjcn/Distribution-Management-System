@@ -124,7 +124,7 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
     return False
 
 
-@router.get("")
+@router.get("", summary="Get users")
 async def get_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -249,7 +249,7 @@ async def get_users(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.get("/{user_id}")
+@router.get("/{user_id}", summary="Get user")
 async def get_user(user_id: str, current_user: dict = Depends(get_current_user)):
     try:
         user = await user_service.get_user_by_id(user_id)
@@ -267,7 +267,7 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Create user")
 async def create_user(user_data: UserCreate, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
     target_role = normalize_role(user_data.role.value)
@@ -365,7 +365,7 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.put("/{user_id}")
+@router.put("/{user_id}", summary="Update user")
 async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = Depends(get_current_user)):
     try:
         actor_role = normalize_role(current_user.get("role"))
@@ -452,7 +452,7 @@ def _count_total_children(children: list) -> int:
     return count
 
 
-@router.post("/{user_id}/reassign")
+@router.post("/{user_id}/reassign", summary="Reassign user")
 async def reassign_user(
     user_id: str,
     body: dict,
@@ -519,7 +519,7 @@ async def reassign_user(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
 
 
-@router.delete("/{user_id}")
+@router.delete("/{user_id}", summary="Delete user")
 async def delete_user(request: Request, user_id: str, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
 
@@ -637,7 +637,7 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.patch("/{user_id}/status")
+@router.patch("/{user_id}/status", summary="Update user status")
 async def update_user_status(
     request: Request,
     user_id: str,
@@ -696,7 +696,7 @@ async def update_user_status(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.patch("/{user_id}/credentials")
+@router.patch("/{user_id}/credentials", summary="Admin update credentials")
 async def admin_update_credentials(
     request: Request,
     user_id: str,
@@ -776,7 +776,7 @@ async def admin_update_credentials(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.get("/role/{role}")
+@router.get("/role/{role}", summary="Get users by role")
 async def get_users_by_role(role: str, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
     normalized = normalize_role(role)
@@ -798,7 +798,7 @@ async def get_users_by_role(role: str, current_user: dict = Depends(get_current_
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.post("/bulk-upload", status_code=status.HTTP_201_CREATED)
+@router.post("/bulk-upload", status_code=status.HTTP_201_CREATED, summary="Bulk upload users")
 async def bulk_upload_users(
     request: Request,
     file: UploadFile = File(...),

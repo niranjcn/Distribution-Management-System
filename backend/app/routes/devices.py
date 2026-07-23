@@ -151,7 +151,7 @@ async def _resolve_management_holder_scope(
     return None
 
 
-@router.get("")
+@router.get("", summary="Get all devices with pagination and filters")
 async def get_devices(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -205,7 +205,7 @@ async def get_devices(
         )
 
 
-@router.get("/for-replacement")
+@router.get("/for-replacement", summary="Get all devices available as replacements (status=available or returned).")
 async def get_devices_for_replacement(
     exclude_device_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
@@ -236,7 +236,7 @@ async def get_devices_for_replacement(
         )
 
 
-@router.get("/available")
+@router.get("/available", summary="Get devices available to distribute for the current user.")
 async def get_available_devices(
     current_user: dict = Depends(get_current_user)
 ):
@@ -266,7 +266,7 @@ async def get_available_devices(
         )
 
 
-@router.get("/my-overview")
+@router.get("/my-overview", summary="Get comprehensive device overview: devices in hand + under hierarchy + distribution stats.")
 async def get_my_device_overview(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1),
@@ -461,7 +461,7 @@ async def get_my_device_overview(
         )
 
 
-@router.get("/management-holder-insights")
+@router.get("/management-holder-insights", summary="Get management holder insights")
 async def get_management_holder_insights(
     current_user: dict = Depends(get_current_user)
 ):
@@ -486,7 +486,7 @@ async def get_management_holder_insights(
         )
 
 
-@router.post("/{device_id}/repair-holder")
+@router.post("/{device_id}/repair-holder", summary="Admin/Manager: repair a device's current_holder by replaying the most recent")
 async def repair_device_holder(
     device_id: str,
     current_user: dict = Depends(require_admin_or_manager)
@@ -516,7 +516,7 @@ async def repair_device_holder(
 
 
 
-@router.post("/{device_id}/request-edit")
+@router.post("/{device_id}/request-edit", summary="PDIC staff: request an edit to a device.")
 async def request_device_edit(
     device_id: str,
     payload: Dict[str, Any],
@@ -635,7 +635,7 @@ async def request_device_edit(
         )
 
 
-@router.get("/track/{serial_number}")
+@router.get("/track/{serial_number}", summary="Track device by serial number, NUID, or MAC with full history")
 async def track_device_by_serial(
     serial_number: str,
     current_user: dict = Depends(get_current_user)
@@ -665,7 +665,7 @@ async def track_device_by_serial(
         )
 
 
-@router.get("/{device_id}")
+@router.get("/{device_id}", summary="Get device by ID")
 async def get_device(
     device_id: str,
     current_user: dict = Depends(get_current_user)
@@ -695,7 +695,7 @@ async def get_device(
         )
 
 
-@router.get("/{device_id}/history")
+@router.get("/{device_id}/history", summary="Get device history")
 async def get_device_history(
     device_id: str,
     current_user: dict = Depends(get_current_user)
@@ -727,7 +727,7 @@ async def get_device_history(
         )
 
 
-@router.post("/bulk-upload", status_code=status.HTTP_201_CREATED)
+@router.post("/bulk-upload", status_code=status.HTTP_201_CREATED, summary="Bulk upload devices from an Excel file.")
 async def bulk_upload_devices(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_management)
@@ -1152,7 +1152,7 @@ async def bulk_upload_devices(
         )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Register a new device")
 async def create_device(
     device_data: DeviceCreate,
     current_user: dict = Depends(get_current_user)
@@ -1202,7 +1202,7 @@ async def create_device(
         )
 
 
-@router.put("/{device_id}")
+@router.put("/{device_id}", summary="Update device")
 async def update_device(
     device_id: str,
     device_data: DeviceUpdate,
@@ -1257,7 +1257,7 @@ async def update_device(
         )
 
 
-@router.delete("/{device_id}")
+@router.delete("/{device_id}", summary="Delete device")
 async def delete_device(
     device_id: str,
     current_user: dict = Depends(require_admin_or_manager)
@@ -1300,7 +1300,7 @@ async def delete_device(
         )
 
 
-@router.patch("/{device_id}/status")
+@router.patch("/{device_id}/status", summary="Update device status")
 async def update_device_status(
     device_id: str,
     status_update: dict,

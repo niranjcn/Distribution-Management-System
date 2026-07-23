@@ -82,7 +82,7 @@ class ReturnConfirmation(BaseModel):
     notes: Optional[str] = None
 
 
-@router.post("/bulk-upload")
+@router.post("/bulk-upload", summary="Create a distribution from uploaded CSV/Excel rows using mac_address, serial_number, and/or nuid.")
 async def bulk_upload_distribution(
     file: UploadFile = File(...),
     to_user_id: str = Form(...),
@@ -267,7 +267,7 @@ async def bulk_upload_distribution(
         )
 
 
-@router.post("/sync-devices")
+@router.post("/sync-devices", summary="Sync device holders for all approved distributions (admin fix endpoint)")
 async def sync_distribution_devices(
     current_user: dict = Depends(require_admin_or_manager)
 ):
@@ -286,7 +286,7 @@ async def sync_distribution_devices(
             detail="An internal error occurred. Please try again later.")
 
 
-@router.get("")
+@router.get("", summary="Get all distributions with pagination and filters")
 async def get_distributions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -328,7 +328,7 @@ async def get_distributions(
         )
 
 
-@router.get("/pending")
+@router.get("/pending", summary="Get pending distributions for approval")
 async def get_pending_distributions(
     current_user: dict = Depends(require_management)
 ):
@@ -351,7 +351,7 @@ async def get_pending_distributions(
         )
 
 
-@router.get("/{distribution_id}/manifest")
+@router.get("/{distribution_id}/manifest", summary="Download generated Excel manifest for a distribution.")
 async def download_distribution_manifest(
     distribution_id: str,
     current_user: dict = Depends(get_current_user)
@@ -385,7 +385,7 @@ async def download_distribution_manifest(
         )
 
 
-@router.get("/{distribution_id}/export-mac-nuid")
+@router.get("/{distribution_id}/export-mac-nuid", summary="Download distribution devices as MAC/NUID export in CSV or XLSX format.")
 async def download_distribution_mac_nuid(
     distribution_id: str,
     format: str = Query("csv", pattern="^(csv|xlsx)$"),
@@ -425,7 +425,7 @@ async def download_distribution_mac_nuid(
         )
 
 
-@router.get("/{distribution_id}")
+@router.get("/{distribution_id}", summary="Get distribution by ID")
 async def get_distribution(
     distribution_id: str,
     current_user: dict = Depends(get_current_user)
@@ -455,7 +455,7 @@ async def get_distribution(
         )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new distribution request.")
 async def create_distribution(
     dist_data: DistributionCreate,
     current_user: dict = Depends(get_current_user)
@@ -513,7 +513,7 @@ async def create_distribution(
         )
 
 
-@router.post("/{distribution_id}/receipt")
+@router.post("/{distribution_id}/receipt", summary="Recipient confirms or disputes receipt of a distribution.")
 async def confirm_distribution_receipt(
     distribution_id: str,
     body: ReceiptConfirmation,
@@ -554,7 +554,7 @@ async def confirm_distribution_receipt(
         )
 
 
-@router.post("/{distribution_id}/confirm-return")
+@router.post("/{distribution_id}/confirm-return", summary="PDIC confirms disputed devices are physically back with sender and unlocks redistribution.")
 async def confirm_disputed_distribution_return(
     distribution_id: str,
     body: ReturnConfirmation,
@@ -589,7 +589,7 @@ async def confirm_disputed_distribution_return(
         )
 
 
-@router.patch("/{distribution_id}/status")
+@router.patch("/{distribution_id}/status", summary="Update distribution status")
 async def update_distribution_status(
     distribution_id: str,
     status_update: DistributionStatusUpdate,
@@ -656,7 +656,7 @@ async def update_distribution_status(
         )
 
 
-@router.delete("/{distribution_id}")
+@router.delete("/{distribution_id}", summary="Cancel a distribution (only by creator)")
 async def cancel_distribution(
     distribution_id: str,
     current_user: dict = Depends(get_current_user)

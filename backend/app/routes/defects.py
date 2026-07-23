@@ -52,7 +52,7 @@ def _get_defect_activity_device_identifier(defect: dict) -> str:
     return str(defect.get("device_id") or "unknown").strip()
 
 
-@router.post("/upload-photo", tags=["Defects"])
+@router.post("/upload-photo", tags=["Defects"], summary="Upload a defect photo to rclone and return its accessible URL")
 async def upload_defect_photo(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user)
@@ -97,7 +97,7 @@ def _get_device_identifier_for_activity(device: dict, *, fallback: str = "unknow
     return str(fallback or "unknown").strip() or "unknown"
 
 
-@router.get("/replacements")
+@router.get("/replacements", summary="Get all replacement mappings (defects with replacement_device_id), scoped by hierarchy")
 async def get_replacement_defects(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1),
@@ -131,7 +131,7 @@ async def get_replacement_defects(
         )
 
 
-@router.get("/replacements/pending")
+@router.get("/replacements/pending", summary="Get defective devices waiting for replacement assignment")
 async def get_pending_replacement_defects(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1),
@@ -161,7 +161,7 @@ async def get_pending_replacement_defects(
         )
 
 
-@router.get("/pending-dues/users")
+@router.get("/pending-dues/users", summary="Get hierarchy-scoped pending dues summary for returned defective devices")
 async def get_pending_due_users(
     current_user: dict = Depends(require_any_role)
 ):
@@ -183,7 +183,7 @@ async def get_pending_due_users(
         )
 
 
-@router.get("/pending-dues/users/{user_id}")
+@router.get("/pending-dues/users/{user_id}", summary="Get hierarchy-scoped pending due items for a specific user")
 async def get_pending_dues_for_user(
     user_id: str,
     current_user: dict = Depends(require_any_role)
@@ -211,7 +211,7 @@ async def get_pending_dues_for_user(
         )
 
 
-@router.get("/pending-dues/me")
+@router.get("/pending-dues/me", summary="Get pending due items for the authenticated field user")
 async def get_my_pending_dues(
     current_user: dict = Depends(require_any_role)
 ):
@@ -247,7 +247,7 @@ async def get_my_pending_dues(
         )
 
 
-@router.get("")
+@router.get("", summary="Get all defect reports with pagination and filters")
 async def get_defects(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -312,7 +312,7 @@ async def get_defects(
         )
 
 
-@router.post("/{defect_id}/forward-to-management")
+@router.post("/{defect_id}/forward-to-management", summary="Allow sub distributor to forward a routed defect to manager/admin queue")
 async def forward_defect_to_management(
     defect_id: str,
     action_data: DefectActionRequest,
@@ -347,7 +347,7 @@ async def forward_defect_to_management(
         )
 
 
-@router.get("/{defect_id}")
+@router.get("/{defect_id}", summary="Get defect report by ID")
 async def get_defect(
     defect_id: str,
     current_user: dict = Depends(get_current_user)
@@ -377,7 +377,7 @@ async def get_defect(
         )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new defect report")
 async def create_defect(
     defect_data: DefectCreate,
     current_user: dict = Depends(get_current_user)
@@ -428,7 +428,7 @@ async def create_defect(
         )
 
 
-@router.put("/{defect_id}")
+@router.put("/{defect_id}", summary="Update defect report")
 async def update_defect(
     defect_id: str,
     defect_data: DefectUpdate,
@@ -466,7 +466,7 @@ async def update_defect(
         )
 
 
-@router.delete("/{defect_id}")
+@router.delete("/{defect_id}", summary="Delete defect report")
 async def delete_defect(
     defect_id: str,
     current_user: dict = Depends(require_admin_or_manager)
@@ -497,7 +497,7 @@ async def delete_defect(
         )
 
 
-@router.patch("/{defect_id}/status")
+@router.patch("/{defect_id}/status", summary="Update defect status")
 async def update_defect_status(
     defect_id: str,
     status_update: DefectStatusUpdate,
@@ -572,7 +572,7 @@ async def update_defect_status(
         )
 
 
-@router.post("/{defect_id}/payment-bill")
+@router.post("/{defect_id}/payment-bill", summary="Upload bill/proof file for a defect-related payment due")
 async def upload_defect_payment_bill(
     defect_id: str,
     file: UploadFile = File(...),
@@ -625,7 +625,7 @@ async def upload_defect_payment_bill(
         )
 
 
-@router.post("/{defect_id}/confirm-payment")
+@router.post("/{defect_id}/confirm-payment", summary="Confirm that user payment for defective return has been received")
 async def confirm_defect_payment(
     defect_id: str,
     payload: DefectPaymentConfirmRequest,
@@ -671,7 +671,7 @@ async def confirm_defect_payment(
         )
 
 
-@router.patch("/{defect_id}/resolve")
+@router.patch("/{defect_id}/resolve", summary="Resolve a defect report")
 async def resolve_defect(
     defect_id: str,
     resolve_data: DefectResolve,
@@ -713,7 +713,7 @@ async def resolve_defect(
         )
 
 
-@router.post("/{defect_id}/replace")
+@router.post("/{defect_id}/replace", summary="Replace a defective device by selecting an existing device or registering a new one")
 async def replace_defect_device(
     defect_id: str,
     replace_data: ReplaceDeviceRequest,
@@ -793,7 +793,7 @@ async def replace_defect_device(
         )
 
 
-@router.post("/{defect_id}/replacement/confirm")
+@router.post("/{defect_id}/replacement/confirm", summary="Confirm replacement device receipt (operator confirmation)")
 async def confirm_replacement_receipt(
     defect_id: str,
     confirmation_data: ReplacementConfirmationRequest,
@@ -828,7 +828,7 @@ async def confirm_replacement_receipt(
         )
 
 
-@router.post("/{defect_id}/enquire")
+@router.post("/{defect_id}/enquire", summary="Operator sends replacement-status enquiry to management users")
 async def enquire_replacement_status(
     defect_id: str,
     enquiry_data: DefectEnquiryRequest,
@@ -869,7 +869,7 @@ async def enquire_replacement_status(
         )
 
 
-@router.post("/{defect_id}/resend-confirmation")
+@router.post("/{defect_id}/resend-confirmation", summary="Resend replacement confirmation reminder to the operator")
 async def resend_replacement_confirmation(
     defect_id: str,
     current_user: dict = Depends(require_management)
@@ -902,7 +902,7 @@ async def resend_replacement_confirmation(
         )
 
 
-@router.post("/{defect_id}/mark-waiting")
+@router.post("/{defect_id}/mark-waiting", summary="Mark replacement status as waiting for PDIC shipment")
 async def mark_replacement_waiting(
     defect_id: str,
     action_data: DefectActionRequest,

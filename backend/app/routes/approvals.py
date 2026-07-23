@@ -10,7 +10,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("")
+@router.get("", summary="Get all pending approvals with pagination")
 async def get_approvals(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -46,7 +46,7 @@ async def get_approvals(
         )
 
 
-@router.get("/role-routing/config")
+@router.get("/role-routing/config", summary="Get admin/manager approval-role routing configuration.")
 async def get_approval_role_routing_config(
     current_user: dict = Depends(require_management)
 ):
@@ -66,7 +66,7 @@ async def get_approval_role_routing_config(
         )
 
 
-@router.put("/role-routing/config")
+@router.put("/role-routing/config", summary="Update admin/manager approval-role routing configuration (admin only).")
 async def update_approval_role_routing_config(
     payload: RoleRoutingUpdateRequest,
     current_user: dict = Depends(require_admin)
@@ -91,7 +91,7 @@ async def update_approval_role_routing_config(
         )
 
 
-@router.get("/{approval_id}")
+@router.get("/{approval_id}", summary="Get approval by ID with entity details")
 async def get_approval(
     approval_id: str,
     current_user: dict = Depends(require_management)
@@ -121,7 +121,7 @@ async def get_approval(
         )
 
 
-@router.post("/{approval_id}/approve")
+@router.post("/{approval_id}/approve", summary="Approve a pending request")
 async def approve_request(
     approval_id: str,
     action: Optional[ApprovalAction] = None,
@@ -168,7 +168,7 @@ async def approve_request(
         )
 
 
-@router.post("/{approval_id}/reject")
+@router.post("/{approval_id}/reject", summary="Reject a pending request - Admin and Manager only")
 async def reject_request(
     approval_id: str,
     action: ApprovalAction,

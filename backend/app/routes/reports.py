@@ -32,7 +32,7 @@ def _sanitize_filename(filename: str) -> str:
     return safe
 
 
-@router.get("/inventory")
+@router.get("/inventory", summary="Get device inventory report")
 async def get_inventory_report(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -57,7 +57,7 @@ async def get_inventory_report(
         )
 
 
-@router.get("/distribution-summary")
+@router.get("/distribution-summary", summary="Get distribution summary report")
 async def get_distribution_summary(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -82,7 +82,7 @@ async def get_distribution_summary(
         )
 
 
-@router.get("/defect-summary")
+@router.get("/defect-summary", summary="Get defect summary report")
 async def get_defect_summary(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -107,7 +107,7 @@ async def get_defect_summary(
         )
 
 
-@router.get("/return-summary")
+@router.get("/return-summary", summary="Get return summary report")
 async def get_return_summary(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -132,7 +132,7 @@ async def get_return_summary(
         )
 
 
-@router.get("/user-activity")
+@router.get("/user-activity", summary="Get user activity report")
 async def get_user_activity_report(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -157,7 +157,7 @@ async def get_user_activity_report(
         )
 
 
-@router.get("/device-utilization")
+@router.get("/device-utilization", summary="Get device utilization report")
 async def get_device_utilization_report(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -182,7 +182,7 @@ async def get_device_utilization_report(
         )
 
 
-@router.post("/export")
+@router.post("/export", summary="Export report (placeholder for actual export functionality)")
 async def export_report(
     export_data: dict,
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
@@ -211,7 +211,7 @@ async def export_report(
         )
 
 
-@router.get("/device-backup")
+@router.get("/device-backup", summary="Download full device backup including each device journey path")
 async def download_device_backup(
     format: str = Query("xlsx", pattern="^(csv|xlsx)$"),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
@@ -247,7 +247,7 @@ async def download_device_backup(
         )
 
 
-@router.get("/returns-defects-backup")
+@router.get("/returns-defects-backup", summary="Download backup for returned devices and defect reports")
 async def download_returns_defects_backup(
     format: str = Query("xlsx", pattern="^(csv|xlsx)$"),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
@@ -283,7 +283,7 @@ async def download_returns_defects_backup(
         )
 
 
-@router.get("/db-backup-schedule")
+@router.get("/db-backup-schedule", summary="Get current MySQL backup schedule settings")
 async def fetch_db_backup_schedule(
     current_user: dict = Depends(require_admin_or_manager_or_md)
 ):
@@ -303,7 +303,7 @@ async def fetch_db_backup_schedule(
         )
 
 
-@router.put("/db-backup-schedule")
+@router.put("/db-backup-schedule", summary="Update MySQL backup schedule settings")
 async def save_db_backup_schedule(
     payload: dict,
     current_user: dict = Depends(require_admin_or_manager_or_md)
@@ -331,7 +331,7 @@ async def save_db_backup_schedule(
         )
 
 
-@router.get("/backup-documents")
+@router.get("/backup-documents", summary="List uploaded backup documents available for download")
 async def list_backup_documents(
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
@@ -354,7 +354,7 @@ async def list_backup_documents(
         )
 
 
-@router.post("/backup-documents", status_code=status.HTTP_201_CREATED)
+@router.post("/backup-documents", status_code=status.HTTP_201_CREATED, summary="Upload a file to backup documents vault")
 async def upload_backup_document(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
@@ -409,7 +409,7 @@ async def upload_backup_document(
         )
 
 
-@router.get("/backup-documents/{stored_name}")
+@router.get("/backup-documents/{stored_name}", summary="Download one uploaded backup document by stored name")
 async def download_backup_document(
     stored_name: str,
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
@@ -449,7 +449,7 @@ async def download_backup_document(
         )
 
 
-@router.get("/download")
+@router.get("/download", summary="Download a comprehensive system report as Excel")
 async def download_report(
     start_date: str = Query(None),
     end_date: str = Query(None),

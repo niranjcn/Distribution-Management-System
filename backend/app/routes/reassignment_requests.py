@@ -10,7 +10,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("")
+@router.get("", summary="Get reassignment requests")
 async def get_reassignment_requests(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -38,7 +38,7 @@ async def get_reassignment_requests(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
 
 
-@router.get("/{request_id}")
+@router.get("/{request_id}", summary="Get reassignment request")
 async def get_reassignment_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
@@ -59,7 +59,7 @@ async def get_reassignment_request(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
 
 
-@router.post("/{request_id}/reassign")
+@router.post("/{request_id}/reassign", summary="Reassign users")
 async def reassign_users(
     request_id: str,
     body: dict,
@@ -99,7 +99,7 @@ async def reassign_users(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred")
 
 
-@router.post("/{request_id}/reject")
+@router.post("/{request_id}/reject", summary="Reject request")
 async def reject_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),

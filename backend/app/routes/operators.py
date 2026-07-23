@@ -10,7 +10,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("")
+@router.get("", summary="Get all operators with pagination and filters")
 async def get_operators(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -49,7 +49,7 @@ async def get_operators(
         )
 
 
-@router.get("/{operator_id}")
+@router.get("/{operator_id}", summary="Get operator by ID")
 async def get_operator(
     operator_id: str,
     current_user: dict = Depends(get_current_user)
@@ -79,7 +79,7 @@ async def get_operator(
         )
 
 
-@router.get("/{operator_id}/devices")
+@router.get("/{operator_id}/devices", summary="Get devices assigned to an operator")
 async def get_operator_devices(
     operator_id: str,
     current_user: dict = Depends(get_current_user)
@@ -111,7 +111,7 @@ async def get_operator_devices(
         )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new operator")
 async def create_operator(
     operator_data: OperatorCreate,
     current_user: dict = Depends(get_current_user)
@@ -150,7 +150,7 @@ async def create_operator(
         )
 
 
-@router.put("/{operator_id}")
+@router.put("/{operator_id}", summary="Update operator")
 async def update_operator(
     operator_id: str,
     operator_data: OperatorUpdate,
@@ -195,7 +195,7 @@ async def update_operator(
         )
 
 
-@router.delete("/{operator_id}")
+@router.delete("/{operator_id}", summary="Delete operator")
 async def delete_operator(
     operator_id: str,
     current_user: dict = Depends(get_current_user)

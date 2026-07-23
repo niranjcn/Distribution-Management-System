@@ -67,7 +67,7 @@ async def _fetch_existing_values(db, column: str, values: list[str]) -> set:
     return existing
 
 
-@router.get("/dashboard")
+@router.get("/dashboard", summary="Get external inventory dashboard")
 async def get_external_inventory_dashboard(
     current_user: dict = Depends(require_management),
 ):
@@ -88,7 +88,7 @@ async def get_external_inventory_dashboard(
         )
 
 
-@router.get("/items")
+@router.get("/items", summary="Get external inventory items")
 async def get_external_inventory_items(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -125,7 +125,7 @@ async def get_external_inventory_items(
         )
 
 
-@router.post("/items", status_code=status.HTTP_201_CREATED)
+@router.post("/items", status_code=status.HTTP_201_CREATED, summary="Create external inventory item")
 async def create_external_inventory_item(
     item_data: InventoryItemCreate,
     current_user: dict = Depends(require_management),
@@ -156,7 +156,7 @@ async def create_external_inventory_item(
         )
 
 
-@router.post("/items/bulk-upload", status_code=status.HTTP_201_CREATED)
+@router.post("/items/bulk-upload", status_code=status.HTTP_201_CREATED, summary="Bulk upload external inventory items from CSV")
 async def bulk_upload_external_inventory_items(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_management),
@@ -462,7 +462,7 @@ async def bulk_upload_external_inventory_items(
         )
 
 
-@router.put("/items/{inventory_id}")
+@router.put("/items/{inventory_id}", summary="Update external inventory item")
 async def update_external_inventory_item(
     inventory_id: str,
     item_data: InventoryItemUpdate,
@@ -514,7 +514,7 @@ async def update_external_inventory_item(
         )
 
 
-@router.delete("/items/{inventory_id}")
+@router.delete("/items/{inventory_id}", summary="Delete external inventory item")
 async def delete_external_inventory_item(
     inventory_id: str,
     current_user: dict = Depends(require_management),
@@ -549,7 +549,7 @@ async def delete_external_inventory_item(
         )
 
 
-@router.post("/items/{inventory_id}/image")
+@router.post("/items/{inventory_id}/image", summary="Upload external inventory item image")
 async def upload_external_inventory_item_image(
     inventory_id: str,
     image: UploadFile = File(...),
@@ -601,7 +601,7 @@ async def upload_external_inventory_item_image(
         )
 
 
-@router.post("/adjustments")
+@router.post("/adjustments", summary="Create external inventory adjustment")
 async def create_external_inventory_adjustment(
     payload: StockAdjustmentCreate,
     current_user: dict = Depends(require_management),
@@ -626,7 +626,7 @@ async def create_external_inventory_adjustment(
         )
 
 
-@router.get("/purchase-orders")
+@router.get("/purchase-orders", summary="Get external inventory purchase orders")
 async def get_external_inventory_purchase_orders(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -670,7 +670,7 @@ async def get_external_inventory_purchase_orders(
         )
 
 
-@router.post("/purchase-orders", status_code=status.HTTP_201_CREATED)
+@router.post("/purchase-orders", status_code=status.HTTP_201_CREATED, summary="Create external inventory purchase order")
 async def create_external_inventory_purchase_order(
     po_data: PurchaseOrderCreate,
     current_user: dict = Depends(require_any_role),
@@ -701,7 +701,7 @@ async def create_external_inventory_purchase_order(
         )
 
 
-@router.post("/purchase-orders/{po_id}/receive")
+@router.post("/purchase-orders/{po_id}/receive", summary="Receive external inventory purchase order")
 async def receive_external_inventory_purchase_order(
     po_id: str,
     receipt_data: ReceiptCreate,
@@ -736,7 +736,7 @@ async def receive_external_inventory_purchase_order(
         )
 
 
-@router.get("/receipts")
+@router.get("/receipts", summary="Get external inventory receipts")
 async def get_external_inventory_receipts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -765,7 +765,7 @@ async def get_external_inventory_receipts(
         )
 
 
-@router.get("/movements")
+@router.get("/movements", summary="Get external inventory movements")
 async def get_external_inventory_movements(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),

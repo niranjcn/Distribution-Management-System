@@ -10,7 +10,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("")
+@router.get("", summary="Get all batches with pagination")
 async def get_batches(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -41,7 +41,7 @@ async def get_batches(
         )
 
 
-@router.get("/{batch_id}")
+@router.get("/{batch_id}", summary="Get batch by ID")
 async def get_batch(
     batch_id: str,
     current_user: dict = Depends(get_current_user)
@@ -71,7 +71,7 @@ async def get_batch(
         )
 
 
-@router.get("/{batch_id}/devices")
+@router.get("/{batch_id}/devices", summary="Get all devices in a batch")
 async def get_batch_devices(
     batch_id: str,
     page: int = Query(1, ge=1),
@@ -108,7 +108,7 @@ async def get_batch_devices(
         )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new batch")
 async def create_batch(
     batch_data: BatchCreate,
     current_user: dict = Depends(require_admin_or_manager)
@@ -141,7 +141,7 @@ async def create_batch(
         )
 
 
-@router.put("/{batch_id}")
+@router.put("/{batch_id}", summary="Update batch")
 async def update_batch(
     batch_id: str,
     batch_data: BatchUpdate,
@@ -177,7 +177,7 @@ async def update_batch(
         )
 
 
-@router.delete("/{batch_id}")
+@router.delete("/{batch_id}", summary="Delete batch (only if it has no devices)")
 async def delete_batch(
     batch_id: str,
     current_user: dict = Depends(require_admin_or_manager)

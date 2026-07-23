@@ -84,7 +84,7 @@ class ReviewRequest(BaseModel):
     new_password: Optional[str] = None
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Submit a change request")
 async def submit_change_request(
     data: ChangeRequestCreate,
     current_user: dict = Depends(get_current_user)
@@ -236,7 +236,7 @@ async def submit_change_request(
         )
 
 
-@router.get("")
+@router.get("", summary="Get change requests - admin sees all, manager sees staff requests only")
 async def get_change_requests(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -303,7 +303,7 @@ async def get_change_requests(
         )
 
 
-@router.patch("/{request_id}/review")
+@router.patch("/{request_id}/review", summary="Approve or reject a change request")
 async def review_change_request(
     request: Request,
     request_id: str,

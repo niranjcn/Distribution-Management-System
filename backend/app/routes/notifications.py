@@ -9,7 +9,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("")
+@router.get("", summary="Get user notifications with pagination")
 async def get_notifications(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -41,7 +41,7 @@ async def get_notifications(
         )
 
 
-@router.get("/unread")
+@router.get("/unread", summary="Get count of unread notifications")
 async def get_unread_count(
     current_user: dict = Depends(get_current_user)
 ):
@@ -64,7 +64,7 @@ async def get_unread_count(
         )
 
 
-@router.get("/latest")
+@router.get("/latest", summary="Get latest notifications for the user")
 async def get_latest_notifications(
     limit: int = Query(5, ge=1, le=20),
     current_user: dict = Depends(get_current_user)
@@ -91,7 +91,7 @@ async def get_latest_notifications(
         )
 
 
-@router.patch("/{notification_id}/read")
+@router.patch("/{notification_id}/read", summary="Mark notification as read")
 async def mark_as_read(
     notification_id: str,
     current_user: dict = Depends(get_current_user)
@@ -123,7 +123,7 @@ async def mark_as_read(
         )
 
 
-@router.patch("/read-all")
+@router.patch("/read-all", summary="Mark all user notifications as read")
 async def mark_all_as_read(
     current_user: dict = Depends(get_current_user)
 ):
@@ -146,7 +146,7 @@ async def mark_all_as_read(
         )
 
 
-@router.delete("/{notification_id}")
+@router.delete("/{notification_id}", summary="Delete notification")
 async def delete_notification(
     notification_id: str,
     current_user: dict = Depends(get_current_user)

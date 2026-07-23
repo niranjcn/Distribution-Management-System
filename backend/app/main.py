@@ -261,7 +261,7 @@ app.include_router(external_inventory.router, prefix=f"{settings.API_V1_PREFIX}/
 app.include_router(reassignment_requests.router, prefix=f"{settings.API_V1_PREFIX}/reassignment-requests", tags=["Reassignment Requests"])
 
 
-@app.get("/", tags=["Root"])
+@app.get("/", tags=["Root"], summary="Root endpoint")
 async def root():
     """Root endpoint"""
     return {
@@ -271,19 +271,19 @@ async def root():
     }
 
 
-@app.get("/health", tags=["Health"])
+@app.get("/health", tags=["Health"], summary="Health check endpoint")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
 
 
-@app.get("/metrics", tags=["Metrics"])
+@app.get("/metrics", tags=["Metrics"], summary="Prometheus metrics endpoint")
 async def metrics():
     """Prometheus metrics endpoint"""
     return await metrics_endpoint()
 
 
-@app.get(f"{settings.API_V1_PREFIX}/uploads/{{file_path:path}}", tags=["Uploads"])
+@app.get(f"{settings.API_V1_PREFIX}/uploads/{{file_path:path}}", tags=["Uploads"], summary="Serve uploaded files only to authenticated users")
 async def serve_upload(file_path: str, current_user: dict = Depends(get_current_user)):
     """Serve uploaded files only to authenticated users."""
     resolved_root = uploads_root.resolve()

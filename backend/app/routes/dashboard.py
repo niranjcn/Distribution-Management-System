@@ -17,7 +17,7 @@ class ClientActivityTrackRequest(BaseModel):
     context: str | None = None
 
 
-@router.get("/scope-users")
+@router.get("/scope-users", summary="Get users visible in the hierarchy scope selector.")
 async def get_scope_users(
     current_user: dict = Depends(get_current_user)
 ):
@@ -33,7 +33,7 @@ async def get_scope_users(
         )
 
 
-@router.get("/user-kpi/{user_id}")
+@router.get("/user-kpi/{user_id}", summary="Get KPI data for a specific user in the hierarchy.")
 async def get_user_kpi(
     user_id: str,
     start_date: str = Query(None),
@@ -52,7 +52,7 @@ async def get_user_kpi(
         )
 
 
-@router.get("/stats")
+@router.get("/stats", summary="Get dashboard statistics based on user role")
 async def get_dashboard_stats(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -77,7 +77,7 @@ async def get_dashboard_stats(
         )
 
 
-@router.get("/recent-activities")
+@router.get("/recent-activities", summary="Get recent activities for dashboard")
 async def get_recent_activities(
     limit: int = 10,
     current_user: dict = Depends(get_current_user)
@@ -101,7 +101,7 @@ async def get_recent_activities(
         )
 
 
-@router.get("/charts/distributions")
+@router.get("/charts/distributions", summary="Get distribution chart data")
 async def get_distribution_chart_data(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -126,7 +126,7 @@ async def get_distribution_chart_data(
         )
 
 
-@router.get("/charts/defects")
+@router.get("/charts/defects", summary="Get defect chart data")
 async def get_defect_chart_data(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -151,7 +151,7 @@ async def get_defect_chart_data(
         )
 
 
-@router.get("/alerts")
+@router.get("/alerts", summary="Get system alerts for dashboard")
 async def get_system_alerts(
     current_user: dict = Depends(get_current_user)
 ):
@@ -174,7 +174,7 @@ async def get_system_alerts(
         )
 
 
-@router.get("/advanced-metrics")
+@router.get("/advanced-metrics", summary="Get advanced management analytics for graph-heavy dashboards.")
 async def get_advanced_dashboard_metrics(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -199,7 +199,7 @@ async def get_advanced_dashboard_metrics(
         )
 
 
-@router.get("/distribution-device-analytics")
+@router.get("/distribution-device-analytics", summary="Get distribution device analytics for admin/manager dashboards.")
 async def get_distribution_device_analytics(
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -223,7 +223,7 @@ async def get_distribution_device_analytics(
         )
 
 
-@router.get("/activities")
+@router.get("/activities", summary="Get admin-wide activities with filtering.")
 async def get_admin_activities(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1),
@@ -262,7 +262,7 @@ async def get_admin_activities(
         )
 
 
-@router.post("/activities/track")
+@router.post("/activities/track", summary="Track explicit client-side actions like local export clicks.")
 async def track_client_activity(
     payload: ClientActivityTrackRequest,
     current_user: dict = Depends(require_any_role),
@@ -287,7 +287,7 @@ async def track_client_activity(
         )
 
 
-@router.get("/view-as/{target_user_id}")
+@router.get("/view-as/{target_user_id}", summary="Get dashboard data as seen by the target user (admin/manager only).")
 async def view_as_dashboard(
     target_user_id: str,
     start_date: str = Query(None),

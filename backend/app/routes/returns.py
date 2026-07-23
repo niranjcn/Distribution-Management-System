@@ -19,7 +19,7 @@ def _ensure_not_md_director(current_user: dict) -> None:
         )
 
 
-@router.get("")
+@router.get("", summary="Get all return requests with pagination and filters")
 async def get_returns(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
@@ -58,7 +58,7 @@ async def get_returns(
         )
 
 
-@router.get("/{return_id}")
+@router.get("/{return_id}", summary="Get return request by ID")
 async def get_return(
     return_id: str,
     current_user: dict = Depends(get_current_user)
@@ -88,7 +88,7 @@ async def get_return(
         )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new return request")
 async def create_return(
     return_data: ReturnCreate,
     current_user: dict = Depends(get_current_user)
@@ -122,7 +122,7 @@ async def create_return(
         )
 
 
-@router.patch("/{return_id}/status")
+@router.patch("/{return_id}/status", summary="Update return request status")
 async def update_return_status(
     return_id: str,
     status_update: ReturnStatusUpdate,
@@ -197,7 +197,7 @@ async def update_return_status(
         )
 
 
-@router.delete("/{return_id}")
+@router.delete("/{return_id}", summary="Cancel a return request (only by creator)")
 async def cancel_return(
     return_id: str,
     current_user: dict = Depends(get_current_user)
