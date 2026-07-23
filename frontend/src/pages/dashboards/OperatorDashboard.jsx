@@ -14,6 +14,7 @@ import DeviceIdentity from '../../components/ui/DeviceIdentity';
 import Button from '../../components/ui/Button';
 import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
+import { useNotifications } from '../../context/NotificationContext';
 import { dashboardAPI, devicesAPI, defectsAPI, returnsAPI, distributionsAPI } from '../../services/api';
 import {
   Box,
@@ -39,6 +40,7 @@ const doughnutOptions = {
 
 const OperatorDashboard = () => {
   const { user } = useAuth();
+  const { showToast } = useNotifications();
   const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
@@ -54,12 +56,12 @@ const OperatorDashboard = () => {
         setLoading(true);
         const dateParams = buildDateParams(dateRange);
         const [statsRes, advancedRes, devRes, defRes, retRes, distRes] = await Promise.all([
-          dashboardAPI.getStats(dateParams).catch(() => ({ data: {} })),
-          dashboardAPI.getAdvancedMetrics(dateParams).catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
-          devicesAPI.getMyOverview({ show_all: true }).catch(() => ({ data: { all_under_me: [] } })),
-          defectsAPI.getDefects().catch(() => ({ data: [] })),
-          returnsAPI.getReturns().catch(() => ({ data: [] })),
-          distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(() => ({ data: [] }))
+          dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
+          dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
+          devicesAPI.getMyOverview({ show_all: true }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: { all_under_me: [] } }; }),
+          defectsAPI.getDefects().catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
+          returnsAPI.getReturns().catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; }),
+          distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; })
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });

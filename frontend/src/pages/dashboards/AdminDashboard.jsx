@@ -18,6 +18,7 @@ import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { dashboardAPI, usersAPI, defectsAPI, reassignmentRequestsAPI } from '../../services/api';
+import { useNotifications } from '../../context/NotificationContext';
 import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
 import {
@@ -90,6 +91,7 @@ const periodLabel = (range) => ({
 }[range] || 'selected period');
 
 const AdminDashboard = () => {
+  const { showToast } = useNotifications();
   const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } });
@@ -109,11 +111,11 @@ const AdminDashboard = () => {
         setLoading(true);
         const dateParams = buildDateParams(dateRange);
         const [statsRes, advancedRes, usersRes, defectsRes, distribAnalyticsRes] = await Promise.all([
-          dashboardAPI.getStats(dateParams).catch(() => ({ data: {} })),
-          dashboardAPI.getAdvancedMetrics(dateParams).catch(() => ({ data: { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } } })),
-          usersAPI.getUsers().catch(() => ({ data: [] })),
-          defectsAPI.getDefects().catch(() => ({ data: [] })),
-          dashboardAPI.getDistributionDeviceAnalytics().catch(() => ({ data: null })),
+          dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
+          dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } } }; }),
+          usersAPI.getUsers().catch(err => { console.error('Failed to load users:', err); showToast('Failed to load users', 'error'); return { data: [] }; }),
+          defectsAPI.getDefects().catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
+          dashboardAPI.getDistributionDeviceAnalytics().catch(err => { console.error('Failed to load distribution analytics:', err); showToast('Failed to load distribution analytics', 'error'); return { data: null }; }),
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } });

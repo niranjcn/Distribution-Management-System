@@ -60,31 +60,31 @@ const CreateDistribution = () => {
       try {
         setLoadingData(true);
         // Devices: management sees PDIC stock; others see devices they currently hold
-        const devicesRes = await devicesAPI.getAvailableDevices().catch(() => ({ data: [] }));
+        const devicesRes = await devicesAPI.getAvailableDevices().catch(err => { console.error('Failed to load available devices:', err); showToast('Failed to load available devices', 'error'); return { data: [] }; });
         setAvailableDevices(devicesRes.data || []);
 
         if (isManagement) {
           const [sdRes, clRes, opRes] = await Promise.all([
-            usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 10000000000 }).catch(() => ({ data: [] })),
-            usersAPI.getUsers({ role: 'cluster',        status: 'active', page_size: 10000000000 }).catch(() => ({ data: [] })),
-            usersAPI.getUsers({ role: 'operator',       status: 'active', page_size: 10000000000 }).catch(() => ({ data: [] })),
+            usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 10000000000 }).catch(err => { console.error('Failed to load sub distributors:', err); showToast('Failed to load sub distributors', 'error'); return { data: [] }; }),
+            usersAPI.getUsers({ role: 'cluster',        status: 'active', page_size: 10000000000 }).catch(err => { console.error('Failed to load clusters:', err); showToast('Failed to load clusters', 'error'); return { data: [] }; }),
+            usersAPI.getUsers({ role: 'operator',       status: 'active', page_size: 10000000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; }),
           ]);
           setSubDists(sdRes.data || []);
           setAllClusters(clRes.data || []);
           setAllOperators(opRes.data || []);
         } else if (role === 'sub_distributor') {
           const [clRes, opRes] = await Promise.all([
-            usersAPI.getUsers({ role: 'cluster',  status: 'active', page_size: 1000000 }).catch(() => ({ data: [] })),
-            usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(() => ({ data: [] })),
+            usersAPI.getUsers({ role: 'cluster',  status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load clusters:', err); showToast('Failed to load clusters', 'error'); return { data: [] }; }),
+            usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; }),
           ]);
           setAllClusters(clRes.data || []);
           setAllOperators(opRes.data || []);
         } else if (role === 'cluster') {
-          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(() => ({ data: [] }));
+          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; });
           setAllOperators(opRes.data || []);
         } else if (role === 'operator') {
           // Backend returns only sibling operators (same parent_id); exclude self
-          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(() => ({ data: [] }));
+          const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; });
           setAllOperators((opRes.data || []).filter(o => String(o.id) !== String(user?.id)));
         }
       } catch (error) {

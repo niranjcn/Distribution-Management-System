@@ -110,11 +110,11 @@ const Reports = () => {
         }
 
         const [devRes, invRes, distRes, defRes, retRes] = await Promise.all([
-          devicesAPI.getDevices({ page: 1, page_size: 100, ...params }).catch(() => ({ data: [] })),
-          reportsAPI.getInventoryReport(params).catch(() => ({ data: null })),
-          reportsAPI.getDistributionSummary(params).catch(() => ({ data: null })),
-          reportsAPI.getDefectSummary(params).catch(() => ({ data: null })),
-          reportsAPI.getReturnSummary(params).catch(() => ({ data: null }))
+          devicesAPI.getDevices({ page: 1, page_size: 100, ...params }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: [] }; }),
+          reportsAPI.getInventoryReport(params).catch(err => { console.error('Failed to load inventory report:', err); showToast('Failed to load inventory report', 'error'); return { data: null }; }),
+          reportsAPI.getDistributionSummary(params).catch(err => { console.error('Failed to load distribution summary:', err); showToast('Failed to load distribution summary', 'error'); return { data: null }; }),
+          reportsAPI.getDefectSummary(params).catch(err => { console.error('Failed to load defect summary:', err); showToast('Failed to load defect summary', 'error'); return { data: null }; }),
+          reportsAPI.getReturnSummary(params).catch(err => { console.error('Failed to load return summary:', err); showToast('Failed to load return summary', 'error'); return { data: null }; })
         ]);
         setDeviceReportRows(devRes.data || []);
         setInventoryReport(invRes.data || null);

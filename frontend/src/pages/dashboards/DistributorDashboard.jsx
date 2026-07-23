@@ -6,6 +6,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import DeviceIdentity from '../../components/ui/DeviceIdentity';
 import Button from '../../components/ui/Button';
 import { dashboardAPI, devicesAPI, distributionsAPI, usersAPI, defectsAPI, returnsAPI } from '../../services/api';
+import { useNotifications } from '../../context/NotificationContext';
 import {
   Box,
   Truck,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 
 const DistributorDashboard = () => {
+  const { showToast } = useNotifications();
   const [stats, setStats] = useState({});
   const [devices, setDevices] = useState([]);
   const [distributions, setDistributions] = useState([]);
@@ -34,12 +36,12 @@ const DistributorDashboard = () => {
       try {
         setLoading(true);
         const [statsRes, devRes, distRes, usersRes, defRes, retRes] = await Promise.all([
-          dashboardAPI.getStats().catch(() => ({ data: {} })),
-          devicesAPI.getDevices().catch(() => ({ data: [] })),
-          distributionsAPI.getDistributions().catch(() => ({ data: [] })),
-          usersAPI.getUsers({ role: 'sub_distributor' }).catch(() => ({ data: [] })),
-          defectsAPI.getDefects().catch(() => ({ data: [] })),
-          returnsAPI.getReturns().catch(() => ({ data: [] }))
+          dashboardAPI.getStats().catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
+          devicesAPI.getDevices().catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: [] }; }),
+          distributionsAPI.getDistributions().catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; }),
+          usersAPI.getUsers({ role: 'sub_distributor' }).catch(err => { console.error('Failed to load sub distributors:', err); showToast('Failed to load sub distributors', 'error'); return { data: [] }; }),
+          defectsAPI.getDefects().catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
+          returnsAPI.getReturns().catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; })
         ]);
         setStats(statsRes.data || {});
         setDevices(devRes.data || []);

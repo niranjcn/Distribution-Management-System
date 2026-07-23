@@ -18,6 +18,7 @@ import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
 import { dashboardAPI, distributionsAPI, returnsAPI } from '../../services/api';
+import { useNotifications } from '../../context/NotificationContext';
 import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
 import {
@@ -83,6 +84,7 @@ const periodLabel = (range) => ({
 }[range] || 'selected period');
 
 const ManagerDashboard = () => {
+  const { showToast } = useNotifications();
   const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
@@ -100,11 +102,11 @@ const ManagerDashboard = () => {
         setLoading(true);
         const dateParams = buildDateParams(dateRange);
         const [statsRes, advancedRes, distRes, retRes, distribAnalyticsRes] = await Promise.all([
-          dashboardAPI.getStats(dateParams).catch(() => ({ data: {} })),
-          dashboardAPI.getAdvancedMetrics(dateParams).catch(() => ({ data: { kpis: {}, charts: {}, alerts: [] } })),
-          distributionsAPI.getDistributions().catch(() => ({ data: [] })),
-          returnsAPI.getReturns().catch(() => ({ data: [] })),
-          dashboardAPI.getDistributionDeviceAnalytics().catch(() => ({ data: null })),
+          dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
+          dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
+          distributionsAPI.getDistributions().catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; }),
+          returnsAPI.getReturns().catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; }),
+          dashboardAPI.getDistributionDeviceAnalytics().catch(err => { console.error('Failed to load distribution analytics:', err); showToast('Failed to load distribution analytics', 'error'); return { data: null }; }),
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
