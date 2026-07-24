@@ -247,7 +247,7 @@ const RegisterDevice = () => {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Register New Device</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Register New Device</h1>
         <p className="text-gray-500 mt-1">Add a new device to the inventory from NOC</p>
       </div>
 

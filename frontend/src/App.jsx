@@ -42,6 +42,8 @@ import BulkImportDevices from './pages/BulkImportDevices';
 import BulkImportDistribution from './pages/BulkImportDistribution';
 import BulkUploadUsers from './pages/BulkUploadUsers';
 import { normalizeRole, isForcedCredentialUpdateRequired } from './utils/roles';
+import ErrorBoundary from './components/ui/ErrorBoundary';
+import { AlertTriangle } from 'lucide-react';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles = [] }) => {
@@ -374,7 +376,28 @@ function App() {
       <AuthProvider>
         <NotificationProvider>
           <div className="ops-theme min-h-screen">
-            <AppRoutes />
+            <ErrorBoundary
+              name="Page"
+              fallback={
+                <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+                  <div className="bg-white rounded-xl shadow-sm border border-red-200 p-8 max-w-md w-full text-center">
+                    <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center border border-red-200 mx-auto mb-4">
+                      <AlertTriangle className="w-6 h-6 text-red-500" />
+                    </div>
+                    <h2 className="text-lg font-semibold text-gray-800 mb-2">Something went wrong</h2>
+                    <p className="text-sm text-gray-500 mb-6">An unexpected error occurred while loading this page.</p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Reload Page
+                    </button>
+                  </div>
+                </div>
+              }
+            >
+              <AppRoutes />
+            </ErrorBoundary>
             <InstallBanner />
           </div>
         </NotificationProvider>

@@ -109,7 +109,11 @@ const Navbar = ({ onMenuClick }) => {
           
           {/* Breadcrumbs */}
           {breadcrumbs.length > 0 && (
-            <nav className="hidden sm:flex items-center gap-2 text-sm ml-2">
+            <>
+              <span className="sm:hidden text-sm text-gray-800 font-medium truncate max-w-[160px]">
+                {breadcrumbs[breadcrumbs.length - 1].label}
+              </span>
+              <nav className="hidden sm:flex items-center gap-2 text-sm ml-2">
               <Link to="/" className="text-gray-500 hover:text-gray-700">
                 <Home className="w-4 h-4" />
               </Link>
@@ -126,6 +130,7 @@ const Navbar = ({ onMenuClick }) => {
                 </div>
               ))}
             </nav>
+          </>
           )}
         </div>
 

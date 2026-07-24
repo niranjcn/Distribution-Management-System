@@ -342,7 +342,7 @@ const Reports = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Reports & Analytics</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Reports & Analytics</h1>
           <p className="text-gray-500 mt-1">View system statistics and generate reports</p>
         </div>
         <div className="flex gap-2">

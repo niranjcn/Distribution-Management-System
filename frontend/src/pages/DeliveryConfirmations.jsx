@@ -156,7 +156,7 @@ const DeliveryConfirmations = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Delivery Confirmations</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Delivery Confirmations</h1>
         <p className="text-gray-500 mt-1">
           Confirm receipt of devices sent to you. You cannot redistribute devices until you confirm delivery.
         </p>

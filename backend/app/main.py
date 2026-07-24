@@ -1,3 +1,7 @@
+import logging
+from logging.handlers import RotatingFileHandler
+import sys
+
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -25,6 +29,39 @@ from app.middleware.api_activity_logging import ApiActivityLoggingMiddleware
 from app.core.rate_limiter import limiter
 from app.core.audit import audit_logger
 from app.core.metrics import MetricsMiddleware, metrics_endpoint
+
+# ---------------------------------------------------------------------------
+# Logging configuration
+# ---------------------------------------------------------------------------
+_logs_dir = Path(__file__).resolve().parents[1] / "logs"
+_logs_dir.mkdir(parents=True, exist_ok=True)
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
+
+_file_handler = RotatingFileHandler(
+    _logs_dir / "app.log",
+    maxBytes=10 * 1024 * 1024,
+    backupCount=5,
+    encoding="utf-8",
+)
+_file_handler.setLevel(logging.DEBUG)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+)
+
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
+_console_handler.setFormatter(
+    logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+)
+
+_root_logger.addHandler(_file_handler)
+_root_logger.addHandler(_console_handler)
+
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("aiomysql").setLevel(logging.WARNING)
+# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager

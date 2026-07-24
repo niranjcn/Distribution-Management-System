@@ -231,7 +231,7 @@ const Activities = () => {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-400/30 bg-slate-900/65 p-6">
-        <h1 className="text-2xl font-bold text-slate-50">Activities</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-50">Activities</h1>
         <p className="mt-1 text-sm text-slate-200">Admin-wide timeline of meaningful actions performed by users.</p>
       </div>
 

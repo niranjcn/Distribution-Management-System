@@ -1046,7 +1046,7 @@ const ExternalInventory = () => {
         <div className="absolute -bottom-10 left-20 h-28 w-28 rounded-full bg-lime-200/40 blur-2xl" />
         <div className="relative z-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">External Inventory Hub</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900">External Inventory Hub</h1>
             <p className="mt-1 text-sm text-gray-600">
               {canManage
                 ? 'Standalone external inventory for devices, purchasing, and stock movement.'
@@ -1054,8 +1054,8 @@ const ExternalInventory = () => {
             </p>
           </div>
           {canManage ? (
-            <div className="flex gap-2">
-              <Button variant="secondary" icon={RefreshCw} onClick={loadData}>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button variant="secondary" icon={RefreshCw} onClick={loadData} className="w-full sm:w-auto justify-center">
                 Refresh
               </Button>
               <Button
@@ -1065,19 +1065,20 @@ const ExternalInventory = () => {
                   setItemForm(initialItemForm);
                   setShowAddItemModal(true);
                 }}
+                className="w-full sm:w-auto justify-center"
               >
                 Add Device Item
               </Button>
-              <Button variant="secondary" icon={Factory} onClick={() => setShowCreatePOModal(true)}>
+              <Button variant="secondary" icon={Factory} onClick={() => setShowCreatePOModal(true)} className="w-full sm:w-auto justify-center">
                 New PO
               </Button>
             </div>
           ) : (
-            <div className="flex gap-2">
-              <Button variant="secondary" icon={RefreshCw} onClick={loadData}>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button variant="secondary" icon={RefreshCw} onClick={loadData} className="w-full sm:w-auto justify-center">
                 Refresh
               </Button>
-              <Button variant="secondary" icon={Factory} onClick={() => setShowCreatePOModal(true)}>
+              <Button variant="secondary" icon={Factory} onClick={() => setShowCreatePOModal(true)} className="w-full sm:w-auto justify-center">
                 New PO
               </Button>
             </div>

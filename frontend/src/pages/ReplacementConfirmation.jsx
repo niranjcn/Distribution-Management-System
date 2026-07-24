@@ -56,7 +56,7 @@ const ReplacementConfirmation = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Replacement Confirmation</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Replacement Confirmation</h1>
           <p className="text-gray-500 mt-1">Confirm replacement device transfer from PDIC to your account</p>
         </div>
         <Button variant="secondary" icon={RefreshCw} onClick={fetchPending}>

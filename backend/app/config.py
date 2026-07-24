@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from typing import List
 import os
-import secrets
 from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
@@ -36,7 +35,7 @@ class Settings(BaseSettings):
     RCLONE_CONFIG: str = os.getenv("RCLONE_CONFIG", "/tmp/rclone.conf")
     
     # Security
-    SECRET_KEY: str = secrets.token_urlsafe(64)
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -86,6 +85,11 @@ class Settings(BaseSettings):
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key(cls, value: str) -> str:
+        if not value:
+            raise ValueError(
+                "SECRET_KEY is required. Set it in your .env file. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+            )
         if len(value) < 32 or "dms" in value.lower():
             raise ValueError(
                 "SECRET_KEY must be at least 32 characters and must not contain default patterns. "

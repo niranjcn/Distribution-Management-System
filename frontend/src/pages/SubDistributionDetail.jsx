@@ -109,7 +109,7 @@ const SubDistributionDetail = () => {
           <div className="flex items-center gap-3">
             <Users className="w-8 h-8 text-green-600" />
             <div>
-              <h1 className="text-2xl font-bold text-gray-800">{subDistribution.name}</h1>
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-800 break-words">{subDistribution.name}</h1>
               <p className="text-sm text-gray-500">{subDistribution.sub_distribution_id}</p>
             </div>
           </div>

@@ -126,7 +126,7 @@ const SubDistributorDashboard = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">{isSubDistributionManager ? 'Sub Distribution Manager Dashboard' : isCluster ? 'Cluster Dashboard' : 'Sub-Distributor Dashboard'}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800 break-words">{isSubDistributionManager ? 'Sub Distribution Manager Dashboard' : isCluster ? 'Cluster Dashboard' : 'Sub-Distributor Dashboard'}</h1>
           <p className="text-gray-500 mt-1">
             {isSubDistributionManager ? 'Monitor branch devices and operator activity.' : isCluster ? 'Manage cluster devices and operator assignments.' : 'Manage received devices and operator assignments.'}
           </p>

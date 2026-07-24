@@ -42,7 +42,7 @@ const PendingReplacements = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Pending Replacements</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Pending Replacements</h1>
           <p className="text-gray-500 mt-1">Defective devices waiting for replacement assignment</p>
         </div>
         <div className="flex items-center gap-2">

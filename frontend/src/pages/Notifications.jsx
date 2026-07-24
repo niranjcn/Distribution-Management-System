@@ -363,7 +363,7 @@ const Notifications = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Notifications</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Notifications</h1>
           <p className="text-sm text-gray-500 mt-1">All alerts and request updates in chronological order.</p>
         </div>
         <Button onClick={handleMarkAllRead} disabled={markingAll} icon={CheckCheck}>

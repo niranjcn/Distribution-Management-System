@@ -186,7 +186,7 @@ const Backup = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-bold text-gray-800">Backup</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Backup</h1>
         <p className="text-gray-500">
           Download a full backup of all devices including journey path from source to current location.
         </p>

@@ -354,7 +354,7 @@ const Approvals = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Pending Actions</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Pending Actions</h1>
         <p className="text-gray-500 mt-1">Review approvals and confirm returned devices reached PDIC</p>
       </div>
 

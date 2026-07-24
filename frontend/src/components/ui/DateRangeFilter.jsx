@@ -122,7 +122,7 @@ const DateRangeFilter = ({ value, onChange }) => {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+        <div className="absolute right-0 sm:left-auto left-0 mt-1 w-56 sm:w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
           <div className="p-2">
             {PRESETS.map((preset) => (
               <button

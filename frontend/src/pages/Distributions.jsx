@@ -480,16 +480,16 @@ const Distributions = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Distributions</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Distributions</h1>
           <p className="text-gray-500 mt-1">Manage device distributions across the chain</p>
         </div>
         {canCreate && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <Link to="/distributions/bulk-upload">
-              <Button variant="outline" icon={Upload}>Bulk Upload</Button>
+              <Button variant="outline" icon={Upload} className="w-full sm:w-auto justify-center">Bulk Upload</Button>
             </Link>
             <Link to="/distributions/create">
-              <Button icon={Plus}>Create Distribution</Button>
+              <Button icon={Plus} className="w-full sm:w-auto justify-center">Create Distribution</Button>
             </Link>
           </div>
         )}

@@ -101,7 +101,7 @@ const ChangeRequests = ({ mode = 'password' }) => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">{isEditMode ? 'Edit Requests' : 'Password Change Requests'}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">{isEditMode ? 'Edit Requests' : 'Password Change Requests'}</h1>
           <p className="text-gray-500 mt-1 text-sm">
             {isEditMode
               ? 'Review and approve device update requests'

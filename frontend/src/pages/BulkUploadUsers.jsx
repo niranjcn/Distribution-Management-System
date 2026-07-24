@@ -93,7 +93,7 @@ const BulkUploadUsers = () => {
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Bulk Upload Users</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Bulk Upload Users</h1>
           <p className="text-sm text-gray-500">Upload sub-distributors, clusters, and operators via CSV or Excel</p>
         </div>
       </div>

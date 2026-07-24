@@ -155,7 +155,7 @@ const ReassignmentRequests = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Reassignment Requests</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Reassignment Requests</h1>
           <p className="text-gray-500 mt-1">
             Manage pending reassignments for deleted sub-distributors and clusters
           </p>
