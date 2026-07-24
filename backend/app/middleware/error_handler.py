@@ -39,14 +39,34 @@ def add_exception_handlers(app: FastAPI):
     @app.exception_handler(StarletteHTTPException)
     async def starlette_exception_handler(request: Request, exc: StarletteHTTPException):
         """Handle Starlette HTTP exceptions"""
+        detail = str(exc.detail)
+        status_code = exc.status_code
+
+        if status_code >= 500:
+            logger.error(
+                "Internal Starlette HTTP exception on %s %s: %s",
+                request.method,
+                request.url.path,
+                detail,
+            )
+            detail = "An internal error occurred. Please try again later."
+        else:
+            logger.warning(
+                "Starlette HTTP exception on %s %s (status=%s): %s",
+                request.method,
+                request.url.path,
+                status_code,
+                detail,
+            )
+
         return JSONResponse(
-            status_code=exc.status_code,
+            status_code=status_code,
             content={
                 "success": False,
-                "message": str(exc.detail),
+                "message": detail,
                 "error": {
-                    "code": f"HTTP_{exc.status_code}",
-                    "details": str(exc.detail)
+                    "code": f"HTTP_{status_code}",
+                    "details": detail
                 }
             }
         )
@@ -78,14 +98,20 @@ def add_exception_handlers(app: FastAPI):
     @app.exception_handler(ValueError)
     async def value_error_handler(request: Request, exc: ValueError):
         """Handle value errors (business logic errors)"""
+        logger.exception(
+            "ValueError on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+        )
         return JSONResponse(
             status_code=400,
             content={
                 "success": False,
-                "message": str(exc),
+                "message": "Bad request: invalid data provided",
                 "error": {
                     "code": "BAD_REQUEST",
-                    "details": str(exc)
+                    "details": "The request could not be processed due to invalid data."
                 }
             }
         )

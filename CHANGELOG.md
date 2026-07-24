@@ -18,6 +18,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - End-to-end test suite covering critical user flows
 - Database indexes on frequently queried columns across all tables
 
+### Added (Production Hardening)
+- 15 composite database indexes across 7 tables (distributions, defects, returns, devices, approvals, change_requests, operators)
+- Refresh token rotation: backend sets httpOnly cookies on POST /auth/refresh
+- Frontend 401 interceptor: auto-refreshes access token and retries original request
+- Logging on ValueError and StarletteHTTPException exception handlers
+
+### Changed (Production Hardening)
+- Backend refresh endpoint reads httpOnly cookie first, falls back to request body
+- Frontend client.js: on 401, calls /auth/refresh, retries on success, clears session on failure
+- Concurrent 401s coalesced into a single refresh call
+
+### Fixed (Production Hardening)
+- Account lockout bug: failed login attempts no longer reset prematurely (auth_service.py)
+- ValueError handler no longer leaks exception details to client
+- StarletteHTTPException handler now logs and sanitizes 500+ responses
+
+### Security (Production Hardening)
+- Nginx: removed `allow`/`deny all` rules that blocked all external traffic
+
 ### Changed
 - Notification pagination from "Show All" to 20/page with prev/next navigation
 - Dashboard service split into submodules

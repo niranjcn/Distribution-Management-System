@@ -695,6 +695,30 @@ async def init_db():
             "CREATE UNIQUE INDEX idx_users_cluster_id ON users (cluster_id)",
             "CREATE UNIQUE INDEX idx_users_operator_id ON users (operator_id)",
             "CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications (user_id, created_at DESC)",
+
+            "CREATE INDEX idx_distributions_status_created ON distributions (status, created_at)",
+            "CREATE INDEX idx_distributions_from_user_created ON distributions (from_user_id, created_at)",
+            "CREATE INDEX idx_distributions_to_user_created ON distributions (to_user_id, created_at)",
+
+            "CREATE INDEX idx_defects_status_created ON defects (status, created_at)",
+            "CREATE INDEX idx_defects_device_status ON defects (device_id, status)",
+            "CREATE INDEX idx_defects_reported_by_created ON defects (reported_by, created_at)",
+
+            "CREATE INDEX idx_returns_status_created ON returns (status, created_at)",
+            "CREATE INDEX idx_returns_device_status ON returns (device_id, status)",
+
+            "CREATE INDEX idx_devices_status_holder ON devices (status, current_holder_id)",
+            "CREATE INDEX idx_devices_holder_updated ON devices (current_holder_id, updated_at)",
+            "CREATE INDEX idx_devices_status_created ON devices (status, created_at)",
+
+            "CREATE INDEX idx_approvals_status_type ON approvals (status, approval_type)",
+            "CREATE INDEX idx_approvals_entity_type ON approvals (entity_id, approval_type)",
+
+            "CREATE INDEX idx_change_requests_status_created ON change_requests (status, created_at)",
+            "CREATE INDEX idx_change_requests_type_user_device ON change_requests (request_type, requested_by, device_id, status)",
+
+            "CREATE INDEX idx_operators_assigned_status ON operators (assigned_to, status)",
+            "CREATE INDEX idx_operators_status_created ON operators (status, created_at)",
         ]:
             try:
                 await db.execute(stmt)

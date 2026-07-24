@@ -166,10 +166,25 @@ async def logout(
 
 @router.post("/refresh", response_model=dict, summary="Issue a new access token from a valid refresh token.")
 @limiter.limit("10/minute")
-async def refresh_token(request: Request, refresh_req: RefreshTokenRequest):
-    """Issue a new access token from a valid refresh token."""
+async def refresh_token(
+    request: Request,
+    response: Response,
+    refresh_req: RefreshTokenRequest | None = None,
+):
+    """Issue a new access token from a valid refresh token.
+
+    Reads the refresh token from the httpOnly cookie first;
+    falls back to the request body for backward compatibility.
+    """
     try:
-        token_data = await auth_service.refresh_access_token(refresh_req.refresh_token)
+        refresh_token_value = refresh_req.refresh_token if (refresh_req and refresh_req.refresh_token) else request.cookies.get("refresh_token")
+        if not refresh_token_value:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token not provided"
+            )
+
+        token_data = await auth_service.refresh_access_token(refresh_token_value)
         if not token_data:
             audit_logger.warning(
                 "TOKEN_REFRESH_FAILED | ip=%s",
@@ -184,6 +199,27 @@ async def refresh_token(request: Request, refresh_req: RefreshTokenRequest):
             "TOKEN_REFRESH_SUCCESS | ip=%s",
             request.client.host if request.client else "unknown",
         )
+
+        is_secure_cookie = settings.CSRF_COOKIE_SECURE
+        response.set_cookie(
+            key="access_token",
+            value=token_data["access_token"],
+            httponly=True,
+            secure=is_secure_cookie,
+            samesite="strict",
+            max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            path="/",
+        )
+        if "refresh_token" in token_data:
+            response.set_cookie(
+                key="refresh_token",
+                value=token_data["refresh_token"],
+                httponly=True,
+                secure=is_secure_cookie,
+                samesite="strict",
+                max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+                path="/",
+            )
 
         return {
             "success": True,

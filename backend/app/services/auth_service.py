@@ -56,14 +56,6 @@ async def authenticate_user(email: str, password: str) -> Optional[dict]:
                     status_code=status.HTTP_423_LOCKED,
                     detail="Account temporarily locked. Try again later."
                 )
-
-            await db.execute(
-                "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
-                (int(user["id"]),)
-            )
-            await db.commit()
-            user["failed_login_attempts"] = 0
-            user["locked_until"] = None
         
         if not verify_password(password, user["password_hash"]):
             attempts = int(user.get("failed_login_attempts") or 0) + 1

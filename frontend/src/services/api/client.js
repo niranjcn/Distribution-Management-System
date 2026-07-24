@@ -7,6 +7,9 @@ const logError = isDev ? console.error : () => {};
 
 log('[API] Initialized with base URL:', API_BASE_URL);
 
+let _refreshing = false;
+let _refreshPromise = null;
+
 const getCookieValue = (name) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
@@ -108,6 +111,11 @@ const apiRequest = async (endpoint, options = {}) => {
       ) {
         const first = data.error.details[0];
         errorMessage = first?.message || errorMessage;
+      }
+
+      if (response.status === 401 && !AUTH_FAILURE_ALLOWLIST.has(endpoint)) {
+        const refreshed = await attemptTokenRefresh();
+        if (refreshed) return apiRequest(endpoint, options);
       }
 
       if (AUTH_FAILURE_STATUSES.has(response.status)) {
