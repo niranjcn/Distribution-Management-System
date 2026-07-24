@@ -18,6 +18,7 @@ import Approvals from './pages/Approvals';
 import Reports from './pages/Reports';
 import Backup from './pages/Backup';
 import Activities from './pages/Activities';
+import InstallBanner from './components/ui/InstallBanner';
 import Notifications from './pages/Notifications';
 import ExternalInventory from './pages/ExternalInventory';
 import Profile from './pages/Profile';
@@ -374,6 +375,7 @@ function App() {
         <NotificationProvider>
           <div className="ops-theme min-h-screen">
             <AppRoutes />
+            <InstallBanner />
           </div>
         </NotificationProvider>
       </AuthProvider>
