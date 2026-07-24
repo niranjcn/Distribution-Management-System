@@ -201,7 +201,6 @@ class TestGetDashboardStats:
 
     async def test_sub_distribution_manager(self, mock_get_db, sub_distribution_manager_user):
         mock_get_db.add_result(fetchall_result=[{"id": 21}])
-        mock_get_db.add_result(fetchall_result=[])
         mock_get_db.add_result(fetchone_result=(25,))
         mock_get_db.add_result(fetchone_result=(8,))
         mock_get_db.add_result(fetchone_result=(5,))
@@ -298,7 +297,6 @@ class TestGetUserKpi:
         mock_get_db.add_result(fetchone_result={"id": 10, "email": "sd@t.com", "name": "SD1", "role": "sub_distributor"})
         mock_get_db.add_result(fetchone_result=(5,))
         mock_get_db.add_result(fetchall_result=[{"id": 20}])
-        mock_get_db.add_result(fetchall_result=[])
         mock_get_db.add_result(fetchone_result=(15,))
         mock_get_db.add_result(fetchall_result=[
             ("available", 8), ("distributed", 5), ("defective", 2),

@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any, Set
 import json
 
 from app.database import get_db, row_to_dict, rows_to_list
+from app.utils.hierarchy import get_descendant_user_ids as _get_descendant_user_ids
 from app.models.defect import (
     DefectCreate,
     DefectUpdate,
@@ -122,36 +123,6 @@ async def _get_sub_distributor_operator_ids(db, sub_distributor_id: str) -> Set[
     for row in await cursor.fetchall():
         operator_ids.add(str(row["id"]))
     return operator_ids
-
-
-async def _get_descendant_user_ids(db, root_user_id: str) -> Set[str]:
-    """Return all descendant user ids under a root user (recursive by parent_id)."""
-    descendants: Set[str] = set()
-    if not root_user_id or not str(root_user_id).isdigit():
-        return descendants
-
-    pending: List[int] = [int(root_user_id)]
-    visited: Set[int] = set()
-
-    while pending:
-        current_parent_id = pending.pop()
-        if current_parent_id in visited:
-            continue
-        visited.add(current_parent_id)
-
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE parent_id = ?",
-            (current_parent_id,)
-        )
-        rows = await cursor.fetchall()
-        for row in rows:
-            child_id = int(row["id"])
-            child_id_str = str(child_id)
-            if child_id_str not in descendants:
-                descendants.add(child_id_str)
-                pending.append(child_id)
-
-    return descendants
 
 
 async def _resolve_sub_distributor_targets_for_operator(db, operator_id: str) -> List[str]:

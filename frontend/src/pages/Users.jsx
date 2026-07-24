@@ -14,7 +14,8 @@ import {
   Network, ChevronDown, ChevronRight, Filter, X, EyeOff, Search,
   AlertTriangle, Bell
 } from 'lucide-react';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { userKeys } from '../hooks';
 
 // Roles each creator can assign
 const ALLOWED_ROLES_BY_CREATOR = {
@@ -174,15 +175,21 @@ const Users = () => {
     }
   }, []);
 
-  useAutoRefresh(() => {
-    fetchUsers();
-    fetchSubDistOperators();
-    if (currentUser?.role === 'super_admin') {
-      reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })
-        .then(res => setPendingReassignCount(res?.pagination?.total || 0))
-        .catch(() => setPendingReassignCount(0));
-    }
-  });
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: userKeys.all });
+      fetchUsers();
+      fetchSubDistOperators();
+      if (currentUser?.role === 'super_admin') {
+        reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })
+          .then(res => setPendingReassignCount(res?.pagination?.total || 0))
+          .catch(() => setPendingReassignCount(0));
+      }
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   // When add modal opens, default role to first available
   const openAddModal = () => {
@@ -409,7 +416,7 @@ const Users = () => {
       setShowCreatePassword(false);
       setShowCreateConfirmPassword(false);
       setParentOptions([]);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to create user', 'error');
     } finally {
@@ -430,7 +437,7 @@ const Users = () => {
       await usersAPI.updateUser(selectedUser._id || selectedUser.id, payload);
       showToast('User updated successfully', 'success');
       setShowEditModal(false);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to update user', 'error');
     } finally {
@@ -449,7 +456,7 @@ const Users = () => {
       }
       setShowDeleteModal(false);
       setSelectedUser(null);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
       // Refresh reassignment count
       if (currentUser?.role === 'super_admin') {
         reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })

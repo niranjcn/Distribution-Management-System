@@ -9,7 +9,8 @@ import { distributionsAPI, devicesAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { distributionKeys } from '../hooks';
 import { Plus, Eye, Truck, CheckCircle, Loader2, AlertTriangle, PackageCheck, XCircle, Layers3, Factory, Upload, Download, Search } from 'lucide-react';
 
 const TABLE_PAGE_SIZE = 10;
@@ -287,7 +288,15 @@ const Distributions = () => {
     resetAndLoadDistributions();
   }, [appliedSearch, user?.id, dateRange]);
 
-  useAutoRefresh(resetAndLoadDistributions);
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: distributionKeys.all });
+      resetAndLoadDistributions();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   useEffect(() => {
     if (showModal && selectedDist) {
@@ -310,7 +319,7 @@ const Distributions = () => {
       setShowModal(false);
       setReceiptNotes('');
       setSelectedDist(null);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to submit confirmation', 'error');
     } finally {
@@ -368,7 +377,7 @@ const Distributions = () => {
         'PDIC confirmed devices are physically back with sender'
       );
       showToast('Disputed return confirmed and devices unlocked for redistribution', 'success');
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to confirm disputed return', 'error');
     }

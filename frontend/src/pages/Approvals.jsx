@@ -7,7 +7,8 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { approvalKeys } from '../hooks';
 import { distributionsAPI, returnsAPI, defectsAPI } from '../services/api';
 import {
   Check,
@@ -139,7 +140,15 @@ const Approvals = () => {
     }
   }, [user?.role]);
 
-  useAutoRefresh(fetchPendingItems);
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: approvalKeys.all });
+      fetchPendingItems();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   const filteredItems = useMemo(() => {
     if (activeTab === 'all') return allPendingItems;
@@ -180,7 +189,7 @@ const Approvals = () => {
 
       setShowApproveModal(false);
       setSelectedItem(null);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast('Failed to process request', 'error');
     }
@@ -204,7 +213,7 @@ const Approvals = () => {
       setShowRejectModal(false);
       setRejectionReason('');
       setSelectedItem(null);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast('Failed to reject request', 'error');
     }

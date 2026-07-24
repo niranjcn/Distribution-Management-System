@@ -10,7 +10,8 @@ import { defectsAPI, devicesAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { defectKeys } from '../hooks';
 import {
   Plus, Eye, AlertTriangle, MessageSquare, Loader2, RefreshCw,
   Search, Link2, CheckCircle2, Bell, Package, Info, DollarSign
@@ -258,7 +259,15 @@ const DefectReports = () => {
     resetAndLoadDefects();
   }, [appliedTableSearch, dateRange]);
 
-  useAutoRefresh(resetAndLoadDefects);
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: defectKeys.all });
+      resetAndLoadDefects();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   useEffect(() => {
     setTablePage(1);
@@ -280,7 +289,7 @@ const DefectReports = () => {
       showToast('Defect forwarded to manager/admin successfully', 'success');
       setShowReviewModal(false);
       setReviewComment('');
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to forward defect', 'error');
     }
@@ -522,7 +531,7 @@ const DefectReports = () => {
                     try {
                       await defectsAPI.confirmReplacementReceipt(row._id || row.id);
                       showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
-                      // Data refetch is handled automatically by useAutoRefresh
+                      // Data refetch is handled automatically by appDataMutation event
                     } catch (error) {
                       showToast(error.message || 'Failed to confirm replacement receipt', 'error');
                     }
@@ -572,7 +581,7 @@ const DefectReports = () => {
       );
       setShowReviewModal(false);
       setReviewComment('');
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to update defect report', 'error');
     }
@@ -583,7 +592,7 @@ const DefectReports = () => {
       await defectsAPI.confirmPayment(defectRow._id || defectRow.id, confirmPaymentNotes);
       showToast('Payment confirmed successfully', 'success');
       setConfirmPaymentNotes('');
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
       if (selectedDefect && String(selectedDefect._id || selectedDefect.id) === String(defectRow._id || defectRow.id)) {
         setShowModal(false);
       }
@@ -706,7 +715,7 @@ const DefectReports = () => {
       setReplaceReturnAmount('');
       setReplaceServiceCharge('');
       setReplacePaymentBillFile(null);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to replace device', 'error');
     } finally {
@@ -746,7 +755,7 @@ const DefectReports = () => {
                       try {
                         await defectsAPI.confirmReplacementReceipt(d._id || d.id);
                         showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
-                        // Data refetch is handled automatically by useAutoRefresh
+                        // Data refetch is handled automatically by appDataMutation event
                       } catch (error) {
                         showToast(error.message || 'Failed to confirm replacement receipt', 'error');
                       }
@@ -1022,7 +1031,7 @@ const DefectReports = () => {
                     await defectsAPI.confirmReplacementReceipt(selectedDefect._id || selectedDefect.id);
                     showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
                     setShowModal(false);
-                    // Data refetch is handled automatically by useAutoRefresh
+                    // Data refetch is handled automatically by appDataMutation event
                   } catch (error) {
                     showToast(error.message || 'Failed to confirm replacement receipt', 'error');
                   }

@@ -5,6 +5,7 @@ import json
 from app.database import get_db, row_to_dict, rows_to_list
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceStatus, HolderType
 from app.utils.helpers import get_pagination, generate_device_id
+from app.utils.hierarchy import get_descendant_user_ids as _get_descendant_user_ids
 
 
 async def _get_locked_distribution_device_ids(db) -> set:
@@ -42,35 +43,6 @@ def _augment_device_record(device: Optional[Dict[str, Any]]) -> Optional[Dict[st
             box_type = raw_box
     device["box_type"] = box_type
     return device
-
-
-async def _get_descendant_user_ids(db, root_user_id: str) -> set:
-    descendants = set()
-    if not root_user_id or not str(root_user_id).isdigit():
-        return descendants
-
-    pending = [int(root_user_id)]
-    visited = set()
-
-    while pending:
-        current_parent_id = pending.pop()
-        if current_parent_id in visited:
-            continue
-        visited.add(current_parent_id)
-
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE parent_id = ?",
-            (current_parent_id,),
-        )
-        rows = await cursor.fetchall()
-        for row in rows:
-            child_id = int(row["id"])
-            child_id_str = str(child_id)
-            if child_id_str not in descendants:
-                descendants.add(child_id_str)
-                pending.append(child_id)
-
-    return descendants
 
 
 async def get_devices(
@@ -975,143 +947,83 @@ async def get_management_insights() -> Dict[str, Any]:
 
 async def get_management_holder_insights() -> Dict[str, Any]:
     """Get aggregate device totals by hierarchy holder groups for management dashboards.
-    Returns sub-distributor and cluster totals with device-type breakdowns."""
+    Uses a single recursive CTE to build the hierarchy and aggregate device counts in SQL."""
     async with get_db() as db:
         cursor = await db.execute(
-            """SELECT id, name, role, parent_id
-               FROM users
-               WHERE role IN ('sub_distributor', 'cluster', 'operator')"""
-        )
-        users = rows_to_list(await cursor.fetchall())
-
-        cursor = await db.execute(
-            """SELECT
-                   CAST(current_holder_id AS TEXT) AS holder_id,
-                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
-                   COUNT(*) AS total
-               FROM devices
-               WHERE current_holder_id IS NOT NULL
-               AND TRIM(CAST(current_holder_id AS TEXT)) != ''
-               GROUP BY
-                   CAST(current_holder_id AS TEXT),
-                   COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')"""
-        )
-        holder_rows = rows_to_list(await cursor.fetchall())
-
-        sub_distributors = [u for u in users if u.get("role") == "sub_distributor"]
-        clusters = [u for u in users if u.get("role") == "cluster"]
-        operators = [u for u in users if u.get("role") == "operator"]
-
-        clusters_by_sub: Dict[str, List[Dict[str, Any]]] = {}
-        for cluster in clusters:
-            parent_key = str(cluster.get("parent_id") or "")
-            if not parent_key:
-                continue
-            if parent_key not in clusters_by_sub:
-                clusters_by_sub[parent_key] = []
-            clusters_by_sub[parent_key].append(cluster)
-
-        operators_by_cluster: Dict[str, List[Dict[str, Any]]] = {}
-        operators_by_sub: Dict[str, List[Dict[str, Any]]] = {}
-        cluster_id_set = {str(cluster.get("id")) for cluster in clusters}
-        for operator in operators:
-            parent_key = str(operator.get("parent_id") or "")
-            if not parent_key:
-                continue
-            if parent_key in cluster_id_set:
-                if parent_key not in operators_by_cluster:
-                    operators_by_cluster[parent_key] = []
-                operators_by_cluster[parent_key].append(operator)
-            else:
-                if parent_key not in operators_by_sub:
-                    operators_by_sub[parent_key] = []
-                operators_by_sub[parent_key].append(operator)
-
-        holder_breakdown: Dict[str, Dict[str, Any]] = {}
-        for row in holder_rows:
-            holder_id = str(row.get("holder_id") or "").strip()
-            if not holder_id:
-                continue
-            device_type = row.get("device_type") or "Unknown"
-            count = int(row.get("total", 0) or 0)
-            if holder_id not in holder_breakdown:
-                holder_breakdown[holder_id] = {"total": 0, "byType": {}}
-            holder_breakdown[holder_id]["total"] += count
-            holder_breakdown[holder_id]["byType"][device_type] = (
-                holder_breakdown[holder_id]["byType"].get(device_type, 0) + count
+            """WITH RECURSIVE hierarchy AS (
+                SELECT id, role, name,
+                       id AS sub_id,
+                       CAST(NULL AS CHAR(50)) AS cluster_id
+                FROM users WHERE role = 'sub_distributor'
+                UNION ALL
+                SELECT u.id, u.role, u.name,
+                       h.sub_id,
+                       CASE WHEN u.role = 'cluster' THEN CAST(u.id AS CHAR(50))
+                            ELSE h.cluster_id END
+                FROM users u
+                INNER JOIN hierarchy h ON u.parent_id = h.id
+                WHERE u.role IN ('cluster', 'operator')
             )
+            SELECT
+                h.sub_id,
+                sd.name AS sub_name,
+                h.cluster_id,
+                c.name AS cluster_name,
+                COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown') AS device_type,
+                COUNT(*) AS total
+            FROM hierarchy h
+            LEFT JOIN users sd ON h.sub_id = sd.id
+            LEFT JOIN users c ON h.cluster_id = c.id
+            JOIN devices d ON CAST(d.current_holder_id AS TEXT) = CAST(h.id AS TEXT)
+            WHERE d.current_holder_id IS NOT NULL
+            AND TRIM(CAST(d.current_holder_id AS TEXT)) != ''
+            GROUP BY h.sub_id, sd.name, h.cluster_id, c.name, device_type"""
+        )
+        rows = rows_to_list(await cursor.fetchall())
 
-        def aggregate_for_holders(holder_ids: List[str]) -> Dict[str, Any]:
-            total = 0
-            by_type: Dict[str, int] = {}
-            for holder_id in holder_ids:
-                payload = holder_breakdown.get(holder_id)
-                if not payload:
-                    continue
-                total += int(payload.get("total", 0) or 0)
-                for device_type, count in payload.get("byType", {}).items():
-                    by_type[device_type] = by_type.get(device_type, 0) + int(count or 0)
-            return {"total": total, "byType": by_type}
+        sub_map: Dict[str, Dict[str, Any]] = {}
+        cluster_map: Dict[str, Dict[str, Any]] = {}
 
-        sub_summary = []
-        for sub in sub_distributors:
-            sub_id = str(sub.get("id"))
-            child_clusters = clusters_by_sub.get(sub_id, [])
-            direct_operators = operators_by_sub.get(sub_id, [])
-            holder_ids = [
-                sub_id,
-                *[str(cluster.get("id")) for cluster in child_clusters],
-                *[str(operator.get("id")) for operator in direct_operators],
-                *[
-                    str(operator.get("id"))
-                    for cluster in child_clusters
-                    for operator in operators_by_cluster.get(str(cluster.get("id")), [])
+        for row in rows:
+            sub_id = str(row["sub_id"])
+            sub_name = str(row["sub_name"] or "Unknown Sub Distribution")
+            cluster_id = str(row["cluster_id"]) if row.get("cluster_id") else None
+            cluster_name = str(row["cluster_name"] or "Unknown Cluster") if cluster_id else None
+            device_type = str(row["device_type"] or "Unknown")
+            total = int(row["total"])
+
+            if sub_id not in sub_map:
+                sub_map[sub_id] = {"total": 0, "byType": {}}
+            sub_map[sub_id]["total"] += total
+            sub_map[sub_id]["byType"][device_type] = sub_map[sub_id]["byType"].get(device_type, 0) + total
+            sub_map[sub_id]["name"] = sub_name
+
+            if cluster_id:
+                if cluster_id not in cluster_map:
+                    cluster_map[cluster_id] = {"total": 0, "byType": {}}
+                cluster_map[cluster_id]["total"] += total
+                cluster_map[cluster_id]["byType"][device_type] = cluster_map[cluster_id]["byType"].get(device_type, 0) + total
+                cluster_map[cluster_id]["name"] = cluster_name
+
+        def to_entry(entry_id: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "id": entry_id,
+                "name": entry.get("name", "Unknown"),
+                "total": entry["total"],
+                "typeBreakdown": [
+                    {"type": dtype, "count": count}
+                    for dtype, count in sorted(entry["byType"].items(), key=lambda item: item[1], reverse=True)
                 ],
-            ]
-            aggregated = aggregate_for_holders(holder_ids)
-            if aggregated["total"] <= 0:
-                continue
-            sub_summary.append(
-                {
-                    "id": sub_id,
-                    "name": sub.get("name") or "Unknown Sub Distribution",
-                    "total": aggregated["total"],
-                    "typeBreakdown": [
-                        {"type": dtype, "count": count}
-                        for dtype, count in sorted(
-                            aggregated["byType"].items(),
-                            key=lambda item: item[1],
-                            reverse=True,
-                        )
-                    ],
-                }
-            )
-        sub_summary.sort(key=lambda item: item["total"], reverse=True)
+            }
 
-        cluster_summary = []
-        for cluster in clusters:
-            cluster_id = str(cluster.get("id"))
-            child_operators = operators_by_cluster.get(cluster_id, [])
-            holder_ids = [cluster_id, *[str(operator.get("id")) for operator in child_operators]]
-            aggregated = aggregate_for_holders(holder_ids)
-            if aggregated["total"] <= 0:
-                continue
-            cluster_summary.append(
-                {
-                    "id": cluster_id,
-                    "name": cluster.get("name") or "Unknown Cluster",
-                    "total": aggregated["total"],
-                    "typeBreakdown": [
-                        {"type": dtype, "count": count}
-                        for dtype, count in sorted(
-                            aggregated["byType"].items(),
-                            key=lambda item: item[1],
-                            reverse=True,
-                        )
-                    ],
-                }
-            )
-        cluster_summary.sort(key=lambda item: item["total"], reverse=True)
+        sub_summary = sorted(
+            [to_entry(sid, data) for sid, data in sub_map.items() if data["total"] > 0],
+            key=lambda item: item["total"], reverse=True,
+        )
+        cluster_summary = sorted(
+            [to_entry(cid, data) for cid, data in cluster_map.items() if data["total"] > 0],
+            key=lambda item: item["total"], reverse=True,
+        )
 
         return {
             "sub_distributors": sub_summary,

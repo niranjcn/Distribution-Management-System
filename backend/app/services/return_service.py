@@ -6,6 +6,7 @@ from app.models.return_device import ReturnCreate, ReturnUpdate, ReturnStatus, R
 from app.models.device import DeviceStatus
 from app.services import approval_service, device_service, notification_service
 from app.utils.helpers import get_pagination, generate_return_id
+from app.utils.hierarchy import get_descendant_user_ids
 
 
 async def get_returns(
@@ -20,34 +21,6 @@ async def get_returns(
 ) -> Dict[str, Any]:
     """Get all return requests with pagination and filters"""
 
-    async def _get_descendant_user_ids(db, root_user_id: str) -> Set[str]:
-        descendants: Set[str] = set()
-        if not root_user_id or not str(root_user_id).isdigit():
-            return descendants
-
-        pending: List[int] = [int(root_user_id)]
-        visited: Set[int] = set()
-
-        while pending:
-            current_parent_id = pending.pop()
-            if current_parent_id in visited:
-                continue
-            visited.add(current_parent_id)
-
-            cursor = await db.execute(
-                "SELECT id FROM users WHERE parent_id = ?",
-                (current_parent_id,)
-            )
-            rows = await cursor.fetchall()
-            for row in rows:
-                child_id = int(row["id"])
-                child_id_str = str(child_id)
-                if child_id_str not in descendants:
-                    descendants.add(child_id_str)
-                    pending.append(child_id)
-
-        return descendants
-
     async def _get_return_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:
         role = str(user.get("role") or "")
         user_id = str(user.get("id") or user.get("_id") or "")
@@ -58,7 +31,7 @@ async def get_returns(
 
         scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
         scoped_ids: Set[str] = {scope_root}
-        scoped_ids.update(await _get_descendant_user_ids(db, scope_root))
+        scoped_ids.update(await get_descendant_user_ids(db, scope_root))
         return scoped_ids
 
     async with get_db() as db:

@@ -13,6 +13,7 @@ from app.models.distribution import DistributionCreate, DistributionStatus
 from app.models.device import DeviceStatus
 from app.services import approval_service, device_service, notification_service
 from app.utils.helpers import get_pagination, generate_distribution_id
+from app.utils.hierarchy import get_descendant_user_ids as _get_descendant_user_ids
 
 logger = logging.getLogger(__name__)
 
@@ -251,35 +252,6 @@ async def _device_has_open_distribution_lock(db, device_id: str) -> bool:
         if target in device_ids:
             return True
     return False
-
-
-async def _get_descendant_user_ids(db, root_user_id: str) -> Set[str]:
-    descendants: Set[str] = set()
-    if not root_user_id or not str(root_user_id).isdigit():
-        return descendants
-
-    pending: List[int] = [int(root_user_id)]
-    visited: Set[int] = set()
-
-    while pending:
-        current_parent_id = pending.pop()
-        if current_parent_id in visited:
-            continue
-        visited.add(current_parent_id)
-
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE parent_id = ?",
-            (current_parent_id,)
-        )
-        rows = await cursor.fetchall()
-        for row in rows:
-            child_id = int(row["id"])
-            child_id_str = str(child_id)
-            if child_id_str not in descendants:
-                descendants.add(child_id_str)
-                pending.append(child_id)
-
-    return descendants
 
 
 async def _get_distribution_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:

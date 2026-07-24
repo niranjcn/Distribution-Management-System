@@ -9,7 +9,8 @@ import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { returnsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { returnKeys } from '../hooks';
 import { Eye, RotateCcw, Loader2, PackageCheck, AlertTriangle, Search } from 'lucide-react';
 
 const TABLE_PAGE_SIZE = 10;
@@ -196,7 +197,15 @@ const Returns = () => {
     resetAndLoadReturns();
   }, [appliedTableSearch]);
 
-  useAutoRefresh(resetAndLoadReturns);
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: returnKeys.all });
+      resetAndLoadReturns();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   const canConfirmReceipt = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const pendingReceiptCount = statusCounts.pending + statusCounts.approved;
@@ -272,7 +281,7 @@ const Returns = () => {
       showToast('Device receipt confirmed — ownership transferred back to PDIC', 'success');
       setShowReceiptModal(false);
       setActionComment('');
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to confirm receipt', 'error');
     }

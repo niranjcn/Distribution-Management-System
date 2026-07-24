@@ -126,11 +126,9 @@ const apiRequest = async (endpoint, options = {}) => {
     log('[API] Request successful:', endpoint);
 
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) && !endpoint.startsWith('/auth/')) {
-      setTimeout(() => {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('appDataMutation'));
-        }
-      }, 500);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('appDataMutation'));
+      }
     }
 
     return data;

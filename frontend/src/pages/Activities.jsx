@@ -6,7 +6,8 @@ import Button from '../components/ui/Button';
 import DataTable from '../components/ui/DataTable';
 import { dashboardAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { activityKeys } from '../hooks';
 
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
@@ -145,7 +146,15 @@ const Activities = () => {
     await loadActivityWindow(1, { reset: true, withLoading: true });
   };
 
-  useAutoRefresh(resetAndLoadActivities);
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: activityKeys.all });
+      resetAndLoadActivities();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   useEffect(() => {
     const run = async () => {

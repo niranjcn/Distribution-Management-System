@@ -19,7 +19,8 @@ import {
   Download,
   Search,
 } from 'lucide-react';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { inventoryKeys } from '../hooks';
 
 const initialItemForm = {
   item_id: '',
@@ -444,7 +445,15 @@ const ExternalInventory = () => {
     loadData();
   }, [canManage, appliedItemSearch, appliedPOSearch, appliedMovementSearch]);
 
-  useAutoRefresh(loadData);
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: inventoryKeys.all });
+      loadData();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   const resetPoForm = () => {
     setPoForm({
@@ -497,7 +506,7 @@ const ExternalInventory = () => {
       setShowAddItemModal(false);
       setItemForm(initialItemForm);
       setEditingInventoryId('');
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to create item', 'error');
     } finally {
@@ -553,7 +562,7 @@ const ExternalInventory = () => {
       showToast('Purchase order created', 'success');
       setShowCreatePOModal(false);
       resetPoForm();
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to create purchase order', 'error');
     } finally {
@@ -696,7 +705,7 @@ const ExternalInventory = () => {
       showToast('Purchase order submitted and stock updated', 'success');
       setReceivingPO(null);
       setReceiptForm({ notes: '', lines: [] });
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to submit purchase order', 'error');
     } finally {
@@ -826,7 +835,7 @@ const ExternalInventory = () => {
         setSelectedItem(null);
       }
 
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to delete item', 'error');
     } finally {

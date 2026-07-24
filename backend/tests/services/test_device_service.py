@@ -99,8 +99,6 @@ class TestGetDeviceBySerial:
 class TestCreateDevice:
     async def test_creates_device(self, mock_dev_db):
         mock_dev_db.add_result(fetchone_result=None)
-        mock_dev_db.add_result(fetchone_result=None)
-        mock_dev_db.add_result(fetchone_result=None)
         mock_dev_db.add_result(fetchone_result=None, rowcount=1, lastrowid=1)
         mock_dev_db.add_result(fetchone_result={"id": 1, "device_id": "DEV-001", "device_type": "ONT", "status": "available"})
         data = DeviceCreate(device_type="ONT", model="HG8245", manufacturer="Huawei", nuid="NUID001", serial_number="SN001")
@@ -113,7 +111,7 @@ class TestCreateDevice:
 
     async def test_duplicate_nuid_raises(self, mock_dev_db):
         mock_dev_db.add_result(fetchone_result=(1,))
-        data = DeviceCreate(device_type="ONT", model="M", manufacturer="MFR", nuid="EXISTING")
+        data = DeviceCreate(device_type="Set-top box", model="M", manufacturer="MFR", nuid="EXISTING", box_type="HD")
         with pytest.raises(ValueError, match="already exists"):
             await create_device(data, "1", "Admin")
 
@@ -121,7 +119,6 @@ class TestCreateDevice:
 class TestUpdateDevice:
     async def test_updates_and_returns(self, mock_dev_db, sample_device):
         mock_dev_db.add_result(fetchone_result=sample_device)
-        mock_dev_db.add_result(fetchone_result=None)
         mock_dev_db.add_result(fetchone_result=None, rowcount=1)
         mock_dev_db.add_result(fetchone_result={"id": "1", "device_id": "DEV-001", "model": "Updated", "status": "available"})
         data = DeviceUpdate(model="Updated")
@@ -131,8 +128,8 @@ class TestUpdateDevice:
     async def test_not_found(self, mock_dev_db):
         mock_dev_db.add_result(fetchone_result=None)
         data = DeviceUpdate(model="Nope")
-        with pytest.raises(ValueError, match="not found"):
-            await update_device("999", data)
+        result = await update_device("999", data)
+        assert result is None
 
 
 class TestDeleteDevice:
@@ -152,18 +149,19 @@ class TestUpdateDeviceStatus:
     async def test_updates_valid_status(self, mock_dev_db, sample_device):
         mock_dev_db.add_result(fetchone_result=sample_device)
         mock_dev_db.add_result(fetchone_result=None, rowcount=1)
+        mock_dev_db.add_result(fetchone_result=sample_device)
         with patch("app.services.device_service._add_device_history", return_value=None):
             result = await update_device_status("1", "distributed", "1", "Admin")
         assert result["status"] == sample_device["status"]
 
     async def test_not_found(self, mock_dev_db):
         mock_dev_db.add_result(fetchone_result=None)
-        result = await update_device_status("999", "active", "1", "Admin")
+        result = await update_device_status("999", "available", "1", "Admin")
         assert result is None
 
     async def test_invalid_status_raises(self, mock_dev_db, sample_device):
         mock_dev_db.add_result(fetchone_result=sample_device)
-        with pytest.raises(ValueError, match="Invalid status"):
+        with pytest.raises(ValueError, match="Invalid device status"):
             await update_device_status("1", "bogus", "1", "Admin")
 
 
@@ -171,6 +169,7 @@ class TestUpdateDeviceHolder:
     async def test_updates_holder(self, mock_dev_db, sample_device):
         mock_dev_db.add_result(fetchone_result=sample_device)
         mock_dev_db.add_result(fetchone_result=None, rowcount=1)
+        mock_dev_db.add_result(fetchone_result=sample_device)
         with patch("app.services.device_service._add_device_history", return_value=None):
             result = await update_device_holder("1", "10", "SD1", "sub_distributor", "Location A", "distributed", "1", "Admin")
         assert result["device_id"] == "DEV-001"

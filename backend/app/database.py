@@ -100,6 +100,7 @@ class MySQLDB:
         prefix = sql.lstrip().upper()
         return (
             prefix.startswith("SELECT")
+            or prefix.startswith("WITH")
             or prefix.startswith("SHOW")
             or prefix.startswith("DESCRIBE")
             or prefix.startswith("EXPLAIN")
@@ -108,7 +109,7 @@ class MySQLDB:
     @staticmethod
     def _classify_operation(sql: str) -> str:
         upper = sql.strip().upper()
-        if upper.startswith("SELECT"):
+        if upper.startswith("SELECT") or upper.startswith("WITH"):
             return "select"
         if upper.startswith("INSERT"):
             return "insert"

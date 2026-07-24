@@ -9,7 +9,8 @@ import { devicesAPI, defectsAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import useAutoRefresh from '../hooks/useAutoRefresh';
+import { useQueryClient } from '@tanstack/react-query';
+import { deviceKeys } from '../hooks';
 import { Plus, Eye, Edit, Trash2, Box, Upload, Loader2, Users, Send, ArrowDownToLine, Link2, AlertTriangle, CheckCircle2, Save, Filter, Building2, Network, Factory, Search } from 'lucide-react';
 
 const normalizeDeviceType = (value) => {
@@ -308,7 +309,15 @@ const Devices = () => {
     }
   };
 
-  useAutoRefresh(refreshAllData);
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: deviceKeys.all });
+      refreshAllData();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
 
   const overviewStats = overview?.stats || {};
 
@@ -517,7 +526,7 @@ const Devices = () => {
         showToast('Device updated successfully.', 'success');
       }
       setShowEditModal(false);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast(error.message || 'Failed to update device', 'error');
     } finally {
@@ -628,7 +637,7 @@ const Devices = () => {
       showToast(`Device ${selectedDevice.mac_address} deleted successfully`, 'success');
       setShowDeleteModal(false);
       setSelectedDevice(null);
-      // Data refetch is handled automatically by useAutoRefresh
+      // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
       showToast('Failed to delete device', 'error');
     }
