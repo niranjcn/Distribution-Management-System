@@ -151,6 +151,7 @@ def mock_user_services():
         patch("app.routes.users.user_service", spec=True),
         patch("app.routes.users.notification_service", spec=True),
         patch("app.routes.users.reassignment_request_service", spec=True),
+        patch("app.routes.users.bulk_upload_service", spec=True),
         patch("app.routes.users.log_business_activity", new=AsyncMock()),
         patch("app.routes.users.audit_logger"),
     ]

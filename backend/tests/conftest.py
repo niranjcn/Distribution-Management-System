@@ -67,6 +67,18 @@ class MockDB:
             )
         return MockCursor(fetchone_result=(0,))
 
+    async def executemany(self, query: str, params_list: list):
+        self.executed_queries.append(query)
+        if self._results:
+            r = self._results.pop(0)
+            return MockCursor(
+                fetchone_result=r["fetchone"],
+                fetchall_result=r["fetchall"],
+                rowcount=r["rowcount"],
+                lastrowid=r["lastrowid"],
+            )
+        return MockCursor()
+
     async def commit(self):
         pass
 

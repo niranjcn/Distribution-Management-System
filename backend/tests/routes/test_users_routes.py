@@ -1,5 +1,6 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 import pytest
+import io
 
 
 class TestListUsers:
@@ -605,4 +606,127 @@ class TestGetUsersByRole:
     def test_forbidden_for_operator(self, client, set_role):
         set_role("operator")
         resp = client.get(self.ROLE_URL)
+        assert resp.status_code == 403
+
+
+class TestBulkUploadUsers:
+    BULK_URL = "/api/users/bulk-upload"
+
+    def _fake_parse_file(self, rows=None):
+        if rows is None:
+            rows = [{"email": "new@t.com", "name": "New", "password": "Pass123", "role": "operator", "cluster_email": "cl@t.com"}]
+        return rows
+
+    def _fake_process_result(self, created_count=1, skipped_count=0, error_count=0):
+        return {
+            "success": True,
+            "message": f"Bulk upload complete: {created_count} created, {skipped_count} skipped, {error_count} errors",
+            "data": {
+                "created_count": created_count,
+                "skipped_count": skipped_count,
+                "error_count": error_count,
+                "created": [{"row": 2, "email": "new@t.com", "role": "operator", "name": "New"}],
+                "skipped": [],
+                "errors": [],
+                "total": 1,
+            },
+        }
+
+    # ---------- success ----------
+
+    def test_bulk_upload_success(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.bulk_upload_service.parse_file = MagicMock(return_value=self._fake_parse_file())
+        mod.bulk_upload_service.process_bulk_user_upload = AsyncMock(
+            return_value=self._fake_process_result()
+        )
+
+        csv_content = b"email,name,password,role,cluster_email\nnew@t.com,New,Pass123,operator,cl@t.com\n"
+        resp = client.post(
+            self.BULK_URL,
+            files={"file": ("users.csv", csv_content, "text/csv")},
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["created_count"] == 1
+
+    # ---------- validation ----------
+
+    def test_no_file_returns_422(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.bulk_upload_service.parse_file = MagicMock()
+        mod.bulk_upload_service.process_bulk_user_upload = AsyncMock()
+
+        resp = client.post(self.BULK_URL)
+        assert resp.status_code == 422
+
+    def test_invalid_extension_returns_400(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.bulk_upload_service.parse_file = MagicMock()
+        mod.bulk_upload_service.process_bulk_user_upload = AsyncMock()
+
+        resp = client.post(
+            self.BULK_URL,
+            files={"file": ("data.txt", b"some content", "text/plain")},
+        )
+        assert resp.status_code == 400
+        assert "Unsupported file format" in resp.json()["detail"]
+
+    def test_empty_file_returns_400(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.bulk_upload_service.parse_file = MagicMock(return_value=[])
+        mod.bulk_upload_service.process_bulk_user_upload = AsyncMock()
+
+        csv_content = b"email,name\n"
+        resp = client.post(
+            self.BULK_URL,
+            files={"file": ("empty.csv", csv_content, "text/csv")},
+        )
+
+        assert resp.status_code == 400
+        assert "empty" in resp.json()["detail"].lower()
+
+    # ---------- parse error ----------
+
+    def test_parse_error_returns_400(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.bulk_upload_service.parse_file = MagicMock(side_effect=ValueError("Bad encoding"))
+        mod.bulk_upload_service.process_bulk_user_upload = AsyncMock()
+
+        resp = client.post(
+            self.BULK_URL,
+            files={"file": ("bad.csv", b"\xff\xfe", "text/csv")},
+        )
+
+        assert resp.status_code == 400
+        assert "Failed to parse file" in resp.json()["detail"]
+
+    # ---------- unauthenticated ----------
+
+    def test_unauthenticated_returns_401(self, client, test_app):
+        from app.middleware.auth_middleware import get_current_user
+
+        test_app.dependency_overrides.pop(get_current_user, None)
+        resp = client.post(
+            self.BULK_URL,
+            files={"file": ("u.csv", b"email\nx@t.com", "text/csv")},
+        )
+        assert resp.status_code == 401
+
+    # ---------- forbidden ----------
+
+    def test_forbidden_for_operator(self, client, set_role):
+        set_role("operator")
+        csv_content = b"email,name,password,role\nx@t.com,X,P@ss,operator\n"
+        resp = client.post(
+            self.BULK_URL,
+            files={"file": ("u.csv", csv_content, "text/csv")},
+        )
         assert resp.status_code == 403
