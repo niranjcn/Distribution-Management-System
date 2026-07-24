@@ -353,6 +353,17 @@ async def get_my_device_overview(
                 scoped_devices = overview.get("all_under_me") or []
             chain_devices = scoped_devices
 
+            if start_date:
+                chain_devices = [
+                    d for d in chain_devices
+                    if str(d.get("created_at") or "") >= start_date
+                ]
+            if end_date:
+                chain_devices = [
+                    d for d in chain_devices
+                    if str(d.get("created_at") or "") <= end_date
+                ]
+
             # Track Devices uses paginate=true to avoid loading the full chain in one payload.
             if paginate:
                 filtered_devices = chain_devices
@@ -364,6 +375,17 @@ async def get_my_device_overview(
                     filtered_devices = [
                         d for d in filtered_devices
                         if str(d.get("manufacturer") or "").strip() == str(manufacturer).strip()
+                    ]
+
+                if start_date:
+                    filtered_devices = [
+                        d for d in filtered_devices
+                        if str(d.get("created_at") or "") >= start_date
+                    ]
+                if end_date:
+                    filtered_devices = [
+                        d for d in filtered_devices
+                        if str(d.get("created_at") or "") <= end_date
                     ]
 
                 if sub_distributor_id:

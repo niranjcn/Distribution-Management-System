@@ -1,6 +1,6 @@
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
@@ -8,8 +8,6 @@ import re
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from starlette_csrf import CSRFMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 
 from app.config import settings
 from app.database import init_db, close_pool
@@ -21,131 +19,12 @@ from app.routes import (
 )
 from app.middleware.error_handler import add_exception_handlers
 from app.middleware.auth_middleware import get_current_user, require_admin
+from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.https_enforcement import HttpsEnforcementMiddleware
+from app.middleware.api_activity_logging import ApiActivityLoggingMiddleware
 from app.core.rate_limiter import limiter
 from app.core.audit import audit_logger
-from app.core.activity_logger import build_meaningful_activity_description, log_api_activity
 from app.core.metrics import MetricsMiddleware, metrics_endpoint
-from app.services.auth_service import get_current_user_from_token
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Apply standard security headers to all responses."""
-
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        if settings.ENVIRONMENT == "production":
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        docs_paths = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
-        if request.url.path not in docs_paths:
-            csp = (
-                "default-src 'self'; "
-                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                "font-src 'self' https://fonts.gstatic.com data:"
-            )
-            response.headers["Content-Security-Policy"] = csp
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        return response
-
-
-class HttpsEnforcementMiddleware(BaseHTTPMiddleware):
-    """Redirect plaintext HTTP requests to HTTPS when explicitly enabled.
-    Skips internal-only paths that may be scraped by Prometheus over HTTP.
-    """
-
-    EXEMPT_PATHS = {"/metrics", "/health"}
-
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path in self.EXEMPT_PATHS:
-            return await call_next(request)
-
-        if settings.ENFORCE_HTTPS:
-            forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-            if forwarded_proto.lower() != "https":
-                https_url = request.url.replace(scheme="https")
-                return RedirectResponse(url=str(https_url), status_code=307)
-
-        return await call_next(request)
-
-
-class ApiActivityLoggingMiddleware(BaseHTTPMiddleware):
-    """Log API request activity for admin audit timeline."""
-
-    async def dispatch(self, request: Request, call_next):
-        if not request.url.path.startswith(settings.API_V1_PREFIX):
-            return await call_next(request)
-        if request.method.upper() == "OPTIONS":
-            return await call_next(request)
-        if request.url.path == "/metrics":
-            return await call_next(request)
-
-        actor_id = None
-        actor_name = "Anonymous"
-        actor_role = None
-
-        auth_header = request.headers.get("authorization", "")
-        token = None
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header.split(" ", 1)[1].strip()
-        if not token:
-            token = request.cookies.get("access_token")
-
-        if token:
-            try:
-                user = await get_current_user_from_token(token)
-                if user:
-                    actor_id = str(user.get("id") or user.get("_id") or user.get("user_id") or user.get("sub") or "")
-                    actor_name = str(user.get("name") or user.get("email") or "Anonymous")
-                    actor_role = str(user.get("role") or "")
-            except Exception:
-                pass
-
-        ip_address = request.client.host if request.client else None
-
-        try:
-            response = await call_next(request)
-            description = build_meaningful_activity_description(
-                method=request.method,
-                path=request.url.path,
-                status_code=response.status_code,
-            )
-            if not description:
-                return response
-
-            await log_api_activity(
-                method=request.method,
-                path=request.url.path,
-                status_code=response.status_code,
-                actor_id=actor_id,
-                actor_name=actor_name,
-                actor_role=actor_role,
-                ip_address=ip_address,
-                description=description,
-            )
-            return response
-        except Exception:
-            description = build_meaningful_activity_description(
-                method=request.method,
-                path=request.url.path,
-                status_code=500,
-            )
-            if not description:
-                raise
-
-            await log_api_activity(
-                method=request.method,
-                path=request.url.path,
-                status_code=500,
-                actor_id=actor_id,
-                actor_name=actor_name,
-                actor_role=actor_role,
-                ip_address=ip_address,
-                description=description,
-            )
-            raise
 
 
 @asynccontextmanager
