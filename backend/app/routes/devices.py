@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File
 from typing import Optional, Dict, Any, Iterable, List
-from app.models.device import DeviceCreate, DeviceUpdate, DeviceType
+from app.models.device import DeviceCreate, DeviceUpdate, DeviceType, DeviceEditRequest
 from app.services import device_service, notification_service, defect_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager,require_management
 from app.core.activity_logger import build_field_change_summary, log_business_activity
@@ -541,7 +541,7 @@ async def repair_device_holder(
 @router.post("/{device_id}/request-edit", summary="PDIC staff: request an edit to a device.")
 async def request_device_edit(
     device_id: str,
-    payload: Dict[str, Any],
+    payload: DeviceEditRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """PDIC staff: request an edit to a device.
@@ -560,12 +560,7 @@ async def request_device_edit(
         if not device:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
-        allowed_fields = {
-            "device_type", "serial_number", "mac_address", "model", "manufacturer",
-            "band_type", "box_type", "nuid", "status", "current_location",
-            "warranty_expiry", "metadata"
-        }
-        proposed_changes = {k: v for k, v in (payload or {}).items() if k in allowed_fields}
+        proposed_changes = payload.model_dump(exclude_none=True)
         if not proposed_changes:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid device edit fields provided")
 
@@ -598,8 +593,7 @@ async def request_device_edit(
 
         proposer_name = current_user.get("name") or current_user.get("email", "pdic_staff")
         changes_summary = ", ".join(
-            f"{k}: '{v}'" for k, v in payload.items()
-            if k not in ("_edit_note",) and v
+            f"{k}: '{v}'" for k, v in proposed_changes.items() if v
         )
         message = (
             f"Staff Edit Request from {proposer_name}:\n"
@@ -786,6 +780,9 @@ async def bulk_upload_devices(
 
         contents = await file.read()
 
+        from app.services.bulk_upload_service import check_bulk_upload_file, check_bulk_upload_row_count, MAX_BULK_ROWS
+        check_bulk_upload_file(contents, filename_lower)
+
         _validate_upload_signature(filename_lower, contents)
 
         if filename_lower.endswith('.csv'):
@@ -797,6 +794,7 @@ async def bulk_upload_devices(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV file is empty")
             headers = [h.strip().lower() for h in all_rows[0]]
             data_rows = all_rows[1:]
+            check_bulk_upload_row_count(data_rows)
 
             def iter_data_rows():
                 for row in data_rows:
@@ -808,6 +806,7 @@ async def bulk_upload_devices(
                 import xlrd
                 wb = xlrd.open_workbook(file_contents=contents)
                 ws = wb.sheet_by_index(0)
+                check_bulk_upload_row_count(range(ws.nrows - 1))
                 headers = [str(ws.cell_value(0, col)).strip().lower() for col in range(ws.ncols)]
 
                 def iter_data_rows():
@@ -819,8 +818,17 @@ async def bulk_upload_devices(
                 ws = wb.active
                 headers = [str(cell.value).strip().lower() if cell.value else "" for cell in next(ws.iter_rows(min_row=1, max_row=1))]
 
+                row_count = 0
+
                 def iter_data_rows():
+                    nonlocal row_count
                     for row in ws.iter_rows(min_row=2, values_only=True):
+                        row_count += 1
+                        if row_count > MAX_BULK_ROWS:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Too many rows. Maximum is {MAX_BULK_ROWS}",
+                            )
                         yield row
 
         normalized_headers = ["vendor" if h == "manufacturer" else h for h in headers]

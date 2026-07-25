@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, F
 from typing import Optional
 
 from app.database import get_db
-from app.models.user import UserCreate, UserUpdate
+from app.models.user import UserCreate, UserUpdate, StatusUpdateRequest, AdminCredentialUpdate
 from app.services import user_service, reassignment_request_service, notification_service, bulk_upload_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager_or_md
 from app.core.audit import audit_logger
@@ -635,16 +635,14 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
 async def update_user_status(
     request: Request,
     user_id: str,
-    status_update: dict,
+    status_update: StatusUpdateRequest,
     current_user: dict = Depends(get_current_user),
 ):
     actor_role = normalize_role(current_user.get("role"))
     if actor_role not in {SUPER_ADMIN, MANAGER}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-    status_value = status_update.get("status")
-    if status_value not in ["active", "inactive", "suspended"]:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status value")
+    status_value = status_update.status.value
 
     target_user = await user_service.get_user_by_id(user_id)
     if not target_user:
@@ -694,7 +692,7 @@ async def update_user_status(
 async def admin_update_credentials(
     request: Request,
     user_id: str,
-    data: dict,
+    data: AdminCredentialUpdate,
     current_user: dict = Depends(get_current_user),
 ):
     from app.utils.security import get_password_hash as _hash
@@ -709,9 +707,9 @@ async def admin_update_credentials(
         # Non-super-admins can only update their own email, not password
         if not is_self:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-        if "password" in data and data["password"]:
+        if data.password:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super admin can change password")
-        if "email" not in data or not data["email"]:
+        if not data.email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
 
     target_user = await user_service.get_user_by_id(user_id)
@@ -726,19 +724,17 @@ async def admin_update_credentials(
             update_fields = []
             params = []
 
-            if "email" in data and data["email"]:
-                normalized_email = str(data["email"]).lower().strip()
+            if data.email:
+                normalized_email = data.email.lower().strip()
                 cursor = await db.execute("SELECT id FROM users WHERE email = ? AND id != ?", (normalized_email, target_id))
                 if await cursor.fetchone():
                     raise HTTPException(status_code=400, detail="Email already in use")
                 update_fields.append("email = ?")
                 params.append(normalized_email)
 
-            if "password" in data and data["password"]:
-                if len(data["password"]) < 8:
-                    raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+            if data.password:
                 update_fields.append("password_hash = ?")
-                params.append(_hash(data["password"]))
+                params.append(_hash(data.password))
 
             if not update_fields:
                 raise HTTPException(status_code=400, detail="No data to update")
@@ -807,7 +803,11 @@ async def bulk_upload_users(
 
     try:
         contents = await file.read()
+        bulk_upload_service.check_bulk_upload_file(contents, f".{ext}")
         rows = bulk_upload_service.parse_file(contents, ext)
+        bulk_upload_service.check_bulk_upload_row_count(rows)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("File parse error")
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")

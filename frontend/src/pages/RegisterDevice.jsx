@@ -37,7 +37,6 @@ const RegisterDevice = () => {
   // Initialize camera scanner
   useEffect(() => {
     if (showCameraScanner && !html5QrCodeRef.current) {
-      console.log('[RegisterDevice] Initializing camera scanner');
       try {
         const config = {
           fps: 10,
@@ -51,7 +50,6 @@ const RegisterDevice = () => {
         const scanner = new Html5QrcodeScanner('qr-reader', config, false);
         html5QrCodeRef.current = scanner;
         scanner.render(onScanSuccess, onScanError);
-        console.log('[RegisterDevice] Camera scanner initialized successfully');
       } catch (error) {
         console.error('[RegisterDevice] Failed to initialize scanner:', error);
         showToast('Failed to initialize camera scanner', 'error');
@@ -61,7 +59,6 @@ const RegisterDevice = () => {
 
     return () => {
       if (html5QrCodeRef.current) {
-        console.log('[RegisterDevice] Cleaning up camera scanner');
         html5QrCodeRef.current.clear().catch(err => {
           console.error('[RegisterDevice] Failed to clear scanner on cleanup:', err);
         });
@@ -71,10 +68,6 @@ const RegisterDevice = () => {
   }, [showCameraScanner]);
 
   const onScanSuccess = (decodedText, decodedResult) => {
-    console.log('[RegisterDevice] Barcode/QR scan successful');
-    console.log('[RegisterDevice] Scanned text:', decodedText);
-    console.log('[RegisterDevice] Decoded result:', decodedResult);
-    
     try {
       // Parse the scanned text for device info
       const text = decodedText.toUpperCase();
@@ -84,27 +77,23 @@ const RegisterDevice = () => {
       if (macMatch) {
         const mac = macMatch[1].replace(/[:\-]/g, '');
         const formattedMac = mac.match(/.{2}/g)?.join(':') || mac;
-        console.log('[RegisterDevice] Extracted MAC address:', formattedMac);
         setFormData(prev => ({ ...prev, macAddress: formattedMac }));
       }
       
       // Try to extract serial number
       const snMatch = text.match(/S\/?N[:\s]*([A-Z0-9\-]+)/i);
       if (snMatch) {
-        console.log('[RegisterDevice] Extracted serial number:', snMatch[1]);
         setFormData(prev => ({ ...prev, serialNumber: snMatch[1] }));
       }
       
       // Try to extract model
       const modelMatch = text.match(/MODEL[:\s]*([A-Z0-9\-]+)/i);
       if (modelMatch) {
-        console.log('[RegisterDevice] Extracted model:', modelMatch[1]);
         setFormData(prev => ({ ...prev, model: modelMatch[1] }));
       }
       
       // If no patterns matched, just put the scanned text in serial number
       if (!macMatch && !snMatch && !modelMatch) {
-        console.log('[RegisterDevice] No patterns matched, using text as serial number');
         setFormData(prev => ({ ...prev, serialNumber: decodedText }));
       }
       
@@ -150,16 +139,13 @@ const RegisterDevice = () => {
     }
     
     // Only log unexpected/critical errors
-    console.warn('[RegisterDevice] Scanner error:', errorString);
   };
 
   const openCameraScanner = () => {
-    console.log('[RegisterDevice] Opening camera scanner');
     setShowCameraScanner(true);
   };
 
   const closeCameraScanner = () => {
-    console.log('[RegisterDevice] Closing camera scanner');
     try {
       if (html5QrCodeRef.current) {
         html5QrCodeRef.current.clear().catch(err => {
@@ -176,7 +162,6 @@ const RegisterDevice = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    console.log('[RegisterDevice] Form field changed:', name, '=', value);
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
@@ -204,9 +189,6 @@ const RegisterDevice = () => {
 
     setLoading(true);
     
-    console.log('[RegisterDevice] Submitting device registration');
-    console.log('[RegisterDevice] Form data:', formData);
-    
     try {
       const deviceData = {
         device_type: formData.deviceType,
@@ -226,9 +208,7 @@ const RegisterDevice = () => {
         }
       };
 
-      console.log('[RegisterDevice] Sending device data to API:', deviceData);
       const response = await devicesAPI.createDevice(deviceData);
-      console.log('[RegisterDevice] Device registered successfully:', response);
       
       showToast('Device registered successfully!', 'success');
       navigate('/devices');

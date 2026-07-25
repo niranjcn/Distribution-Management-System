@@ -104,6 +104,9 @@ async def bulk_upload_distribution(
     try:
         contents = await file.read()
 
+        from app.services.bulk_upload_service import check_bulk_upload_file, check_bulk_upload_row_count, MAX_BULK_ROWS
+        check_bulk_upload_file(contents, filename_lower)
+
         _validate_upload_signature(filename_lower, contents)
 
         if filename_lower.endswith(".csv"):
@@ -117,6 +120,7 @@ async def bulk_upload_distribution(
                 )
             headers = [str(h).strip().lower() for h in all_rows[0]]
             data_rows = all_rows[1:]
+            check_bulk_upload_row_count(data_rows)
 
             def iter_data_rows():
                 for row in data_rows:
@@ -137,8 +141,17 @@ async def bulk_upload_distribution(
 
             headers = [str(cell.value).strip().lower() if cell.value is not None else "" for cell in header_row]
 
+            row_count = 0
+
             def iter_data_rows():
+                nonlocal row_count
                 for row in worksheet.iter_rows(min_row=2, values_only=True):
+                    row_count += 1
+                    if row_count > MAX_BULK_ROWS:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Too many rows. Maximum is {MAX_BULK_ROWS}",
+                        )
                     yield row
 
         if "mac_address" not in headers and "serial_number" not in headers and "nuid" not in headers:

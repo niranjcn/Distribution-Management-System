@@ -133,5 +133,14 @@ class ForcedCredentialUpdateRequest(BaseModel):
         return value
 
 
+class StatusUpdateRequest(BaseModel):
+    status: UserStatus
+
+
+class AdminCredentialUpdate(BaseModel):
+    email: Optional[str] = None
+    password: Optional[str] = Field(None, min_length=8)
+
+
 class UserPermissionUpdate(BaseModel):
     permissions: Dict[str, bool]

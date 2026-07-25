@@ -45,14 +45,11 @@ const Navbar = ({ onMenuClick }) => {
   // Fetch notifications when user is logged in
   useEffect(() => {
     if (user) {
-      console.log('[Navbar] User logged in, fetching notifications');
       try {
         fetchLatestNotifications();
       } catch (error) {
         console.error('[Navbar] Error fetching notifications:', error);
       }
-    } else {
-      console.log('[Navbar] No user logged in, skipping notification fetch');
     }
   }, [user]);
 
@@ -86,7 +83,6 @@ const Navbar = ({ onMenuClick }) => {
   }, [theme]);
 
   const handleLogout = () => {
-    console.log('[Navbar] User logging out');
     logout();
     navigate('/login');
   };

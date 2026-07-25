@@ -178,6 +178,14 @@ async def bulk_upload_external_inventory_items(
 
     try:
         contents = await file.read()
+
+        from app.services.bulk_upload_service import MAX_UPLOAD_FILE_SIZE, check_bulk_upload_row_count
+        if len(contents) > MAX_UPLOAD_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File too large. Maximum size is {MAX_UPLOAD_FILE_SIZE // (1024 * 1024)} MB",
+            )
+
         decoded = contents.decode("utf-8-sig")
         reader = csv.reader(io.StringIO(decoded))
         all_rows = list(reader)
@@ -189,6 +197,7 @@ async def bulk_upload_external_inventory_items(
 
         headers = [h.strip().lower() for h in all_rows[0]]
         data_rows = all_rows[1:]
+        check_bulk_upload_row_count(data_rows)
 
         required = {"item_id", "name", "serial_number", "device_type"}
         missing = required - set(headers)

@@ -2,6 +2,7 @@ import asyncio
 import csv
 import io
 import logging
+import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 
@@ -13,6 +14,26 @@ from app.core.audit import audit_logger
 from app.utils.roles import normalize_role
 
 logger = logging.getLogger(__name__)
+
+MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_BULK_ROWS = 15000
+_MAX_XLSX_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500 MB
+
+
+def check_bulk_upload_file(contents: bytes, filename_lower: str) -> None:
+    if len(contents) > MAX_UPLOAD_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_UPLOAD_FILE_SIZE // (1024 * 1024)} MB",
+        )
+    if filename_lower.endswith(".xlsx"):
+        with zipfile.ZipFile(io.BytesIO(contents)) as zf:
+            total_uncompressed = sum(info.file_size for info in zf.infolist())
+            if total_uncompressed > _MAX_XLSX_UNCOMPRESSED_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="File contains excessively large decompressed data",
+                )
 
 
 def chunks(values: List[Any], chunk_size: int) -> Iterable[List[Any]]:
@@ -71,6 +92,14 @@ def validate_upload_signature(filename_lower: str, content: bytes) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid CSV file content"
             )
+
+
+def check_bulk_upload_row_count(rows: list) -> None:
+    if len(rows) > MAX_BULK_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many rows. Maximum is {MAX_BULK_ROWS}",
+        )
 
 
 def _is_likely_text(content: bytes) -> bool:

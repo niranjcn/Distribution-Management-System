@@ -22,9 +22,7 @@ export const NotificationProvider = ({ children }) => {
   const fetchLatestNotifications = async () => {
     setLoading(true);
     try {
-      console.log('[NotificationContext] Fetching latest notifications...');
       const response = await notificationsAPI.getLatestNotifications(5);
-      console.log('[NotificationContext] Response:', response);
       
       if (response.success) {
         const formattedNotifications = response.data.map(notif => ({
@@ -39,7 +37,6 @@ export const NotificationProvider = ({ children }) => {
         }));
         setNotifications(formattedNotifications);
         await refreshUnreadCount();
-        console.log('[NotificationContext] Successfully loaded', formattedNotifications.length, 'notifications');
       }
     } catch (error) {
       console.error('[NotificationContext] Failed to fetch notifications:', error);
@@ -67,13 +64,11 @@ export const NotificationProvider = ({ children }) => {
 
   const markAsRead = useCallback(async (id) => {
     try {
-      console.log('[NotificationContext] Marking notification as read:', id);
       await notificationsAPI.markAsRead(id);
       setNotifications(prev =>
         prev.map(n => (n.id === id ? { ...n, read: true } : n))
       );
       setUnreadCount(prev => Math.max(0, prev - 1));
-      console.log('[NotificationContext] Successfully marked notification as read');
     } catch (error) {
       console.error('[NotificationContext] Failed to mark notification as read:', error);
       console.error('[NotificationContext] Error details:', {
@@ -85,11 +80,9 @@ export const NotificationProvider = ({ children }) => {
 
   const markAllAsRead = useCallback(async () => {
     try {
-      console.log('[NotificationContext] Marking all notifications as read');
       await notificationsAPI.markAllAsRead();
       setNotifications(prev => prev.map(n => ({ ...n, read: true })));
       setUnreadCount(0);
-      console.log('[NotificationContext] Successfully marked all notifications as read');
     } catch (error) {
       console.error('[NotificationContext] Failed to mark all notifications as read:', error);
       console.error('[NotificationContext] Error details:', {
@@ -101,10 +94,8 @@ export const NotificationProvider = ({ children }) => {
 
   const removeNotification = useCallback(async (id) => {
     try {
-      console.log('[NotificationContext] Removing notification:', id);
       await notificationsAPI.deleteNotification(id);
       setNotifications(prev => prev.filter(n => n.id !== id));
-      console.log('[NotificationContext] Successfully removed notification');
     } catch (error) {
       console.error('[NotificationContext] Failed to remove notification:', error);
       console.error('[NotificationContext] Error details:', {

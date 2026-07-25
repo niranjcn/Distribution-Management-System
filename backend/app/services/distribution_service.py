@@ -239,19 +239,14 @@ async def _bulk_update_device_holders(
 
 async def _device_has_open_distribution_lock(db, device_id: str) -> bool:
     cursor = await db.execute(
-        "SELECT device_ids FROM distributions WHERE status IN (?, ?)",
-        (DistributionStatus.PENDING_RECEIPT.value, DistributionStatus.DISPUTED.value),
+        "SELECT 1 FROM distributions WHERE status IN (?, ?) AND JSON_CONTAINS(device_ids, ?) LIMIT 1",
+        (
+            DistributionStatus.PENDING_RECEIPT.value,
+            DistributionStatus.DISPUTED.value,
+            json.dumps(str(device_id)),
+        ),
     )
-    rows = await cursor.fetchall()
-    target = str(device_id)
-    for row in rows:
-        try:
-            device_ids = [str(x) for x in json.loads(row[0] or "[]")]
-        except (json.JSONDecodeError, TypeError):
-            device_ids = []
-        if target in device_ids:
-            return True
-    return False
+    return cursor.fetchone() is not None
 
 
 async def _get_distribution_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:

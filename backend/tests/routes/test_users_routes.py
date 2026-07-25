@@ -515,8 +515,7 @@ class TestUpdateUserStatus:
 
         resp = client.patch(self.STATUS_URL, json={"status": "nonexistent"})
 
-        assert resp.status_code == 400
-        assert "invalid status" in resp.json()["detail"].lower()
+        assert resp.status_code == 422
 
     # ---------- unauthenticated ----------
 

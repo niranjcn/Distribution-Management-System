@@ -250,7 +250,7 @@ CREATE_TABLE_STATEMENTS = [
         failed_login_attempts INT DEFAULT 0,
         locked_until VARCHAR(64),
         created_by INT NULL,
-        INDEX idx_users_parent_id(parent_id)
+        INDEX idx_users_parent_role(parent_id, role)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     """
@@ -719,6 +719,11 @@ async def init_db():
 
             "CREATE INDEX idx_operators_assigned_status ON operators (assigned_to, status)",
             "CREATE INDEX idx_operators_status_created ON operators (status, created_at)",
+
+            "DROP INDEX idx_users_parent_id ON users",
+            "CREATE INDEX IF NOT EXISTS idx_users_role_status ON users (role, status)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications (user_id, is_read)",
+            "CREATE INDEX IF NOT EXISTS idx_distributions_to_status ON distributions (to_user_id, status)",
         ]:
             try:
                 await db.execute(stmt)

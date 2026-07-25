@@ -9,18 +9,17 @@ from app.utils.hierarchy import get_descendant_user_ids as _get_descendant_user_
 
 
 async def _get_locked_distribution_device_ids(db) -> set:
-    """Device ids in distributions that are not yet settled back to sender/receiver."""
-    cursor = await db.execute(
-        "SELECT device_ids FROM distributions WHERE status IN ('pending_receipt', 'disputed')"
-    )
+    cursor = await db.execute("""
+        SELECT DISTINCT jt.device_id
+        FROM distributions d
+        CROSS JOIN JSON_TABLE(
+            d.device_ids,
+            '$[*]' COLUMNS (device_id VARCHAR(128) PATH '$')
+        ) jt
+        WHERE d.status IN ('pending_receipt', 'disputed')
+    """)
     rows = await cursor.fetchall()
-    locked_ids = set()
-    for row in rows:
-        try:
-            locked_ids.update(str(x) for x in json.loads(row[0] or "[]"))
-        except (json.JSONDecodeError, TypeError):
-            continue
-    return locked_ids
+    return {str(row[0]) for row in rows}
 
 
 def _augment_device_record(device: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

@@ -150,6 +150,31 @@ class DeviceResponse(BaseModel):
     updated_at: datetime
 
 
+class DeviceEditRequest(BaseModel):
+    device_type: Optional[DeviceType] = None
+    serial_number: Optional[str] = None
+    mac_address: Optional[str] = None
+    model: Optional[str] = None
+    manufacturer: Optional[str] = None
+    band_type: Optional[DeviceBand] = None
+    box_type: Optional[str] = None
+    nuid: Optional[str] = None
+    status: Optional[DeviceStatus] = None
+    current_location: Optional[str] = None
+    warranty_expiry: Optional[datetime] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @field_validator("device_type", mode="before")
+    @classmethod
+    def normalize_device_type(cls, value):
+        if value is None:
+            return value
+        normalized = str(value or "").strip().lower()
+        if normalized in {"sb", "set-top box", "set top box", "stb"}:
+            return DeviceType.SETUP_BOX
+        return value
+
+
 class DeviceHistory(BaseModel):
     id: str = Field(..., alias="_id")
     device_id: str

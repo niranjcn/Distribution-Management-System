@@ -1,6 +1,6 @@
 # Models package
-from app.models.user import UserCreate, UserUpdate, UserRole, UserResponse, UserStatus, PasswordChange, UserPermissionUpdate
-from app.models.device import Device, DeviceCreate, DeviceUpdate, DeviceStatus, DeviceType
+from app.models.user import UserCreate, UserUpdate, UserRole, UserResponse, UserStatus, PasswordChange, UserPermissionUpdate, StatusUpdateRequest, AdminCredentialUpdate
+from app.models.device import Device, DeviceCreate, DeviceUpdate, DeviceStatus, DeviceType, DeviceEditRequest
 from app.models.distribution import Distribution, DistributionCreate, DistributionUpdate, DistributionStatus
 from app.models.defect import DefectReport, DefectCreate, DefectUpdate, DefectStatus, DefectSeverity, DefectType
 from app.models.return_device import ReturnRequest, ReturnCreate, ReturnUpdate, ReturnStatus, ReturnReason
