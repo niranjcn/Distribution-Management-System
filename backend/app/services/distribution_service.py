@@ -609,14 +609,33 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 raise ValueError("Operators can only distribute to other operators in the same cluster")
         # ─── End hierarchy validation ─────────────────────────────────────────
 
-        # Validate devices
+        # Validate devices (batch fetch + in-memory validation)
         validated_devices: List[Dict[str, Any]] = []
+
+        # Hoist the pending_receipt check — same query across all device iterations
+        pending_blocked: set = set()
+        if from_role not in ["super_admin", "manager", "pdic_staff"]:
+            cursor2 = await db.execute(
+                "SELECT device_ids FROM distributions WHERE to_user_id = ? AND status = ?",
+                (from_user_id, DistributionStatus.PENDING_RECEIPT.value)
+            )
+            for prow in await cursor2.fetchall():
+                try:
+                    for pid in json.loads(prow[0] or '[]'):
+                        pending_blocked.add(str(pid))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        # Batch device fetch
+        device_ids_int = [int(x) for x in dist_data.device_ids]
+        placeholders = ",".join("?" * len(device_ids_int))
+        cursor = await db.execute(f"SELECT * FROM devices WHERE id IN ({placeholders})", device_ids_int)
+        device_rows = {str(row[0]): row_to_dict(row) for row in await cursor.fetchall()}
+
         for dev_id in dist_data.device_ids:
-            cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(dev_id),))
-            device = await cursor.fetchone()
+            device = device_rows.get(str(dev_id))
             if not device:
                 raise ValueError(f"Device {dev_id} not found")
-            device = row_to_dict(device)
             if device.get("status") == DeviceStatus.DEFECTIVE.value:
                 raise ValueError(
                     f"Device {device['device_id']} is marked defective and cannot be transferred"
@@ -626,29 +645,16 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                     f"Device {device['device_id']} is already in an unconfirmed or disputed distribution"
                 )
             if from_role in ["super_admin", "manager", "pdic_staff"]:
-                # Management distributes from PDIC stock — must be available
                 if device["status"] != DeviceStatus.AVAILABLE.value:
                     raise ValueError(f"Device {device['device_id']} is not available")
             else:
-                # Sub-level roles redistribute from their own stock
                 if str(device.get("current_holder_id", "")) != from_user_id:
                     raise ValueError(f"Device {device['device_id']} is not in your possession")
-                # Block redistribution if a pending_receipt distribution exists for this device to this user
-                cursor2 = await db.execute(
-                    "SELECT device_ids FROM distributions WHERE to_user_id = ? AND status = ?",
-                    (from_user_id, DistributionStatus.PENDING_RECEIPT.value)
-                )
-                pending_rows = await cursor2.fetchall()
-                for prow in pending_rows:
-                    try:
-                        pending_ids = [str(x) for x in json.loads(prow[0] or '[]')]
-                    except (json.JSONDecodeError, TypeError):
-                        pending_ids = []
-                    if str(dev_id) in pending_ids:
-                        raise ValueError(
-                            f"Device {device['device_id']} is awaiting your receipt confirmation. "
-                            f"Please confirm receipt of the incoming transfer before redistributing."
-                        )
+                if str(dev_id) in pending_blocked:
+                    raise ValueError(
+                        f"Device {device['device_id']} is awaiting your receipt confirmation. "
+                        f"Please confirm receipt of the incoming transfer before redistributing."
+                    )
             validated_devices.append(device)
         
         role_to_type = {
@@ -869,23 +875,27 @@ async def confirm_receipt(
                 f"DISPUTE: {user['name']} reported NOT receiving {dist['device_count']} device(s) "
                 f"sent by {sender_label}. Distribution: {dist['distribution_id']}."
             )
-            for row in admin_rows:
-                await notification_service.create_notification(
-                    user_id=str(row[0]),
-                    title="Device Not Received — Dispute",
-                    message=dispute_msg,
-                    notification_type="error", category="distribution",
-                    link=f"/distributions?distributionId={distribution_id}"
-                )
-            # Also notify sender
-            await notification_service.create_notification(
-                user_id=dist["from_user_id"],
-                title="Receipt Disputed",
-                message=f"{user['name']} reported NOT receiving your device(s) in distribution "
-                        f"{dist['distribution_id']}. Admin, manager, and PDIC staff have been notified.",
-                notification_type="error", category="distribution",
-                link=f"/distributions?distributionId={distribution_id}"
-            )
+            await notification_service.bulk_create_notifications([
+                {
+                    "user_id": str(row[0]),
+                    "title": "Device Not Received — Dispute",
+                    "message": dispute_msg,
+                    "notification_type": "error",
+                    "category": "distribution",
+                    "link": f"/distributions?distributionId={distribution_id}"
+                }
+                for row in admin_rows
+            ] + [
+                {
+                    "user_id": dist["from_user_id"],
+                    "title": "Receipt Disputed",
+                    "message": f"{user['name']} reported NOT receiving your device(s) in distribution "
+                               f"{dist['distribution_id']}. Admin, manager, and PDIC staff have been notified.",
+                    "notification_type": "error",
+                    "category": "distribution",
+                    "link": f"/distributions?distributionId={distribution_id}"
+                }
+            ])
 
     if received and to_user_role:
         # NOW move devices to the recipient — only after they confirm receipt
@@ -966,24 +976,25 @@ async def confirm_disputed_return(
         )
         await db.commit()
 
-    device_ids = dist.get("device_ids", []) or []
-    for dev_id in device_ids:
-        try:
-            await device_service.update_device_holder(
-                device_id=str(dev_id),
-                holder_id=dist["from_user_id"],
-                holder_name=dist["from_user_name"],
-                holder_type=sender_holder_type,
-                location=dist["from_user_name"],
-                status=sender_status,
-                performed_by=str(user.get("id", user.get("_id", ""))),
-                performed_by_name=str(user.get("name") or "PDIC"),
-                from_user_id=dist.get("to_user_id"),
-                from_user_name=dist.get("to_user_name"),
-                notes=f"Disputed return confirmed for distribution {dist.get('distribution_id')}",
-            )
-        except Exception:
-            pass
+        device_ids = dist.get("device_ids", []) or []
+        for dev_id in device_ids:
+            try:
+                await device_service.update_device_holder(
+                    device_id=str(dev_id),
+                    holder_id=dist["from_user_id"],
+                    holder_name=dist["from_user_name"],
+                    holder_type=sender_holder_type,
+                    location=dist["from_user_name"],
+                    status=sender_status,
+                    performed_by=str(user.get("id", user.get("_id", ""))),
+                    performed_by_name=str(user.get("name") or "PDIC"),
+                    from_user_id=dist.get("to_user_id"),
+                    from_user_name=dist.get("to_user_name"),
+                    notes=f"Disputed return confirmed for distribution {dist.get('distribution_id')}",
+                    db=db,
+                )
+            except Exception:
+                pass
 
     await notification_service.create_notification(
         user_id=str(dist["from_user_id"]),
@@ -1115,22 +1126,31 @@ async def get_pending_distributions() -> List[Dict[str, Any]]:
 async def get_distribution_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, int]:
     """Get distribution statistics"""
     async with get_db() as db:
-        stats = {}
-        for key in ["total", "pending", "pending_receipt", "approved", "delivered", "rejected", "disputed"]:
-            conditions = []
-            params = []
-            if key != "total":
-                conditions.append("status = ?")
-                params.append(key)
-            if start_date:
-                conditions.append("created_at >= ?")
-                params.append(start_date)
-            if end_date:
-                conditions.append("created_at <= ?")
-                params.append(end_date)
-            where = " AND ".join(conditions) if conditions else "1=1"
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {where}", params)
-            stats[key] = (await cursor.fetchone())[0]
+        conditions = []
+        params = []
+        if start_date:
+            conditions.append("created_at >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("created_at <= ?")
+            params.append(end_date)
+        where = " AND ".join(conditions) if conditions else "1=1"
+
+        by_status = {}
+        cursor = await db.execute(f"SELECT status, COUNT(*) as cnt FROM distributions WHERE {where} GROUP BY status", params)
+        for row in await cursor.fetchall():
+            by_status[row[0]] = row[1]
+
+        total = sum(by_status.values())
+        stats = {
+            "total": total,
+            "pending": by_status.get("pending", 0),
+            "pending_receipt": by_status.get("pending_receipt", 0),
+            "approved": by_status.get("approved", 0),
+            "delivered": by_status.get("delivered", 0),
+            "rejected": by_status.get("rejected", 0),
+            "disputed": by_status.get("disputed", 0),
+        }
         return stats
 
 
@@ -1139,36 +1159,37 @@ async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
     async with get_db() as db:
         cursor = await db.execute("SELECT * FROM distributions WHERE status = ?", (DistributionStatus.APPROVED.value,))
         rows = await cursor.fetchall()
-    
-    distributions = rows_to_list(rows)
-    synced_count = 0
-    errors = []
-    user_id = str(user.get("id", user.get("_id", "system")))
-    
-    for dist in distributions:
-        device_ids = dist.get("device_ids", "[]")
-        if isinstance(device_ids, str):
-            try:
-                device_ids = json.loads(device_ids)
-            except (json.JSONDecodeError, TypeError):
-                device_ids = []
-        
-        for dev_id in device_ids:
-            try:
-                await device_service.update_device_holder(
-                    device_id=dev_id, holder_id=dist["to_user_id"],
-                    holder_name=dist["to_user_name"],
-                    holder_type=dist.get("to_user_type", "pdic_staff"),
-                    location=dist["to_user_name"],
-                    status=DeviceStatus.DISTRIBUTED.value,
-                    performed_by=user_id, performed_by_name=user.get("name", "System"),
-                    from_user_id=dist.get("from_user_id"),
-                    from_user_name=dist.get("from_user_name"),
-                    notes=f"Synced from approved distribution {dist.get('distribution_id', '')}"
-                )
-                synced_count += 1
-            except Exception as e:
-                errors.append(f"Device {dev_id}: {str(e)}")
-    
+
+        distributions = rows_to_list(rows)
+        synced_count = 0
+        errors = []
+        user_id = str(user.get("id", user.get("_id", "system")))
+
+        for dist in distributions:
+            device_ids = dist.get("device_ids", "[]")
+            if isinstance(device_ids, str):
+                try:
+                    device_ids = json.loads(device_ids)
+                except (json.JSONDecodeError, TypeError):
+                    device_ids = []
+
+            for dev_id in device_ids:
+                try:
+                    await device_service.update_device_holder(
+                        device_id=dev_id, holder_id=dist["to_user_id"],
+                        holder_name=dist["to_user_name"],
+                        holder_type=dist.get("to_user_type", "pdic_staff"),
+                        location=dist["to_user_name"],
+                        status=DeviceStatus.DISTRIBUTED.value,
+                        performed_by=user_id, performed_by_name=user.get("name", "System"),
+                        from_user_id=dist.get("from_user_id"),
+                        from_user_name=dist.get("from_user_name"),
+                        notes=f"Synced from approved distribution {dist.get('distribution_id', '')}",
+                        db=db,
+                    )
+                    synced_count += 1
+                except Exception as e:
+                    errors.append(f"Device {dev_id}: {str(e)}")
+
     return {"total_distributions": len(distributions), "devices_synced": synced_count, "errors": errors}
 

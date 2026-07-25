@@ -191,19 +191,20 @@ async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) ->
             enabled_roles,
         )
         staff_rows = await cursor.fetchall()
-    for staff in staff_rows:
-        staff = dict(staff)
-        await notification_service.create_notification(
-            user_id=str(staff["id"]),
-            title="New Return Request — Awaiting Approval",
-            message=(
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": str(dict(staff)["id"]),
+            "title": "New Return Request — Awaiting Approval",
+            "message": (
                 f"{requester['name']} has submitted a return request for device "
                 f"{device['device_id']} ({return_data.reason.value}). Please review and approve."
             ),
-            notification_type="info",
-            category="return",
-            link=f"/returns?returnId={return_row_id}"
-        )
+            "notification_type": "info",
+            "category": "return",
+            "link": f"/returns?returnId={return_row_id}"
+        }
+        for staff in staff_rows
+    ])
 
     return await get_return_by_id(str(return_row_id))
 
@@ -341,20 +342,21 @@ async def update_return_status(
                 enabled_roles + [acting_user_id],
             )
             staff_rows = await cursor.fetchall()
-        for row in staff_rows:
-            row = dict(row)
-            await notification_service.create_notification(
-                user_id=str(row["id"]),
-                title="Return Approved — Confirm Device Receipt",
-                message=(
+        await notification_service.bulk_create_notifications([
+            {
+                "user_id": str(dict(row)["id"]),
+                "title": "Return Approved — Confirm Device Receipt",
+                "message": (
                     f"Return request {return_req['return_id']} approved. "
                     f"Device {return_req['device_serial']} ({return_req['device_type']}) is on its way to PDIC. "
                     f"Please confirm receipt when it arrives."
                 ),
-                notification_type="info",
-                category="return",
-                link=f"/returns?returnId={return_id}"
-            )
+                "notification_type": "info",
+                "category": "return",
+                "link": f"/returns?returnId={return_id}"
+            }
+            for row in staff_rows
+        ])
 
     return await get_return_by_id(return_id)
 
@@ -513,19 +515,20 @@ async def auto_create_defect_return(
         )
         approver_rows = await cursor.fetchall()
 
-    for approver in approver_rows:
-        approver = dict(approver)
-        await notification_service.create_notification(
-            user_id=str(approver["id"]),
-            title="Return Request Created — Defective Device",
-            message=(
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": str(dict(approver)["id"]),
+            "title": "Return Request Created — Defective Device",
+            "message": (
                 f"A return request has been auto-created for defective device "
                 f"{device['device_id']} (Defect: {defect_report_id}). Please approve receipt."
             ),
-            notification_type="warning",
-            category="return",
-            link=f"/returns?returnId={return_row_id}"
-        )
+            "notification_type": "warning",
+            "category": "return",
+            "link": f"/returns?returnId={return_row_id}"
+        }
+        for approver in approver_rows
+    ])
 
     # Alert the operator (requester) to physically return the device
     async with get_db() as db:

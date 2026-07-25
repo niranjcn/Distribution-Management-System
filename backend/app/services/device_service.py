@@ -453,7 +453,8 @@ async def update_device_status(
         return await get_device_by_id(device_id)
 
 
-async def update_device_holder(
+async def _update_device_holder_impl(
+    db,
     device_id: str,
     holder_id: Optional[str],
     holder_name: Optional[str],
@@ -466,33 +467,60 @@ async def update_device_holder(
     from_user_name: Optional[str] = None,
     notes: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
+    cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(device_id),))
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    
+    device = row_to_dict(row)
+    old_status = device.get("status")
+    now = datetime.now().replace(tzinfo=None).isoformat()
+    
+    await db.execute(
+        """UPDATE devices SET current_holder_id = ?, current_holder_name = ?,
+            current_holder_type = ?, current_location = ?, status = ?, updated_at = ?
+        WHERE id = ?""",
+        (holder_id, holder_name, holder_type, location, status, now, int(device_id))
+    )
+    
+    await _add_device_history(db, device_id, "distributed",
+                              from_user_id=from_user_id, from_user_name=from_user_name,
+                              to_user_id=holder_id, to_user_name=holder_name,
+                              performed_by=performed_by, performed_by_name=performed_by_name,
+                              status_before=old_status, status_after=status,
+                              location=location, notes=notes)
+    await db.commit()
+    
+    return await get_device_by_id(device_id)
+
+
+async def update_device_holder(
+    device_id: str,
+    holder_id: Optional[str],
+    holder_name: Optional[str],
+    holder_type: str,
+    location: str,
+    status: str,
+    performed_by: str,
+    performed_by_name: str,
+    from_user_id: Optional[str] = None,
+    from_user_name: Optional[str] = None,
+    notes: Optional[str] = None,
+    db=None
+) -> Optional[Dict[str, Any]]:
     """Update device holder (for distributions)"""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(device_id),))
-        row = await cursor.fetchone()
-        if not row:
-            return None
-        
-        device = row_to_dict(row)
-        old_status = device.get("status")
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        
-        await db.execute(
-            """UPDATE devices SET current_holder_id = ?, current_holder_name = ?,
-                current_holder_type = ?, current_location = ?, status = ?, updated_at = ?
-            WHERE id = ?""",
-            (holder_id, holder_name, holder_type, location, status, now, int(device_id))
-        )
-        
-        await _add_device_history(db, device_id, "distributed",
-                                  from_user_id=from_user_id, from_user_name=from_user_name,
-                                  to_user_id=holder_id, to_user_name=holder_name,
-                                  performed_by=performed_by, performed_by_name=performed_by_name,
-                                  status_before=old_status, status_after=status,
-                                  location=location, notes=notes)
-        await db.commit()
-        
-        return await get_device_by_id(device_id)
+    if db is None:
+        async with get_db() as db:
+            return await _update_device_holder_impl(
+                db, device_id, holder_id, holder_name, holder_type, location, status,
+                performed_by, performed_by_name, from_user_id=from_user_id,
+                from_user_name=from_user_name, notes=notes
+            )
+    return await _update_device_holder_impl(
+        db, device_id, holder_id, holder_name, holder_type, location, status,
+        performed_by, performed_by_name, from_user_id=from_user_id,
+        from_user_name=from_user_name, notes=notes
+    )
 
 
 async def get_available_devices(holder_id: Optional[str] = None) -> List[Dict[str, Any]]:

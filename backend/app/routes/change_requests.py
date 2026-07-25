@@ -220,10 +220,10 @@ async def submit_change_request(
                     )
             await db.commit()
 
-        for payload in manager_notification_payloads:
-            await notification_service.create_notification(**payload)
-        for payload in super_admin_notification_payloads:
-            await notification_service.create_notification(**payload)
+        if manager_notification_payloads:
+            await notification_service.bulk_create_notifications(manager_notification_payloads)
+        if super_admin_notification_payloads:
+            await notification_service.bulk_create_notifications(super_admin_notification_payloads)
 
         return {"success": True, "message": "Change request submitted successfully", "data": {"request_id": request_id}}
     except HTTPException:

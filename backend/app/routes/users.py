@@ -36,32 +36,50 @@ ALLOWED_CREATE_BY_ROLE = {
 }
 
 
-async def _branch_contains_user(root_user_id: str, target_user_id: str) -> bool:
+async def _branch_contains_user(root_user_id: str, target_user_id: str, db=None) -> bool:
     if str(root_user_id) == str(target_user_id):
         return True
 
-    pending = [int(root_user_id)]
-    visited = set()
-
-    async with get_db() as db:
+    async def _search(conn):
+        pending = [int(root_user_id)]
+        visited = set()
         while pending:
             parent_id = pending.pop()
             if parent_id in visited:
                 continue
             visited.add(parent_id)
-
-            cursor = await db.execute("SELECT id FROM users WHERE parent_id = ?", (parent_id,))
+            cursor = await conn.execute("SELECT id FROM users WHERE parent_id = ?", (parent_id,))
             children = await cursor.fetchall()
             for child in children:
                 child_id = int(child["id"])
                 if str(child_id) == str(target_user_id):
                     return True
                 pending.append(child_id)
+        return False
 
-    return False
+    if db is not None:
+        return await _search(db)
+    async with get_db() as conn:
+        return await _search(conn)
 
 
-async def _can_access_user(current_user: dict, target_user: dict, *, write: bool) -> bool:
+async def _get_descendant_ids(root_user_id: str) -> set:
+    """Get all descendant user IDs under root_user_id (inclusive)."""
+    async with get_db() as db:
+        pending = [int(root_user_id)]
+        descendants = {str(root_user_id)}
+        while pending:
+            parent_id = pending.pop()
+            cursor = await db.execute("SELECT id FROM users WHERE parent_id = ?", (parent_id,))
+            for child in await cursor.fetchall():
+                child_id = str(child["id"])
+                if child_id not in descendants:
+                    descendants.add(child_id)
+                    pending.append(int(child_id))
+        return descendants
+
+
+async def _can_access_user(current_user: dict, target_user: dict, *, write: bool, db=None) -> bool:
     actor_role = normalize_role(current_user.get("role"))
     target_role = normalize_role(target_user.get("role"))
 
@@ -85,12 +103,12 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
     if actor_role == MANAGER:
         if not write and target_role == MANAGER:
             if current_user.get("parent_id"):
-                return await _branch_contains_user(current_user["parent_id"], target_user.get("id"))
+                return await _branch_contains_user(current_user["parent_id"], target_user.get("id"), db=db)
             return True
         if not can_manage_user(actor_role, target_role):
             return False
         if current_user.get("parent_id"):
-            return await _branch_contains_user(current_user["parent_id"], target_user.get("id"))
+            return await _branch_contains_user(current_user["parent_id"], target_user.get("id"), db=db)
         return True
 
     if actor_role == SUB_DISTRIBUTION_MANAGER:
@@ -101,14 +119,14 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
         root_id = str(current_user.get("parent_id") or current_user.get("id"))
         if str(target_user.get("id")) == root_id:
             return True
-        return await _branch_contains_user(root_id, target_user.get("id"))
+        return await _branch_contains_user(root_id, target_user.get("id"), db=db)
 
     if actor_role == SUB_DISTRIBUTOR:
         if write:
             return False
         if target_role not in {CLUSTER, OPERATOR}:
             return False
-        return await _branch_contains_user(current_user.get("id"), target_user.get("id"))
+        return await _branch_contains_user(current_user.get("id"), target_user.get("id"), db=db)
 
     if actor_role == CLUSTER:
         if write:
@@ -584,16 +602,18 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
 
         # Notify all super admins
         super_admins = await user_service.get_users(role=SUPER_ADMIN, page_size=10000)
-        for sa in super_admins["data"]:
-            await notification_service.create_notification(
-                user_id=sa["id"],
-                title="Reassignment Request",
-                message=f"A {target_role} ({target_user.get('name')}) was scheduled for deletion. {len(children)} user(s) need reassignment.",
-                notification_type="warning",
-                category="user",
-                link="/reassignment-requests",
-                metadata={"request_id": req.get("request_id"), "request_db_id": req.get("id")},
-            )
+        await notification_service.bulk_create_notifications([
+            {
+                "user_id": sa["id"],
+                "title": "Reassignment Request",
+                "message": f"A {target_role} ({target_user.get('name')}) was scheduled for deletion. {len(children)} user(s) need reassignment.",
+                "notification_type": "warning",
+                "category": "user",
+                "link": "/reassignment-requests",
+                "metadata": {"request_id": req.get("request_id"), "request_db_id": req.get("id")},
+            }
+            for sa in super_admins["data"]
+        ])
 
         return {
             "success": True,

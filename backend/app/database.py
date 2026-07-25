@@ -192,6 +192,7 @@ async def _ensure_pool() -> aiomysql.Pool:
             autocommit=False,
             minsize=1,
             maxsize=10,
+            pool_recycle=21600,
             charset="utf8mb4",
         )
     return _pool
@@ -803,6 +804,10 @@ async def init_db():
 
         await db.commit()
     finally:
+        try:
+            await conn.rollback()
+        except Exception:
+            pass
         pool.release(conn)
 
     print(

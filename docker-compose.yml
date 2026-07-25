@@ -3,6 +3,11 @@ services:
     image: mysql:8.4
     container_name: dms-mysql
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
     logging:
       driver: json-file
       options:
@@ -36,6 +41,11 @@ services:
       dockerfile: Dockerfile
     container_name: dms-backend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
     logging:
       driver: json-file
       options:
@@ -86,6 +96,11 @@ services:
         VITE_API_URL: https://localhost/api
     container_name: dms-frontend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
     logging:
       driver: json-file
       options:
@@ -110,6 +125,11 @@ services:
     image: nginx:1.27-alpine
     container_name: dms-reverse-proxy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
     logging:
       driver: json-file
       options:
@@ -133,6 +153,11 @@ services:
     image: prom/prometheus:v2.55.0
     container_name: dms-prometheus
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
     logging:
       driver: json-file
       options:
@@ -159,6 +184,11 @@ services:
     image: grafana/grafana:11.3.0
     container_name: dms-grafana
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
     logging:
       driver: json-file
       options:

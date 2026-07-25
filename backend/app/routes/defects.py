@@ -35,6 +35,21 @@ def _ensure_not_md_director(current_user: dict) -> None:
         )
 
 
+_IMAGE_MAGIC_BYTES = {
+    b"\xff\xd8\xff": "jpeg",
+    b"\x89PNG": "png",
+    b"GIF8": "gif",
+    b"RIFF": "webp",
+}
+
+
+def _is_valid_image_magic(data: bytes) -> bool:
+    for magic, _fmt in _IMAGE_MAGIC_BYTES.items():
+        if data.startswith(magic):
+            return True
+    return False
+
+
 def _get_defect_activity_device_identifier(defect: dict) -> str:
     device_type = str(defect.get("device_type") or "").strip().lower()
     normalized_type = device_type.replace("-", " ")
@@ -62,12 +77,29 @@ async def upload_defect_photo(
     
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
-    
-    file_ext = Path(file.filename).suffix
+
+    MAX_SIZE = 10 * 1024 * 1024
+    ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    ALLOWED_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"File type '{file_ext}' not allowed. Use: {', '.join(ALLOWED_EXTENSIONS)}")
+
+    if file.content_type not in ALLOWED_MIME:
+        raise HTTPException(status_code=400, detail=f"MIME type '{file.content_type}' not allowed")
+
+    content = await file.read()
+    if len(content) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_SIZE // (1024*1024)}MB")
+
+    magic = content[:8]
+    if not _is_valid_image_magic(magic):
+        raise HTTPException(status_code=400, detail="File is not a valid image")
+
     unique_filename = f"{uuid4().hex}{file_ext}"
-    
+
     try:
-        content = await file.read()
         from app.services.rclone_storage import upload_file_to_rclone
         await upload_file_to_rclone("defect_photos", unique_filename, content)
         

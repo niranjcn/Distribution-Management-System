@@ -101,6 +101,34 @@ async def create_notification(
         return _parse_notification_metadata(row_to_dict(row))
 
 
+async def bulk_create_notifications(
+    notifications: List[Dict[str, Any]]
+) -> None:
+    """Create multiple notifications in a single batch INSERT.
+    
+    Each notification dict must contain: user_id, title, message.
+    Optional: notification_type (default 'info'), category (default 'system'),
+              link (default None), metadata (default None).
+    """
+    if not notifications:
+        return
+    async with get_db() as db:
+        now = datetime.now().replace(tzinfo=None).isoformat()
+        values = []
+        params = []
+        for n in notifications:
+            values.append("(?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            metadata_json = json.dumps(n.get("metadata")) if n.get("metadata") else None
+            params.extend([
+                n["user_id"], n["title"], n["message"],
+                n.get("notification_type", "info"), n.get("category", "system"),
+                0, n.get("link"), metadata_json, now
+            ])
+        sql = f"INSERT INTO notifications (user_id, title, message, type, category, is_read, link, metadata, created_at) VALUES {', '.join(values)}"
+        await db.execute(sql, params)
+        await db.commit()
+
+
 async def mark_as_read(notification_id: str, user_id: str) -> bool:
     """Mark notification as read"""
     async with get_db() as db:

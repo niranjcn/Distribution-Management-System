@@ -177,8 +177,7 @@ class TestGetUserStats:
     async def test_returns_counts(self, mock_user_db):
         mock_user_db.add_result(fetchone_result=(50,))
         mock_user_db.add_result(fetchone_result=(40,))
-        for _ in range(5):
-            mock_user_db.add_result(fetchone_result=(5,))
+        mock_user_db.add_result(fetchall_result=[("operator", 5), ("cluster", 3)])
         result = await get_user_stats()
         assert result["total"] == 50
         assert result["active"] == 40
@@ -187,8 +186,7 @@ class TestGetUserStats:
     async def test_zero_counts(self, mock_user_db):
         mock_user_db.add_result(fetchone_result=(0,))
         mock_user_db.add_result(fetchone_result=(0,))
-        for _ in range(5):
-            mock_user_db.add_result(fetchone_result=(0,))
+        mock_user_db.add_result(fetchall_result=[])
         result = await get_user_stats()
         assert result["total"] == 0
         assert result["active"] == 0

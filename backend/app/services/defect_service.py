@@ -451,20 +451,23 @@ async def create_defect(
             cursor = await db.execute("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
             recipient_ids = [str(dict(row)["id"]) for row in await cursor.fetchall()]
 
-        for recipient_id in recipient_ids:
-            await notification_service.create_notification(
-                user_id=recipient_id,
-                title="New Defect Report",
-                message=f"A new {defect_data.severity.value} severity defect has been reported for device {device['device_id']}",
-                notification_type="warning" if defect_data.severity.value in ["critical", "high"] else "info",
-                category="defect",
-                link=f"/defects?defectId={new_id}",
-                metadata={
+        severity = defect_data.severity.value
+        await notification_service.bulk_create_notifications([
+            {
+                "user_id": rid,
+                "title": "New Defect Report",
+                "message": f"A new {severity} severity defect has been reported for device {device['device_id']}",
+                "notification_type": "warning" if severity in ["critical", "high"] else "info",
+                "category": "defect",
+                "link": f"/defects?defectId={new_id}",
+                "metadata": {
                     "action": "new_defect_report",
                     "defect_id": str(new_id),
                     "report_target": report_target
                 }
-            )
+            }
+            for rid in recipient_ids
+        ])
 
     return await get_defect_by_id(str(new_id))
 
@@ -547,25 +550,26 @@ async def forward_defect_to_management(
         cursor = await db.execute("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
         management_users = await cursor.fetchall()
 
-    for row in management_users:
-        manager_user_id = str(dict(row)["id"])
-        await notification_service.create_notification(
-            user_id=manager_user_id,
-            title="Defect Forwarded by Sub Distributor",
-            message=(
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": str(dict(row)["id"]),
+            "title": "Defect Forwarded by Sub Distributor",
+            "message": (
                 f"Defect {defect.get('report_id')} was forwarded by {forwarder_name} "
                 "for manager/admin review."
             ),
-            notification_type="info",
-            category="defect",
-            link=f"/defects?defectId={defect_id}",
-            metadata={
+            "notification_type": "info",
+            "category": "defect",
+            "link": f"/defects?defectId={defect_id}",
+            "metadata": {
                 "action": "forwarded_to_management",
                 "defect_id": str(defect_id),
                 "notes": notes,
                 "forwarded_by": forwarder_name
             }
-        )
+        }
+        for row in management_users
+    ])
 
     if defect.get("reported_by"):
         await notification_service.create_notification(
@@ -720,20 +724,23 @@ async def update_defect_status(
                     enabled_roles,
                 )
                 staff_rows = await cursor.fetchall()
-            for row in staff_rows:
-                row = dict(row)
-                if str(row["id"]) != defect["reported_by"]:
-                    await notification_service.create_notification(
-                        user_id=str(row["id"]),
-                        title="Defective Device Return — Pending Receipt",
-                        message=(
-                            f"Defect {defect['report_id']} approved. The operator has been instructed to return "
-                            f"device to PDIC. Please confirm receipt when device arrives."
-                        ),
-                        notification_type="info",
-                        category="return",
-                        link=f"/returns"
-                    )
+            notifications = [
+                {
+                    "user_id": str(dict(row)["id"]),
+                    "title": "Defective Device Return — Pending Receipt",
+                    "message": (
+                        f"Defect {defect['report_id']} approved. The operator has been instructed to return "
+                        f"device to PDIC. Please confirm receipt when device arrives."
+                    ),
+                    "notification_type": "info",
+                    "category": "return",
+                    "link": "/returns"
+                }
+                for row in staff_rows
+                if str(dict(row)["id"]) != defect["reported_by"]
+            ]
+            if notifications:
+                await notification_service.bulk_create_notifications(notifications)
 
         return await get_defect_by_id(defect_id)
     return None
@@ -1148,27 +1155,31 @@ async def replace_defect_device(
     holder_user_id = str(original_holder_id) if original_holder_id else None
     holder_user_name = original_holder_name or defect.get("reported_by_name") or "Operator"
 
-    recipient_ids = set()
-    if holder_user_id:
-        recipient_ids.add(holder_user_id)
-    if defect.get("reported_by"):
-        recipient_ids.add(str(defect["reported_by"]))
+    reported_by_str = str(defect["reported_by"]) if defect.get("reported_by") else None
+    recipient_ids = {uid for uid in [holder_user_id, reported_by_str] if uid}
 
-    for recipient_id in recipient_ids:
-        await notification_service.create_notification(
-            user_id=recipient_id,
-            title="Serviced Device Ready - Confirmation Required" if is_same_device_reassignment else "Replacement Device Ready - Confirmation Required",
-            message=(
+    title = (
+        "Serviced Device Ready - Confirmation Required"
+        if is_same_device_reassignment
+        else "Replacement Device Ready - Confirmation Required"
+    )
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": rid,
+            "title": title,
+            "message": (
                 f"Operator update for {holder_user_name}: "
                 f"{'serviced device' if is_same_device_reassignment else 'replacement device'} {new_device.get('device_id')} "
                 f"(Serial: {new_device.get('serial_number')}) is prepared for defect {defect['report_id']}. "
                 "Confirm only after you physically receive the replacement device. "
                 "Do not confirm before receiving it."
             ),
-            notification_type="warning",
-            category="defect",
-            link="/replacement-confirmation"
-        )
+            "notification_type": "warning",
+            "category": "defect",
+            "link": "/replacement-confirmation"
+        }
+        for rid in recipient_ids
+    ])
 
     return await get_defect_by_id(defect_id)
 
@@ -1271,19 +1282,20 @@ async def confirm_replacement_receipt(
         cursor = await db.execute("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
         recipients = await cursor.fetchall()
 
-    for row in recipients:
-        row = dict(row)
-        await notification_service.create_notification(
-            user_id=str(row["id"]),
-            title="Replacement Receipt Confirmed",
-            message=(
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": str(dict(row)["id"]),
+            "title": "Replacement Receipt Confirmed",
+            "message": (
                 f"{confirmer_name} ({confirmer_role.replace('_', ' ')}) confirmed receipt of replacement device "
                 f"for defect {defect.get('report_id')}."
             ),
-            notification_type="success",
-            category="defect",
-            link="/defects"
-        )
+            "notification_type": "success",
+            "category": "defect",
+            "link": "/defects"
+        }
+        for row in recipients
+    ])
 
     return await get_defect_by_id(defect_id)
 
@@ -1325,18 +1337,15 @@ async def enquire_replacement_status(
         cursor = await db.execute("SELECT id FROM users WHERE role IN ('pdic_staff', 'manager', 'super_admin')")
         management_users = await cursor.fetchall()
 
-    for manager_row in management_users:
-        manager_user_id = str(dict(manager_row)["id"])
-        await notification_service.create_notification(
-            user_id=manager_user_id,
-            title="Replacement Enquiry from Operator",
-            message=(
-                f"{enquirer_name} sent an enquiry for {defect.get('report_id')}: {message}"
-            ),
-            notification_type="warning",
-            category="defect",
-            link="/defects",
-            metadata={
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": str(dict(row)["id"]),
+            "title": "Replacement Enquiry from Operator",
+            "message": f"{enquirer_name} sent an enquiry for {defect.get('report_id')}: {message}",
+            "notification_type": "warning",
+            "category": "defect",
+            "link": "/defects",
+            "metadata": {
                 "action": "replacement_enquiry",
                 "defect_id": str(defect_id),
                 "report_id": defect.get("report_id"),
@@ -1344,7 +1353,9 @@ async def enquire_replacement_status(
                 "enquirer_id": enquirer_id,
                 "enquirer_name": enquirer_name
             }
-        )
+        }
+        for row in management_users
+    ])
 
     return await get_defect_by_id(defect_id)
 
@@ -1382,25 +1393,27 @@ async def resend_replacement_confirmation(
         reporter_user_id = str(defect.get("reported_by")) if defect.get("reported_by") else None
         recipient_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid}
 
-    for recipient_id in recipient_ids:
-        await notification_service.create_notification(
-            user_id=recipient_id,
-            title="Replacement Confirmation Reminder",
-            message=(
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": rid,
+            "title": "Replacement Confirmation Reminder",
+            "message": (
                 f"{sender_name} resent the confirmation reminder for defect {defect.get('report_id')}. "
                 f"Please confirm only after receiving replacement device {replacement_device.get('device_id')} physically."
             ),
-            notification_type="warning",
-            category="defect",
-            link="/replacement-confirmation",
-            metadata={
+            "notification_type": "warning",
+            "category": "defect",
+            "link": "/replacement-confirmation",
+            "metadata": {
                 "action": "replacement_confirmation_resent",
                 "defect_id": str(defect_id),
                 "report_id": defect.get("report_id"),
                 "replacement_device_id": str(replacement_device.get("id")),
                 "replacement_device_code": replacement_device.get("device_id")
             }
-        )
+        }
+        for rid in recipient_ids
+    ])
 
     return await get_defect_by_id(defect_id)
 
@@ -1444,24 +1457,26 @@ async def mark_replacement_waiting(
         reporter_user_id = str(defect.get("reported_by")) if defect.get("reported_by") else None
         recipient_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid}
 
-    for recipient_id in recipient_ids:
-        await notification_service.create_notification(
-            user_id=recipient_id,
-            title="Replacement Shipment In Progress",
-            message=(
+    await notification_service.bulk_create_notifications([
+        {
+            "user_id": rid,
+            "title": "Replacement Shipment In Progress",
+            "message": (
                 f"Update from {manager_name} on defect {defect.get('report_id')}: "
                 "Device is being shipped, please wait"
             ),
-            notification_type="info",
-            category="defect",
-            link="/defects",
-            metadata={
+            "notification_type": "info",
+            "category": "defect",
+            "link": "/defects",
+            "metadata": {
                 "action": "replacement_waiting",
                 "defect_id": str(defect_id),
                 "report_id": defect.get("report_id"),
                 "notes": waiting_note
             }
-        )
+        }
+        for rid in recipient_ids
+    ])
 
     return await get_defect_by_id(defect_id)
 

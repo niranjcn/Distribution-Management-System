@@ -345,9 +345,9 @@ async def get_user_stats() -> Dict[str, int]:
         active = (await cursor.fetchone())[0]
         
         by_role = {}
-        for role in UserRole:
-            cursor = await db.execute("SELECT COUNT(*) FROM users WHERE role = ?", (role.value,))
-            by_role[role.value] = (await cursor.fetchone())[0]
+        cursor = await db.execute("SELECT role, COUNT(*) as cnt FROM users GROUP BY role")
+        for row in await cursor.fetchall():
+            by_role[row[0]] = row[1]
         
         return {
             "total": total,

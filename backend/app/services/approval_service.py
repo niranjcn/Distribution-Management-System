@@ -261,12 +261,59 @@ async def get_approvals(
         rows = await cursor.fetchall()
 
         enriched = []
+        # Batch entity detail lookups by approval type
+        type_groups: Dict[str, List[int]] = {}
         for row in rows:
-            approval_data = row_to_dict(row)
-            details = await _get_entity_details(db, approval_data.get("approval_type", ""), approval_data.get("entity_id", ""))
-            if details:
-                approval_data["entity_details"] = details
-            enriched.append(approval_data)
+            ad = row_to_dict(row)
+            at = ad.get("approval_type", "")
+            eid = ad.get("entity_id")
+            if at and eid:
+                type_groups.setdefault(at, []).append(int(eid))
+
+        # Fetch all entities per type in a single query
+        entity_cache: Dict[str, Dict[str, Any]] = {}
+        for at, eids in type_groups.items():
+            table = ENTITY_TABLE_MAP.get(at)
+            if not table or table not in ALLOWED_ENTITY_TABLES:
+                continue
+            placeholders = ",".join("?" * len(eids))
+            cursor = await db.execute(f"SELECT * FROM {table} WHERE id IN ({placeholders})", eids)
+            for ent_row in await cursor.fetchall():
+                ent = row_to_dict(ent_row)
+                entity_cache[f"{at}:{ent['id']}"] = ent
+
+        for row in rows:
+            ad = row_to_dict(row)
+            at = ad.get("approval_type", "")
+            eid = ad.get("entity_id")
+            if at and eid:
+                ent = entity_cache.get(f"{at}:{int(eid)}")
+                if ent:
+                    details = None
+                    if at == "distribution":
+                        details = {
+                            "distribution_id": ent.get("distribution_id"),
+                            "device_count": ent.get("device_count"),
+                            "from_user_name": ent.get("from_user_name"),
+                            "to_user_name": ent.get("to_user_name")
+                        }
+                    elif at == "return":
+                        details = {
+                            "return_id": ent.get("return_id"),
+                            "device_serial": ent.get("device_serial"),
+                            "reason": ent.get("reason"),
+                            "requested_by_name": ent.get("requested_by_name")
+                        }
+                    elif at == "defect":
+                        details = {
+                            "report_id": ent.get("report_id"),
+                            "device_serial": ent.get("device_serial"),
+                            "defect_type": ent.get("defect_type"),
+                            "severity": ent.get("severity")
+                        }
+                    if details:
+                        ad["entity_details"] = details
+            enriched.append(ad)
 
         return {
             "data": enriched,
