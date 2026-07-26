@@ -33,7 +33,7 @@ def _vault_remote_dir() -> str:
     return f"{remote}:{vault_dir}" if vault_dir else f"{remote}:"
 
 
-async def _run_rclone(args: List[str]) -> Tuple[bytes, bytes, int]:
+async def _run_rclone(args: List[str], timeout: int = 120) -> Tuple[bytes, bytes, int]:
     config_path = _ensure_rclone_config()
     env = _build_rclone_env()
 
@@ -47,7 +47,14 @@ async def _run_rclone(args: List[str]) -> Tuple[bytes, bytes, int]:
         env=env,
     )
 
-    stdout, stderr = await process.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        raise RuntimeError(f"rclone timed out after {timeout}s")
+
     return stdout or b"", stderr or b"", process.returncode
 
 

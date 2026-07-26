@@ -45,6 +45,10 @@ const USER_SEARCH_BY_OPTIONS = [
   { value: 'phone', label: 'Phone' },
   { value: 'department', label: 'Department' },
   { value: 'location', label: 'Location' },
+  { value: 'digital_id', label: 'Digital ID' },
+  { value: 'broadband_id', label: 'Broadband ID' },
+  { value: 'cluster_id', label: 'Cluster ID' },
+  { value: 'operator_id', label: 'Operator ID' },
 ];
 
 const getRoleColor = (role) => {
@@ -587,6 +591,10 @@ const Users = () => {
       phone: (row) => row?.phone,
       department: (row) => row?.department,
       location: (row) => row?.location,
+      digital_id: (row) => row?.digital_id,
+      broadband_id: (row) => row?.broadband_id,
+      cluster_id: (row) => row?.cluster_id,
+      operator_id: (row) => row?.operator_id,
     };
 
     const searchBy = String(appliedTableSearch.by || 'all');

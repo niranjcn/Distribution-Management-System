@@ -51,7 +51,7 @@ const ALLOWED_ROLES_BY_CREATOR = {
   cluster: ['operator'],
 };
 
-const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', department: '', location: '', parentId: '' };
+const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', department: '', location: '', parentId: '', digitalId: '', broadbandId: '', clusterId: '', operatorId: '' };
 
 // ─── avatar initials helper ────────────────────────────────────────────────────
 const initials = (name) =>
@@ -192,7 +192,11 @@ const UserHierarchy = () => {
       ? visibleUsers.filter(u =>
         u.name?.toLowerCase().includes(query) ||
         u.email?.toLowerCase().includes(query) ||
-        (ROLE_LABELS[u.role] || u.role).toLowerCase().includes(query),
+        (ROLE_LABELS[u.role] || u.role).toLowerCase().includes(query) ||
+        u.digital_id?.toLowerCase().includes(query) ||
+        u.broadband_id?.toLowerCase().includes(query) ||
+        u.cluster_id?.toLowerCase().includes(query) ||
+        u.operator_id?.toLowerCase().includes(query),
       )
       : visibleUsers;
 
@@ -314,6 +318,16 @@ const UserHierarchy = () => {
       if (formData.department) payload.department = formData.department;
       if (formData.location) payload.location = formData.location;
       if (formData.parentId) payload.parent_id = formData.parentId;
+      if (formData.role === 'sub_distributor') {
+        payload.digital_id = formData.digitalId || null;
+        payload.broadband_id = formData.broadbandId || null;
+      }
+      if (formData.role === 'cluster') {
+        payload.cluster_id = formData.clusterId || null;
+      }
+      if (formData.role === 'operator') {
+        payload.operator_id = formData.operatorId || null;
+      }
       await usersAPI.createUser(payload);
       showToast('User created successfully', 'success');
       setShowAdd(false);
@@ -460,6 +474,10 @@ const UserHierarchy = () => {
               <Row label="Location" value={selectedUser.location} />
               <Row label="Status" value={<StatusBadge status={selectedUser.status} size="sm" />} />
               <Row label="Joined" value={selectedUser.created_at ? new Date(selectedUser.created_at).toLocaleDateString() : '—'} />
+              {selectedUser.digital_id && <Row label="Digital ID" value={selectedUser.digital_id} />}
+              {selectedUser.broadband_id && <Row label="Broadband ID" value={selectedUser.broadband_id} />}
+              {selectedUser.cluster_id && <Row label="Cluster ID" value={selectedUser.cluster_id} />}
+              {selectedUser.operator_id && <Row label="Operator ID" value={selectedUser.operator_id} />}
               {selectedUser.parent_id && (
                 <Row
                   label="Parent"
@@ -593,6 +611,53 @@ const UserHierarchy = () => {
               </Field>
             </div>
           </div>
+
+          {formData.role === 'sub_distributor' && (
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Digital ID">
+                <input
+                  type="text"
+                  value={formData.digitalId}
+                  onChange={e => setFormData(p => ({ ...p, digitalId: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter digital ID"
+                />
+              </Field>
+              <Field label="Broadband ID">
+                <input
+                  type="text"
+                  value={formData.broadbandId}
+                  onChange={e => setFormData(p => ({ ...p, broadbandId: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter broadband ID"
+                />
+              </Field>
+            </div>
+          )}
+
+          {formData.role === 'cluster' && (
+            <Field label="Cluster ID">
+              <input
+                type="text"
+                value={formData.clusterId}
+                onChange={e => setFormData(p => ({ ...p, clusterId: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter cluster ID"
+              />
+            </Field>
+          )}
+
+          {formData.role === 'operator' && (
+            <Field label="Operator ID">
+              <input
+                type="text"
+                value={formData.operatorId}
+                onChange={e => setFormData(p => ({ ...p, operatorId: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter operator ID"
+              />
+            </Field>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" onClick={() => { setShowAdd(false); setFormData(emptyForm); setParentOptions([]); }}>

@@ -3,7 +3,6 @@ from typing import Optional, List, Dict, Any, Set
 import json
 import io
 import csv
-import logging
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -14,8 +13,6 @@ from app.models.device import DeviceStatus
 from app.services import approval_service, device_service, notification_service
 from app.utils.helpers import get_pagination, generate_distribution_id
 from app.utils.hierarchy import get_descendant_user_ids as _get_descendant_user_ids
-
-logger = logging.getLogger(__name__)
 
 
 def _distribution_manifest_dir() -> Path:
@@ -832,15 +829,37 @@ async def confirm_receipt(
         "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
     }
 
-    async with get_db() as db:
-        if received:
-            # Look up to_user role so we can set the correct device status
+    if received:
+        # Look up to_user role so we can set the correct device status
+        async with get_db() as db:
             cursor = await db.execute(
                 "SELECT role FROM users WHERE id = ?", (int(dist["to_user_id"]),)
             )
             to_user_row = await cursor.fetchone()
             to_user_role = dict(to_user_row)["role"] if to_user_row else "operator"
 
+        # Move devices FIRST — before marking the distribution as approved.
+        # If this fails, the distribution stays PENDING_RECEIPT and the user can retry.
+        device_status_for_recipient = (
+            DeviceStatus.IN_USE.value if to_user_role == "operator" else DeviceStatus.DISTRIBUTED.value
+        )
+        holder_type = role_to_type.get(to_user_role, "pdic_staff")
+        await _bulk_update_device_holders(
+            device_ids=device_ids,
+            holder_id=dist["to_user_id"],
+            holder_name=dist["to_user_name"],
+            holder_type=holder_type,
+            location=dist["to_user_name"],
+            status=device_status_for_recipient,
+            performed_by=user_id,
+            performed_by_name=user["name"],
+            from_user_id=dist["from_user_id"],
+            from_user_name=dist["from_user_name"],
+            notes=f"Receipt confirmed for distribution {dist['distribution_id']}",
+        )
+
+        # Mark distribution as approved (only after devices are successfully moved)
+        async with get_db() as db:
             await db.execute(
                 """UPDATE distributions
                    SET status = ?, approval_date = ?, approved_by = ?, approved_by_name = ?,
@@ -853,8 +872,18 @@ async def confirm_receipt(
             )
             await db.commit()
 
-        else:
-            to_user_role = None
+        # Notify sender: receipt confirmed
+        await notification_service.create_notification(
+            user_id=dist["from_user_id"],
+            title="Receipt Confirmed",
+            message=f"{user['name']} confirmed receipt of {dist['device_count']} device(s) "
+                    f"(Distribution: {dist['distribution_id']}).",
+            notification_type="success", category="distribution",
+            link=f"/distributions?distributionId={distribution_id}"
+        )
+
+    else:
+        async with get_db() as db:
             await db.execute(
                 """UPDATE distributions
                    SET status = 'disputed', notes = COALESCE(?, notes), updated_at = ?
@@ -867,68 +896,35 @@ async def confirm_receipt(
             admin_rows = await cursor.fetchall()
             await db.commit()
 
-            sender_label = (
-                "PDIC" if str(dist.get("from_user_type") or "").lower() in {"noc", "pdic_staff"}
-                else dist.get("from_user_name")
-            )
-            dispute_msg = (
-                f"DISPUTE: {user['name']} reported NOT receiving {dist['device_count']} device(s) "
-                f"sent by {sender_label}. Distribution: {dist['distribution_id']}."
-            )
-            await notification_service.bulk_create_notifications([
-                {
-                    "user_id": str(row[0]),
-                    "title": "Device Not Received — Dispute",
-                    "message": dispute_msg,
-                    "notification_type": "error",
-                    "category": "distribution",
-                    "link": f"/distributions?distributionId={distribution_id}"
-                }
-                for row in admin_rows
-            ] + [
-                {
-                    "user_id": dist["from_user_id"],
-                    "title": "Receipt Disputed",
-                    "message": f"{user['name']} reported NOT receiving your device(s) in distribution "
-                               f"{dist['distribution_id']}. Admin, manager, and PDIC staff have been notified.",
-                    "notification_type": "error",
-                    "category": "distribution",
-                    "link": f"/distributions?distributionId={distribution_id}"
-                }
-            ])
-
-    if received and to_user_role:
-        # NOW move devices to the recipient — only after they confirm receipt
-        device_status_for_recipient = (
-            DeviceStatus.IN_USE.value if to_user_role == "operator" else DeviceStatus.DISTRIBUTED.value
+        sender_label = (
+            "PDIC" if str(dist.get("from_user_type") or "").lower() in {"noc", "pdic_staff"}
+            else dist.get("from_user_name")
         )
-        holder_type = role_to_type.get(to_user_role, "pdic_staff")
-        try:
-            await _bulk_update_device_holders(
-                device_ids=device_ids,
-                holder_id=dist["to_user_id"],
-                holder_name=dist["to_user_name"],
-                holder_type=holder_type,
-                location=dist["to_user_name"],
-                status=device_status_for_recipient,
-                performed_by=user_id,
-                performed_by_name=user["name"],
-                from_user_id=dist["from_user_id"],
-                from_user_name=dist["from_user_name"],
-                notes=f"Receipt confirmed for distribution {dist['distribution_id']}",
-            )
-        except Exception:
-            logger.exception("Failed bulk device holder update for distribution %s", dist.get("distribution_id"))
-
-        # Notify sender: receipt confirmed
-        await notification_service.create_notification(
-            user_id=dist["from_user_id"],
-            title="Receipt Confirmed",
-            message=f"{user['name']} confirmed receipt of {dist['device_count']} device(s) "
-                    f"(Distribution: {dist['distribution_id']}).",
-            notification_type="success", category="distribution",
-            link=f"/distributions?distributionId={distribution_id}"
+        dispute_msg = (
+            f"DISPUTE: {user['name']} reported NOT receiving {dist['device_count']} device(s) "
+            f"sent by {sender_label}. Distribution: {dist['distribution_id']}."
         )
+        await notification_service.bulk_create_notifications([
+            {
+                "user_id": str(row[0]),
+                "title": "Device Not Received — Dispute",
+                "message": dispute_msg,
+                "notification_type": "error",
+                "category": "distribution",
+                "link": f"/distributions?distributionId={distribution_id}"
+            }
+            for row in admin_rows
+        ] + [
+            {
+                "user_id": dist["from_user_id"],
+                "title": "Receipt Disputed",
+                "message": f"{user['name']} reported NOT receiving your device(s) in distribution "
+                           f"{dist['distribution_id']}. Admin, manager, and PDIC staff have been notified.",
+                "notification_type": "error",
+                "category": "distribution",
+                "link": f"/distributions?distributionId={distribution_id}"
+            }
+        ])
 
     return await get_distribution_by_id(distribution_id)
 

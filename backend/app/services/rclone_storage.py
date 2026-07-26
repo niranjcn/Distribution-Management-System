@@ -23,7 +23,7 @@ def _ensure_rclone_config() -> Path:
             pass
     return config_path
 
-async def _run_rclone(args: List[str]) -> Tuple[bytes, bytes, int]:
+async def _run_rclone(args: List[str], timeout: int = 120) -> Tuple[bytes, bytes, int]:
     config_path = _ensure_rclone_config()
     env = _build_rclone_env()
 
@@ -36,7 +36,15 @@ async def _run_rclone(args: List[str]) -> Tuple[bytes, bytes, int]:
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
-    stdout, stderr = await process.communicate()
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        raise RuntimeError(f"rclone timed out after {timeout}s")
+
     return stdout or b"", stderr or b"", process.returncode
 
 async def upload_file_to_rclone(folder: str, file_name: str, content: bytes) -> None:

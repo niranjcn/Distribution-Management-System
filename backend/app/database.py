@@ -183,18 +183,32 @@ class MySQLDB:
 async def _ensure_pool() -> aiomysql.Pool:
     global _pool
     if _pool is None:
-        _pool = await aiomysql.create_pool(
-            host=settings.DB_HOST,
-            port=settings.DB_PORT,
-            user=settings.DB_USER,
-            password=settings.DB_PASSWORD,
-            db=settings.DB_NAME,
-            autocommit=False,
-            minsize=1,
-            maxsize=10,
-            pool_recycle=21600,
-            charset="utf8mb4",
-        )
+        max_retries = 6
+        for attempt in range(1, max_retries + 1):
+            try:
+                _pool = await aiomysql.create_pool(
+                    host=settings.DB_HOST,
+                    port=settings.DB_PORT,
+                    user=settings.DB_USER,
+                    password=settings.DB_PASSWORD,
+                    db=settings.DB_NAME,
+                    autocommit=False,
+                    minsize=1,
+                    maxsize=10,
+                    pool_recycle=21600,
+                    charset="utf8mb4",
+                )
+                return _pool
+            except Exception as exc:
+                if attempt == max_retries:
+                    print(f"DB connection failed after {max_retries} attempts: {exc}")
+                    raise
+                delay = min(2 ** attempt, 32)
+                print(
+                    f"DB connection attempt {attempt}/{max_retries} failed, "
+                    f"retrying in {delay}s... ({exc})"
+                )
+                await asyncio.sleep(delay)
     return _pool
 
 

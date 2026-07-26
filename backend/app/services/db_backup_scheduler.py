@@ -209,7 +209,7 @@ def _is_backup_due(schedule: Dict[str, Any], now: datetime) -> bool:
     return False
 
 
-async def _run_mysqldump(target_path: Path) -> None:
+async def _run_mysqldump(target_path: Path, timeout: int = 300) -> None:
     env = os.environ.copy()
     env["MYSQL_PWD"] = settings.DB_PASSWORD
 
@@ -232,20 +232,31 @@ async def _run_mysqldump(target_path: Path) -> None:
     assert process.stdout is not None
     assert process.stderr is not None
 
-    with gzip.open(target_path, "wb") as gzip_file:
-        while True:
-            chunk = await process.stdout.read(1024 * 1024)
-            if not chunk:
-                break
-            gzip_file.write(chunk)
+    async def _dump() -> None:
+        with gzip.open(target_path, "wb") as gzip_file:
+            while True:
+                chunk = await process.stdout.read(1024 * 1024)
+                if not chunk:
+                    break
+                gzip_file.write(chunk)
 
-    stderr = await process.stderr.read()
-    return_code = await process.wait()
-    if return_code != 0:
-        raise RuntimeError(f"mysqldump failed: {stderr.decode().strip()}")
+        stderr = await process.stderr.read()
+        return_code = await process.wait()
+        if return_code != 0:
+            raise RuntimeError(f"mysqldump failed: {stderr.decode().strip()}")
+
+    try:
+        await asyncio.wait_for(_dump(), timeout=timeout)
+    except asyncio.TimeoutError:
+        process.kill()
+        try:
+            target_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise RuntimeError(f"mysqldump timed out after {timeout}s")
 
 
-async def _run_rclone(target_path: Path) -> None:
+async def _run_rclone(target_path: Path, timeout: int = 300) -> None:
     remote = settings.RCLONE_REMOTE
     destination_dir = settings.RCLONE_DEST_DIR
     destination = f"{remote}:{destination_dir}" if destination_dir else f"{remote}:"
@@ -274,7 +285,14 @@ async def _run_rclone(target_path: Path) -> None:
         env=env,
     )
 
-    stdout, stderr = await process.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        raise RuntimeError(f"rclone upload timed out after {timeout}s")
+
     if process.returncode != 0:
         output = stderr.decode().strip() or stdout.decode().strip()
         raise RuntimeError(f"rclone upload failed: {output}")
