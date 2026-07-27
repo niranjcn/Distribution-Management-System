@@ -50,16 +50,16 @@ async def get_view_as_dashboard(
         cursor = await db.execute(f"SELECT * FROM devices WHERE {dc}", dp)
         target_devices = rows_to_list(await cursor.fetchall())
 
-        def_conds = [f"CAST(reported_by AS TEXT) IN ({','.join(['?'] * len(scope_ids))})"] if len(scope_ids) > 0 else ["1=0"]
-        def_params = [str(s) for s in scope_ids] if len(scope_ids) > 0 else []
-        dfc, dfp = _build_date_filter(" AND ".join(def_conds), tuple(def_params), start_date, end_date)
-        cursor = await db.execute(f"SELECT * FROM defects WHERE {dfc}", dfp)
+        str_scope_ids = [str(s) for s in scope_ids]
+        str_placeholders = ",".join(['?'] * len(str_scope_ids))
+        def_conds = [f"reported_by IN ({str_placeholders})"] if len(str_scope_ids) > 0 else ["1=0"]
+        dfc, dfp = _build_date_filter(" AND ".join(def_conds), tuple(str_scope_ids), start_date, end_date)
+        cursor = await db.execute(f"SELECT * FROM defects WHERE {dfc} LIMIT 1000", dfp)
         target_defects = rows_to_list(await cursor.fetchall())
 
-        ret_conds = [f"CAST(requested_by AS TEXT) IN ({','.join(['?'] * len(scope_ids))})"] if len(scope_ids) > 0 else ["1=0"]
-        ret_params = [str(s) for s in scope_ids] if len(scope_ids) > 0 else []
-        rc, rp = _build_date_filter(" AND ".join(ret_conds), tuple(ret_params), start_date, end_date)
-        cursor = await db.execute(f"SELECT * FROM returns WHERE {rc}", rp)
+        ret_conds = [f"requested_by IN ({str_placeholders})"] if len(str_scope_ids) > 0 else ["1=0"]
+        rc, rp = _build_date_filter(" AND ".join(ret_conds), tuple(str_scope_ids), start_date, end_date)
+        cursor = await db.execute(f"SELECT * FROM returns WHERE {rc} LIMIT 1000", rp)
         target_returns = rows_to_list(await cursor.fetchall())
 
         dist_conds = [f"(from_user_id IN ({','.join(['?'] * len(scope_ids))}) OR to_user_id IN ({','.join(['?'] * len(scope_ids))}))"] if len(scope_ids) > 0 else ["1=0"]

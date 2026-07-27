@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   Eye,
   EyeOff,
   LogIn,
-  AlertCircle
+  AlertCircle,
+  Smartphone
 } from 'lucide-react';
 import kvLogo from '../kv_logo.png';
 
@@ -15,8 +16,34 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setIsStandalone(true);
+    }
+
+    const handler = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = () => {
+    if (installPrompt) {
+      installPrompt.prompt();
+      installPrompt.userChoice.then(() => setInstallPrompt(null));
+      return;
+    }
+    setShowHelp(true);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -173,6 +200,24 @@ const Login = () => {
                 </>
               )}
             </button>
+
+            {!isStandalone && (
+              <div className="pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={handleInstall}
+                  className="w-full border border-green-700 text-green-700 hover:bg-green-50 font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
+                >
+                  <Smartphone className="w-4 h-4" />
+                  Install App
+                </button>
+                {showHelp && (
+                  <p className="mt-2 text-xs text-gray-400 text-center leading-relaxed">
+                    Open browser menu ⋮ → <span className="font-medium text-gray-500">Add to Home Screen</span>
+                  </p>
+                )}
+              </div>
+            )}
           </form>
         </div>
       </div>

@@ -756,6 +756,7 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_device_history_to_user ON device_history (to_user_id, timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_devices_created_at ON devices (created_at)",
             "CREATE INDEX idx_api_activity_logs_path_status ON api_activity_logs (path, status_code)",
+            "CREATE INDEX IF NOT EXISTS idx_returns_requested_by ON returns (requested_by, created_at)",
         ]:
             try:
                 await db.execute(stmt)

@@ -75,7 +75,7 @@ async def get_devices(
             normalized_holder_ids = [str(item).strip() for item in holder_ids if str(item).strip()]
             if normalized_holder_ids:
                 placeholders = ",".join(["?"] * len(normalized_holder_ids))
-                conditions.append(f"CAST(current_holder_id AS TEXT) IN ({placeholders})")
+                conditions.append(f"current_holder_id IN ({placeholders})")
                 params.extend(normalized_holder_ids)
         if start_date:
             conditions.append("created_at >= ?")
@@ -577,7 +577,7 @@ async def get_held_devices(holder_id: str) -> List[Dict[str, Any]]:
         ]
 
 
-async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, Any]:
+async def get_user_device_overview(user_id: str, user_role: str, limit: int = 100) -> Dict[str, Any]:
     """Get comprehensive device overview: devices in hand + under hierarchy + distribution stats.
     Also includes defective devices whose original holder is within the user's chain."""
     async with get_db() as db:
@@ -585,8 +585,8 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
 
         # Devices directly held by this user (any status)
         cursor = await db.execute(
-            "SELECT * FROM devices WHERE current_holder_id = ? ORDER BY updated_at DESC",
-            (user_id,)
+            "SELECT * FROM devices WHERE current_holder_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (user_id, limit)
         )
         held_devices = rows_to_list(await cursor.fetchall())
         held_device_ids = {str(d["id"]) for d in held_devices}
@@ -614,8 +614,9 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
             cursor = await db.execute(
                 """SELECT d.* FROM devices d
                    JOIN users u ON CAST(d.current_holder_id AS TEXT) = CAST(u.id AS TEXT)
-                   WHERE u.parent_id = ? AND u.role = 'cluster'""",
-                (uid,)
+                   WHERE u.parent_id = ? AND u.role = 'cluster'
+                   ORDER BY d.updated_at DESC LIMIT ?""",
+                (uid, limit)
             )
             cluster_devices = rows_to_list(await cursor.fetchall())
             cluster_device_ids = {str(d["id"]) for d in cluster_devices}
@@ -625,8 +626,9 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
                 """SELECT d.* FROM devices d
                    JOIN users op ON CAST(d.current_holder_id AS TEXT) = CAST(op.id AS TEXT)
                    JOIN users cl ON op.parent_id = cl.id
-                   WHERE cl.parent_id = ? AND op.role = 'operator'""",
-                (uid,)
+                   WHERE cl.parent_id = ? AND op.role = 'operator'
+                   ORDER BY d.updated_at DESC LIMIT ?""",
+                (uid, limit)
             )
             operator_devices = rows_to_list(await cursor.fetchall())
             operator_device_ids = {str(d["id"]) for d in operator_devices}
@@ -641,8 +643,9 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
                      (op.role = 'operator' AND cl.parent_id = ?)
                      OR (op.role = 'cluster' AND op.parent_id = ?)
                    )
-                   AND d.status = 'defective'""",
-                (uid, uid)
+                   AND d.status = 'defective'
+                   LIMIT ?""",
+                (uid, uid, limit)
             )
             defective_subordinate = rows_to_list(await cursor.fetchall())
 
@@ -672,8 +675,9 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
                 cursor = await db.execute(
                     f"""SELECT * FROM devices
                         WHERE CAST(current_holder_id AS TEXT) IN ({placeholders})
-                        ORDER BY updated_at DESC""",
-                    tuple(scoped_user_list),
+                        ORDER BY updated_at DESC
+                        LIMIT ?""",
+                    tuple(scoped_user_list) + (limit,),
                 )
                 subordinate_devices = rows_to_list(await cursor.fetchall())
             else:
@@ -687,8 +691,9 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
                     f"""SELECT DISTINCT d.* FROM devices d
                         JOIN defects def ON CAST(def.device_id AS TEXT) = CAST(d.id AS TEXT)
                         WHERE CAST(def.reported_by AS TEXT) IN ({placeholders})
-                          AND d.status = 'defective'""",
-                    tuple(scoped_user_list),
+                          AND d.status = 'defective'
+                        LIMIT ?""",
+                    tuple(scoped_user_list) + (limit,),
                 )
                 defective_subordinate = rows_to_list(await cursor.fetchall())
             else:
@@ -705,8 +710,9 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
             cursor = await db.execute(
                 """SELECT d.* FROM devices d
                    JOIN users u ON CAST(d.current_holder_id AS TEXT) = CAST(u.id AS TEXT)
-                   WHERE u.parent_id = ? AND u.role = 'operator'""",
-                (uid,)
+                   WHERE u.parent_id = ? AND u.role = 'operator'
+                   ORDER BY d.updated_at DESC LIMIT ?""",
+                (uid, limit)
             )
             subordinate_devices = rows_to_list(await cursor.fetchall())
             sub_device_ids = {str(d["id"]) for d in subordinate_devices}
@@ -717,8 +723,9 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
                    JOIN defects def ON CAST(def.device_id AS TEXT) = CAST(d.id AS TEXT)
                    JOIN users op ON CAST(def.reported_by AS TEXT) = CAST(op.id AS TEXT)
                    WHERE op.parent_id = ? AND op.role = 'operator'
-                   AND d.status = 'defective'""",
-                (uid,)
+                   AND d.status = 'defective'
+                   LIMIT ?""",
+                (uid, limit)
             )
             defective_subordinate = rows_to_list(await cursor.fetchall())
             for d in defective_subordinate:

@@ -1,5 +1,8 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch, MagicMock
+from contextlib import asynccontextmanager
+import io
 import pytest
+from tests.conftest import MockDB
 
 
 class TestListDevices:
@@ -573,3 +576,97 @@ class TestUpdateDeviceStatus:
         resp = client.patch(self.URL, json={"status": "in_use"})
         assert resp.status_code == 500
         assert "internal error" in resp.json()["detail"].lower()
+
+
+def _fake_db_context(mock_db):
+    @asynccontextmanager
+    async def _get_db():
+        yield mock_db
+    return _get_db
+
+
+class TestBulkUploadDevices:
+    URL = "/api/devices/bulk-upload"
+    SB_CSV = b"vendor,device_type,model,nuid,box_type\nHuawei,SB,HG8245H,NUID-00123,HD\nZTE,stb,B866S,NUID-00456,OTT\n"
+
+    @staticmethod
+    def _patch_db(monkeypatch, mock_db):
+        mock_db.add_result(fetchall_result=[])  # _fetch_existing_values → no conflicts
+        mock_db.add_result(fetchall_result=[])  # second batch if any
+        mock_db.add_result(fetchall_result=[   # SELECT after executemany → found ids
+            {"id": "1", "device_id": "SB-2026-NUID-00123"},
+            {"id": "2", "device_id": "SB-2026-NUID-00456"},
+        ])
+
+        with patch("app.routes.devices.get_db", _fake_db_context(mock_db)):
+            with patch("app.routes.devices._fetch_existing_values", AsyncMock(return_value=set())):
+                with patch("app.routes.devices._build_bulk_device_id") as mock_build_id:
+                    mock_build_id.side_effect = [
+                        "SB-2026-NUID-00123",
+                        "SB-2026-NUID-00456",
+                    ]
+                    yield
+
+    def test_sb_csv_success_returns_201(self, client, mock_device_services):
+        mock_db = MockDB()
+        for _ in self._patch_db(None, mock_db):
+            resp = client.post(
+                self.URL,
+                files={"file": ("sb_devices.csv", io.BytesIO(self.SB_CSV), "text/csv")},
+            )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["created_count"] == 2
+        assert body["data"]["error_count"] == 0
+        assert body["data"]["skipped_count"] == 0
+
+    def test_sb_csv_missing_nuid_returns_errors(self, client, mock_device_services):
+        csv = b"vendor,device_type,model,nuid,box_type\nHuawei,SB,HG8245H,,HD\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("bad.csv", io.BytesIO(csv), "text/csv")},
+        )
+        body = resp.json()
+        assert body["data"]["created_count"] == 0
+        assert body["data"]["error_count"] >= 1
+        assert any("nuid" in e["error"].lower() for e in body["data"]["errors"])
+
+    def test_sb_csv_invalid_box_type_returns_errors(self, client, mock_device_services):
+        csv = b"vendor,device_type,model,nuid,box_type\nHuawei,SB,HG8245H,NUID-00123,INVALID\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("bad.csv", io.BytesIO(csv), "text/csv")},
+        )
+        body = resp.json()
+        assert body["data"]["created_count"] == 0
+        assert body["data"]["error_count"] >= 1
+        assert any("box_type" in e["error"].lower() for e in body["data"]["errors"])
+
+    def test_sb_csv_missing_columns_returns_400(self, client, mock_device_services):
+        csv = b"vendor,model,nuid\nHuawei,HG8245H,NUID-00123\n"  # no device_type, box_type
+        resp = client.post(
+            self.URL,
+            files={"file": ("bad.csv", io.BytesIO(csv), "text/csv")},
+        )
+        assert resp.status_code == 400
+
+    def test_forbidden_non_management_returns_403(self, client, mock_device_services, set_role):
+        set_role("operator")
+        csv = b"vendor,device_type,model,nuid,box_type\nHuawei,SB,HG8245H,NUID-00123,HD\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("sb.csv", io.BytesIO(csv), "text/csv")},
+        )
+        assert resp.status_code == 403
+
+    def test_unauthenticated_returns_401(self, client, test_app):
+        from app.middleware.auth_middleware import get_current_user
+        test_app.dependency_overrides.pop(get_current_user, None)
+        csv = b"vendor,device_type,model,nuid,box_type\nHuawei,SB,HG8245H,NUID-00123,HD\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("sb.csv", io.BytesIO(csv), "text/csv")},
+        )
+        assert resp.status_code == 401

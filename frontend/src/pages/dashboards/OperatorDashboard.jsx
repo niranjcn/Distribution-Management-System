@@ -59,7 +59,7 @@ const OperatorDashboard = () => {
         const [statsRes, advancedRes, devRes, defRes, retRes, distRes] = await Promise.all([
           dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
           dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
-          devicesAPI.getMyOverview({ show_all: true }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: { all_under_me: [] } }; }),
+          devicesAPI.getMyOverview({ show_all: true, limit: 10 }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: { all_under_me: [] } }; }),
           defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
           returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; }),
           distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; })

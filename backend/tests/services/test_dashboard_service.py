@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.cache import invalidate_cache
 from app.services.dashboard_service import (
     _build_date_filter,
     _active_inactive_from_status_counts,
@@ -17,6 +18,11 @@ from app.services.dashboard_service import (
     get_advanced_dashboard_metrics,
     get_distribution_device_analytics,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    invalidate_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +187,9 @@ class TestGetDashboardStats:
         assert result["distribution_this_month"] == 15
 
     async def test_sub_distributor(self, mock_get_db, sub_distributor_user):
-        mock_get_db.add_result(fetchone_result=(12,))
-        mock_get_db.add_result(fetchone_result=(5,))
-        mock_get_db.add_result(fetchone_result=(7,))
+        mock_get_db.add_result(fetchone_result=(12, 5))
+        mock_get_db.add_result(fetchone_result=(7, 3))
         mock_get_db.add_result(fetchone_result=(10,))
-        mock_get_db.add_result(fetchone_result=(3,))
         mock_get_db.add_result(fetchall_result=[(100,), (101,)])
         mock_get_db.add_result(fetchall_result=[(200,), (201,)])
         mock_get_db.add_result(fetchone_result=(4,))

@@ -2,6 +2,7 @@ import asyncio
 from typing import Dict, Any, Optional
 
 from app.database import get_db
+from app.core.cache import cached
 from app.services import device_service, distribution_service, defect_service, return_service, user_service, approval_service, operator_service
 
 from .helpers import _build_date_filter, _resolve_scope_root_for_sub_distribution_manager, _get_descendant_user_ids
@@ -11,6 +12,17 @@ async def get_dashboard_stats(user: Dict[str, Any],
                               start_date: Optional[str] = None,
                               end_date: Optional[str] = None) -> Dict[str, Any]:
     """Get dashboard statistics based on user role"""
+    role = user.get("role")
+    user_id = str(user.get("_id", user.get("id", "")))
+    scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
+
+    cache_key = f"dashboard_stats:{user_id}:{role}:{scope_root_id}:{start_date}:{end_date}"
+    return await cached(ttl_seconds=30, key=cache_key, factory=lambda: _compute_dashboard_stats(user, start_date, end_date))
+
+
+async def _compute_dashboard_stats(user: Dict[str, Any],
+                                   start_date: Optional[str] = None,
+                                   end_date: Optional[str] = None) -> Dict[str, Any]:
     role = user.get("role")
     user_id = str(user.get("_id", user.get("id", "")))
     scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
@@ -125,24 +137,24 @@ async def get_dashboard_stats(user: Dict[str, Any],
     elif role == "sub_distributor":
         async with get_db() as db:
             dc, dp = _build_date_filter("current_holder_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {dc}", dp)
-            my_devices = (await cursor.fetchone())[0]
-
-            ac, ap = _build_date_filter("current_holder_id = ? AND status = 'available'", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {ac}", ap)
-            available_devices = (await cursor.fetchone())[0]
+            cursor = await db.execute(
+                f"SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) AS available FROM devices WHERE {dc}", dp
+            )
+            row = await cursor.fetchone()
+            my_devices = int(row[0])
+            available_devices = int(row[1]) if row[1] is not None else 0
 
             sc, sp = _build_date_filter("from_user_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {sc}", sp)
-            sent = (await cursor.fetchone())[0]
+            cursor = await db.execute(
+                f"SELECT COUNT(*) AS sent, SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending FROM distributions WHERE {sc}", sp
+            )
+            row = await cursor.fetchone()
+            sent = int(row[0])
+            pending = int(row[1]) if row[1] is not None else 0
 
             rc, rp = _build_date_filter("to_user_id = ?", (user_id,), start_date, end_date)
             cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {rc}", rp)
-            received = (await cursor.fetchone())[0]
-
-            pc, pp = _build_date_filter("from_user_id = ? AND status = 'pending'", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {pc}", pp)
-            pending = (await cursor.fetchone())[0]
+            received = int((await cursor.fetchone())[0])
 
             cursor = await db.execute("SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = ?", (int(user_id),))
             sub_dist_manager_ids = [row[0] for row in await cursor.fetchall()]
@@ -163,7 +175,7 @@ async def get_dashboard_stats(user: Dict[str, Any],
                     f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND parent_id IN ({placeholders})",
                     tuple(cluster_ids)
                 )
-                operator_count = (await cursor.fetchone())[0]
+                operator_count = int((await cursor.fetchone())[0])
             else:
                 operator_count = 0
 
@@ -180,43 +192,52 @@ async def get_dashboard_stats(user: Dict[str, Any],
     elif role == "sub_distribution_manager":
         async with get_db() as db:
             scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
-            placeholders = ",".join(["?"] * len(scope_ids)) if scope_ids else "?"
 
-            dc, dp = _build_date_filter(f"current_holder_id IN ({placeholders})", tuple(scope_ids), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {dc}", dp)
-            branch_devices = (await cursor.fetchone())[0]
+            if not scope_ids:
+                branch_devices = available_devices = sent = received = pending = operator_count = defect_reports = return_requests = 0
+            else:
+                placeholders = ",".join(["?"] * len(scope_ids))
+                sp_ids = tuple(scope_ids)
+                str_scope_ids = [str(s) for s in scope_ids]
+                str_pl = ",".join(["?"] * len(str_scope_ids))
+                sp_str = tuple(str_scope_ids)
 
-            ac, ap = _build_date_filter(f"current_holder_id IN ({placeholders}) AND status = 'available'", tuple(scope_ids), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {ac}", ap)
-            available_devices = (await cursor.fetchone())[0]
+                dc, dp = _build_date_filter(f"current_holder_id IN ({placeholders})", sp_ids, start_date, end_date)
+                ac, ap = _build_date_filter(f"current_holder_id IN ({placeholders}) AND status = 'available'", sp_ids, start_date, end_date)
+                sc, sp = _build_date_filter(f"from_user_id IN ({placeholders})", sp_ids, start_date, end_date)
+                rc, rp = _build_date_filter(f"to_user_id IN ({placeholders})", sp_ids, start_date, end_date)
+                dec, dep = _build_date_filter(f"reported_by IN ({str_pl})", sp_str, start_date, end_date)
+                rec, rep = _build_date_filter(f"requested_by IN ({str_pl})", sp_str, start_date, end_date)
 
-            sc, sp = _build_date_filter(f"from_user_id IN ({placeholders})", tuple(scope_ids), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {sc}", sp)
-            sent = (await cursor.fetchone())[0]
+                cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {dc}", dp)
+                branch_devices = (await cursor.fetchone())[0]
 
-            rc, rp = _build_date_filter(f"to_user_id IN ({placeholders})", tuple(scope_ids), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {rc}", rp)
-            received = (await cursor.fetchone())[0]
+                cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {ac}", ap)
+                available_devices = (await cursor.fetchone())[0]
 
-            cursor = await db.execute(
-                f"SELECT COUNT(*) FROM distributions WHERE to_user_id = ? AND status = 'pending_receipt'",
-                (user_id,)
-            )
-            pending = (await cursor.fetchone())[0]
+                cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {sc}", sp)
+                sent = (await cursor.fetchone())[0]
 
-            cursor = await db.execute(
-                f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND id IN ({placeholders})",
-                tuple(scope_ids)
-            )
-            operator_count = (await cursor.fetchone())[0]
+                cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {rc}", rp)
+                received = (await cursor.fetchone())[0]
 
-            dec, dep = _build_date_filter(f"CAST(reported_by AS TEXT) IN ({placeholders})", tuple(scope_ids), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dec}", dep)
-            defect_reports = (await cursor.fetchone())[0]
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM distributions WHERE to_user_id = ? AND status = 'pending_receipt'",
+                    (int(user_id),)
+                )
+                pending = (await cursor.fetchone())[0]
 
-            rec, rep = _build_date_filter(f"CAST(requested_by AS TEXT) IN ({placeholders})", tuple(scope_ids), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM returns WHERE {rec}", rep)
-            return_requests = (await cursor.fetchone())[0]
+                cursor = await db.execute(
+                    f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND id IN ({placeholders})",
+                    sp_ids
+                )
+                operator_count = (await cursor.fetchone())[0]
+
+                cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dec}", dep)
+                defect_reports = (await cursor.fetchone())[0]
+
+                cursor = await db.execute(f"SELECT COUNT(*) FROM returns WHERE {rec}", rep)
+                return_requests = (await cursor.fetchone())[0]
 
         stats = {
             "my_devices": branch_devices,

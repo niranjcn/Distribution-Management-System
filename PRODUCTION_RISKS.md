@@ -296,10 +296,10 @@
 **Why:** `MAX_EXPORT=100000` selects all rows without streaming.
 **Verified:** Still broken — no streaming; 100K rows fully loaded into RAM.
 
-### 58. 🆕 CAST() in WHERE clauses prevents index usage 📋
-**Files:** `device_service.py`, `dashboard_service/view_as.py`, `dashboard_service/stats.py`
-**Why:** `CAST(holder_id AS TEXT)` and `CAST(... AS UNSIGNED)` cause full table scans.
-**Verified:** Still broken — 10+ queries still using CAST in WHERE.
+### 58. 🆕 CAST() in WHERE clauses prevents index usage ✅ FIXED
+**Files:** `device_service.py`, `dashboard_service/view_as.py`, `dashboard_service/stats.py`, `dashboard_service/analytics.py`
+**Why:** `CAST(holder_id AS TEXT)` and `CAST(... AS UNSIGNED/BINARY)` cause full table scans.
+**Verified:** Fixed — 7 locations cleaned up. Replaced `CAST(reported_by AS TEXT) IN (...)` with `reported_by IN (...)`, `CAST(u.id AS BINARY)` with `CAST(u.id AS CHAR)`, and `CAST(current_holder_id AS TEXT)` with direct comparison. Remaining CASTs in `generate_report()` (report export path, not dashboard hot path).
 
 ### 59. 🆕 Race condition on shared metrics state ✅ FIXED
 **File:** `backend/app/core/metrics_collector.py`
@@ -425,9 +425,9 @@
 ## Summary
 
 ```
-✅ FIXED:   24  (1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 16, 17, 18, 26, 30, 56, 59, 67, 69, 70, 76, 77, 78, 79)
+✅ FIXED:   25  (1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 16, 17, 18, 26, 30, 56, 58, 59, 67, 69, 70, 76, 77, 78, 79)
 ⚡ PARTIAL:  2  (28, 35)
-📋 BROKEN:  60  (all remaining)
+📋 BROKEN:  59  (all remaining)
 ```
 
 | Severity | Count | Impact |
@@ -436,7 +436,7 @@
 | 🔴 High | 41 | Will degrade or break under load / realistic edge cases |
 | 🟡 Medium | 26 | Will cause errors, performance issues, or operational burden |
 
-**Fixed: 24 | Partial: 2 | Still broken: 60**
+**Fixed: 25 | Partial: 2 | Still broken: 59**
 
 ---
 

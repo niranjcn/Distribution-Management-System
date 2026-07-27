@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
 from app.database import get_db
+from app.core.cache import cached
 from app.services import device_service, user_service, defect_service, return_service, distribution_service, approval_service
 
 from .helpers import (
@@ -20,6 +21,13 @@ from .kpi import get_system_alerts
 async def get_advanced_dashboard_metrics(user: Dict[str, Any],
                                          start_date: Optional[str] = None,
                                          end_date: Optional[str] = None) -> Dict[str, Any]:
+    cache_key = f"advanced_metrics:{user.get('_id', user.get('id', ''))}:{user.get('role')}:{start_date}:{end_date}"
+    return await cached(ttl_seconds=30, key=cache_key, factory=lambda: _compute_advanced_dashboard_metrics(user, start_date, end_date))
+
+
+async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
+                                              start_date: Optional[str] = None,
+                                              end_date: Optional[str] = None) -> Dict[str, Any]:
     """Get advanced analytics payload for management dashboards."""
     role = user.get("role")
     user_id = str(user.get("_id", user.get("id", "")))

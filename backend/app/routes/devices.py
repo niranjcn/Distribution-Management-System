@@ -272,6 +272,7 @@ async def get_my_device_overview(
     page_size: int = Query(100, ge=1),
     show_all: bool = Query(False),
     paginate: bool = Query(False),
+    limit: Optional[int] = Query(None, ge=1, le=5000),
     scope: str = Query("all"),
     req_status: Optional[str] = Query(None, alias="status"),
     device_type: Optional[str] = None,
@@ -340,9 +341,11 @@ async def get_my_device_overview(
                 }
             }
         else:
+            effective_limit = limit if limit is not None else (10 if show_all else min(page_size, 1000))
             overview = await device_service.get_user_device_overview(
                 user_id=current_user["id"],
-                user_role=role
+                user_role=role,
+                limit=effective_limit
             )
             scope_normalized = str(scope or "all").strip().lower()
             if scope_normalized == "mine":
