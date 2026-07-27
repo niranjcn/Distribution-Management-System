@@ -21,6 +21,10 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
     """Get current authenticated user from JWT token"""
+    cached = getattr(request.state, "current_user", None)
+    if cached is not None:
+        return cached
+
     token = credentials.credentials if credentials else request.cookies.get("access_token")
 
     if not token:
@@ -69,6 +73,10 @@ async def get_current_user_optional(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
 ):
     """Get current user if token is provided, else return None"""
+    cached = getattr(request.state, "current_user", None)
+    if cached is not None:
+        return cached
+
     token = credentials.credentials if credentials else request.cookies.get("access_token")
     if token is None:
         return None

@@ -16,6 +16,44 @@ const getCookieValue = (name) => {
   return match ? decodeURIComponent(match[1]) : null;
 };
 
+// Attempt to refresh the access token using the httpOnly refresh-token cookie.
+// Uses a deduplication guard so concurrent 401s only trigger one refresh request.
+const attemptTokenRefresh = async () => {
+  if (_refreshing) {
+    // Another refresh is already in flight — wait for it
+    return _refreshPromise;
+  }
+
+  _refreshing = true;
+  _refreshPromise = (async () => {
+    try {
+      const csrfToken = getCookieValue('csrftoken');
+      const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+        },
+      });
+      if (res.ok) {
+        log('[API] Token refresh succeeded');
+        return true;
+      }
+      logError('[API] Token refresh failed with status:', res.status);
+      return false;
+    } catch (err) {
+      logError('[API] Token refresh request error:', err.message);
+      return false;
+    } finally {
+      _refreshing = false;
+      _refreshPromise = null;
+    }
+  })();
+
+  return _refreshPromise;
+};
+
 const isUnsafeMethod = (method) => !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method.toUpperCase());
 
 const buildCsrfHeader = (method) => {

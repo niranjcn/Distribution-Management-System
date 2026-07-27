@@ -601,32 +601,34 @@ async def request_device_edit(
             f"Proposed Changes: {changes_summary or 'No changes specified'}"
         )
 
-        notified_count = 0
+        notified_count = len(reviewer_ids)
         notification_failures = 0
-        for reviewer_id in reviewer_ids:
-            try:
-                await notification_service.create_notification(
-                    user_id=reviewer_id,
-                    title="Device Edit Approval Request",
-                    message=message,
-                    notification_type="device_edit_request",
-                    link="/devices/edit-requests",
-                    category="approval",
-                    metadata={
+        try:
+            notifications = [
+                {
+                    "user_id": reviewer_id,
+                    "title": "Device Edit Approval Request",
+                    "message": message,
+                    "notification_type": "device_edit_request",
+                    "category": "approval",
+                    "link": "/devices/edit-requests",
+                    "metadata": {
                         "action": "device_edit_change",
                         "request_id": request_id,
                         "device_id": str(device_id),
                         "requested_by": str(current_user.get("id") or ""),
                     },
-                )
-                notified_count += 1
-            except Exception:
-                notification_failures += 1
-                logger.exception(
-                    "Failed sending device edit notification | request_id=%s | reviewer_id=%s",
-                    request_id,
-                    reviewer_id,
-                )
+                }
+                for reviewer_id in reviewer_ids
+            ]
+            await notification_service.bulk_create_notifications(notifications)
+        except Exception:
+            notification_failures = notified_count
+            notified_count = 0
+            logger.exception(
+                "Failed sending device edit notifications | request_id=%s",
+                request_id,
+            )
 
         message_text = f"Edit request submitted. Sent to {notified_count} reviewer(s) for approval."
         if notification_failures:

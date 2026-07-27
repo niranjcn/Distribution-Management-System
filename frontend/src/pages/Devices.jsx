@@ -94,7 +94,7 @@ const Devices = () => {
   const loadingWindowsRef = useRef(new Set());
   const tableQueryVersionRef = useRef(0);
 
-  const deviceTypeOptions = ['ONT', 'ONU', 'Router', 'Switch', 'Modem', 'Access Point', 'SB', 'Other'];
+  const deviceTypeOptions = ['ONT', 'ONU', 'OLT', 'Router', 'Switch', 'Modem', 'Access Point', 'SB', 'Other'];
   const bandTypeOptions = [
     { value: 'single_band', label: 'Single Band' },
     { value: 'dual_band', label: 'Dual Band' },

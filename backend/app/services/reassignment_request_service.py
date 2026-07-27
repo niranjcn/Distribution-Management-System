@@ -161,11 +161,12 @@ async def reassign_users(
         deleted_user_id = int(req["deleted_user_id"])
         now = datetime.now().replace(tzinfo=None).isoformat()
 
-        for child in direct_children:
-            child_id = int(child["id"])
+        if direct_children:
+            child_ids = [int(child["id"]) for child in direct_children]
+            placeholders = ",".join("?" * len(child_ids))
             await db.execute(
-                "UPDATE users SET parent_id = ?, updated_at = ? WHERE id = ?",
-                (new_parent_id, now, child_id)
+                f"UPDATE users SET parent_id = ?, updated_at = ? WHERE id IN ({placeholders})",
+                [new_parent_id, now] + child_ids
             )
 
         await db.execute(

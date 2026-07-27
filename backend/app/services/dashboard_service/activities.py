@@ -52,6 +52,8 @@ async def get_admin_activities(
     """Get unified activity stream for admin users with filtering."""
     normalized_category = (category or "all").strip().lower()
     activities: List[Dict[str, Any]] = []
+    fetch_limit = (page + 1) * page_size
+    table_total = 0
 
     async with get_db() as db:
         if normalized_category in {"all", "device"}:
@@ -85,14 +87,20 @@ async def get_admin_activities(
 
             where_clause = " AND ".join(conditions)
             cursor = await db.execute(
+                f"SELECT COUNT(*) FROM device_history WHERE {where_clause}",
+                params,
+            )
+            table_total += (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
                 f"""SELECT id, device_id, action, notes, performed_by_name, timestamp
                     FROM device_history
                     WHERE {where_clause}
-                    ORDER BY timestamp DESC""",
-                params,
+                    ORDER BY timestamp DESC
+                    LIMIT ?""",
+                params + [fetch_limit],
             )
-            rows = await cursor.fetchall()
-            for row in rows:
+            for row in await cursor.fetchall():
                 item = dict(row)
                 actor_name = item.get("performed_by_name") or "Unknown"
                 description = (
@@ -134,14 +142,20 @@ async def get_admin_activities(
 
             where_clause = " AND ".join(conditions)
             cursor = await db.execute(
+                f"SELECT COUNT(*) FROM inventory_stock_movements WHERE {where_clause}",
+                params,
+            )
+            table_total += (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
                 f"""SELECT id, item_sku, item_name, movement_type, notes, performed_by_name, created_at
                     FROM inventory_stock_movements
                     WHERE {where_clause}
-                    ORDER BY created_at DESC""",
-                params,
+                    ORDER BY created_at DESC
+                    LIMIT ?""",
+                params + [fetch_limit],
             )
-            rows = await cursor.fetchall()
-            for row in rows:
+            for row in await cursor.fetchall():
                 item = dict(row)
                 actor_name = item.get("performed_by_name") or "Unknown"
                 description = (
@@ -186,14 +200,20 @@ async def get_admin_activities(
 
             where_clause = " AND ".join(conditions)
             cursor = await db.execute(
+                f"SELECT COUNT(*) FROM api_activity_logs WHERE {where_clause}",
+                params,
+            )
+            table_total += (await cursor.fetchone())[0]
+
+            cursor = await db.execute(
                 f"""SELECT id, actor_name, method, path, status_code, description, created_at
                     FROM api_activity_logs
                     WHERE {where_clause}
-                    ORDER BY created_at DESC""",
-                params,
+                    ORDER BY created_at DESC
+                    LIMIT ?""",
+                params + [fetch_limit],
             )
-            rows = await cursor.fetchall()
-            for row in rows:
+            for row in await cursor.fetchall():
                 item = dict(row)
                 path_value = str(item.get("path") or "")
 
@@ -228,7 +248,6 @@ async def get_admin_activities(
                 )
 
     activities.sort(key=lambda x: str(x.get("date") or ""), reverse=True)
-    total = len(activities)
     start_idx = max(0, (page - 1) * page_size)
     end_idx = start_idx + page_size
     paged = activities[start_idx:end_idx]
@@ -238,8 +257,8 @@ async def get_admin_activities(
         "pagination": {
             "page": page,
             "page_size": page_size,
-            "total": total,
-            "total_pages": ((total + page_size - 1) // page_size) if page_size > 0 else 0,
+            "total": table_total,
+            "total_pages": ((table_total + page_size - 1) // page_size) if page_size > 0 else 0,
         },
     }
 

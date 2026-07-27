@@ -193,8 +193,8 @@ async def _ensure_pool() -> aiomysql.Pool:
                     password=settings.DB_PASSWORD,
                     db=settings.DB_NAME,
                     autocommit=False,
-                    minsize=1,
-                    maxsize=10,
+                    minsize=5,
+                    maxsize=50,
                     pool_recycle=21600,
                     charset="utf8mb4",
                 )
@@ -309,6 +309,16 @@ CREATE_TABLE_STATEMENTS = [
         performed_by_name VARCHAR(255),
         timestamp VARCHAR(64) NOT NULL,
         INDEX idx_device_history_device_id(device_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS distribution_devices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        distribution_id VARCHAR(128) NOT NULL,
+        device_id INT NOT NULL,
+        created_at VARCHAR(64) NOT NULL,
+        INDEX idx_distribution_devices_dist_id (distribution_id),
+        INDEX idx_distribution_devices_device_id (device_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     """
@@ -739,6 +749,12 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_users_role_status ON users (role, status)",
             "CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications (user_id, is_read)",
             "CREATE INDEX IF NOT EXISTS idx_distributions_to_status ON distributions (to_user_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_device_history_timestamp ON device_history (timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_device_history_performed_by ON device_history (performed_by, timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_device_history_from_user ON device_history (from_user_id, timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_device_history_to_user ON device_history (to_user_id, timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_devices_created_at ON devices (created_at)",
+            "CREATE INDEX idx_api_activity_logs_path_status ON api_activity_logs (path, status_code)",
         ]:
             try:
                 await db.execute(stmt)
@@ -776,6 +792,22 @@ async def init_db():
             "UPDATE users SET role = 'pdic_staff' WHERE role = 'pdic_staff'",
         ]:
             await db.execute(stmt)
+
+        try:
+            await db.execute("""
+                INSERT IGNORE INTO distribution_devices (distribution_id, device_id, created_at)
+                SELECT
+                    d.distribution_id,
+                    jt.device_id,
+                    d.created_at
+                FROM distributions d
+                CROSS JOIN JSON_TABLE(
+                    d.device_ids,
+                    '$[*]' COLUMNS (device_id INT PATH '$')
+                ) jt
+            """)
+        except Exception:
+            pass
 
         await db.execute(
             """

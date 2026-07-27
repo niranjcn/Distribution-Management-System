@@ -305,11 +305,13 @@ const RegisterDevice = () => {
                 >
                   <option value="ONT">ONT</option>
                   <option value="ONU">ONU</option>
+                  <option value="OLT">OLT</option>
                   <option value="Router">Router</option>
                   <option value="Switch">Switch</option>
                   <option value="Modem">Modem</option>
                   <option value="Access Point">Access Point</option>
                   <option value="SB">SB</option>
+                  <option value="Other">Other</option>
                 </select>
               </div>
 

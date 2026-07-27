@@ -7,7 +7,7 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 2G
+          memory: 3G
     logging:
       driver: json-file
       options:
@@ -20,6 +20,10 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       TZ: Asia/Kolkata
     command: ["--default-time-zone=+05:30"]
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
     expose:
       - "3306"
     volumes:
@@ -44,8 +48,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '2.0'
+          memory: 3G
     logging:
       driver: json-file
       options:

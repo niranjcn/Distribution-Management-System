@@ -81,6 +81,9 @@ async def lifespan(app: FastAPI):
 
     app.state.db_backup_scheduler = await start_db_backup_scheduler()
 
+    from app.services.activity_log_cleanup import start_activity_log_cleanup_scheduler, shutdown_activity_log_cleanup_scheduler
+    app.state.activity_log_cleanup_scheduler = await start_activity_log_cleanup_scheduler()
+
     from app.services.metrics_collector import metrics_collector_loop
     metrics_task = asyncio.create_task(metrics_collector_loop())
     app.state.metrics_collector_task = metrics_task
@@ -99,6 +102,10 @@ async def lifespan(app: FastAPI):
     scheduler = getattr(app.state, "db_backup_scheduler", None)
     if scheduler:
         shutdown_db_backup_scheduler()
+
+    log_scheduler = getattr(app.state, "activity_log_cleanup_scheduler", None)
+    if log_scheduler:
+        shutdown_activity_log_cleanup_scheduler()
 
     metrics_task = getattr(app.state, "metrics_collector_task", None)
     if metrics_task:

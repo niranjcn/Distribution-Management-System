@@ -234,18 +234,6 @@ async def _bulk_update_device_holders(
         return [str(dev_id) for dev_id in existing_ids]
 
 
-async def _device_has_open_distribution_lock(db, device_id: str) -> bool:
-    cursor = await db.execute(
-        "SELECT 1 FROM distributions WHERE status IN (?, ?) AND JSON_CONTAINS(device_ids, ?) LIMIT 1",
-        (
-            DistributionStatus.PENDING_RECEIPT.value,
-            DistributionStatus.DISPUTED.value,
-            json.dumps(str(device_id)),
-        ),
-    )
-    return cursor.fetchone() is not None
-
-
 async def _get_distribution_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:
     role = str(user.get("role") or "")
     user_id = str(user.get("id") or user.get("_id") or "")
@@ -400,51 +388,86 @@ async def create_distribution_from_identifiers(
     resolved_device_ids: List[str] = []
     seen_device_ids = set()
 
+    all_macs: List[str] = []
+    all_serials: List[str] = []
+    all_nuids: List[str] = []
+    row_lookup: List[Dict[str, Any]] = []
+
+    for row in identifier_rows:
+        mac_address = str(row.get("mac_address") or "").strip()
+        serial_number = str(row.get("serial_number") or "").strip()
+        nuid = str(row.get("nuid") or "").strip()
+
+        if not mac_address and not serial_number and not nuid:
+            errors.append({
+                "row": int(row.get("row") or 0),
+                "identifier": "",
+                "error": "Provide at least one identifier: mac_address, serial_number, or nuid",
+            })
+            continue
+
+        if mac_address:
+            all_macs.append(mac_address.lower())
+        if serial_number:
+            all_serials.append(serial_number.lower())
+        if nuid:
+            all_nuids.append(nuid.lower())
+
+        row_lookup.append({
+            "row": int(row.get("row") or 0),
+            "mac_address": mac_address,
+            "serial_number": serial_number,
+            "nuid": nuid,
+        })
+
     async with get_db() as db:
-        for row in identifier_rows:
-            row_number = int(row.get("row") or 0)
-            mac_address = str(row.get("mac_address") or "").strip()
-            serial_number = str(row.get("serial_number") or "").strip()
-            nuid = str(row.get("nuid") or "").strip()
+        mac_map: Dict[str, Any] = {}
+        serial_map: Dict[str, Any] = {}
+        nuid_map: Dict[str, Any] = {}
 
-            if not mac_address and not serial_number and not nuid:
-                errors.append({
-                    "row": row_number,
-                    "identifier": "",
-                    "error": "Provide at least one identifier: mac_address, serial_number, or nuid",
-                })
-                continue
+        all_macs = list(set(all_macs))
+        all_serials = list(set(all_serials))
+        all_nuids = list(set(all_nuids))
 
-            device_by_mac = None
-            device_by_serial = None
-            device_by_nuid = None
+        if all_macs:
+            placeholders = ",".join("?" * len(all_macs))
+            cursor = await db.execute(
+                f"SELECT * FROM devices WHERE lower(trim(mac_address)) IN ({placeholders})",
+                all_macs,
+            )
+            for device_row in await cursor.fetchall():
+                dev = row_to_dict(device_row)
+                mac_map[dev["mac_address"].strip().lower()] = dev
 
-            if mac_address:
-                cursor = await db.execute(
-                    "SELECT * FROM devices WHERE lower(trim(mac_address)) = lower(trim(?))",
-                    (mac_address,),
-                )
-                row_mac = await cursor.fetchone()
-                if row_mac:
-                    device_by_mac = row_to_dict(row_mac)
+        if all_serials:
+            placeholders = ",".join("?" * len(all_serials))
+            cursor = await db.execute(
+                f"SELECT * FROM devices WHERE lower(trim(serial_number)) IN ({placeholders})",
+                all_serials,
+            )
+            for device_row in await cursor.fetchall():
+                dev = row_to_dict(device_row)
+                serial_map[dev["serial_number"].strip().lower()] = dev
 
-            if nuid:
-                cursor = await db.execute(
-                    "SELECT * FROM devices WHERE lower(trim(nuid)) = lower(trim(?))",
-                    (nuid,),
-                )
-                row_nuid = await cursor.fetchone()
-                if row_nuid:
-                    device_by_nuid = row_to_dict(row_nuid)
+        if all_nuids:
+            placeholders = ",".join("?" * len(all_nuids))
+            cursor = await db.execute(
+                f"SELECT * FROM devices WHERE lower(trim(nuid)) IN ({placeholders})",
+                all_nuids,
+            )
+            for device_row in await cursor.fetchall():
+                dev = row_to_dict(device_row)
+                nuid_map[dev["nuid"].strip().lower()] = dev
 
-            if serial_number:
-                cursor = await db.execute(
-                    "SELECT * FROM devices WHERE lower(trim(serial_number)) = lower(trim(?))",
-                    (serial_number,),
-                )
-                row_serial = await cursor.fetchone()
-                if row_serial:
-                    device_by_serial = row_to_dict(row_serial)
+        for item in row_lookup:
+            row_number = item["row"]
+            mac_address = item["mac_address"]
+            serial_number = item["serial_number"]
+            nuid = item["nuid"]
+
+            device_by_mac = mac_map.get(mac_address.lower()) if mac_address else None
+            device_by_serial = serial_map.get(serial_number.lower()) if serial_number else None
+            device_by_nuid = nuid_map.get(nuid.lower()) if nuid else None
 
             resolved_candidates = [d for d in [device_by_mac, device_by_serial, device_by_nuid] if d]
             if resolved_candidates:
@@ -609,19 +632,29 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
         # Validate devices (batch fetch + in-memory validation)
         validated_devices: List[Dict[str, Any]] = []
 
-        # Hoist the pending_receipt check — same query across all device iterations
+        # Batch fetch all distributions with open locks
+        open_lock_device_ids: Set[str] = set()
         pending_blocked: set = set()
         if from_role not in ["super_admin", "manager", "pdic_staff"]:
-            cursor2 = await db.execute(
-                "SELECT device_ids FROM distributions WHERE to_user_id = ? AND status = ?",
-                (from_user_id, DistributionStatus.PENDING_RECEIPT.value)
+            cursor_blocked = await db.execute(
+                """SELECT dd.device_id
+                   FROM distribution_devices dd
+                   INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
+                   WHERE d.to_user_id = ? AND d.status = ?""",
+                (from_user_id, DistributionStatus.PENDING_RECEIPT.value),
             )
-            for prow in await cursor2.fetchall():
-                try:
-                    for pid in json.loads(prow[0] or '[]'):
-                        pending_blocked.add(str(pid))
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            for row in await cursor_blocked.fetchall():
+                pending_blocked.add(str(row[0]))
+
+        cursor_lock = await db.execute(
+            """SELECT dd.device_id
+               FROM distribution_devices dd
+               INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
+               WHERE d.status IN (?, ?)""",
+            (DistributionStatus.PENDING_RECEIPT.value, DistributionStatus.DISPUTED.value),
+        )
+        for lock_row in await cursor_lock.fetchall():
+            open_lock_device_ids.add(str(lock_row[0]))
 
         # Batch device fetch
         device_ids_int = [int(x) for x in dist_data.device_ids]
@@ -637,7 +670,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 raise ValueError(
                     f"Device {device['device_id']} is marked defective and cannot be transferred"
                 )
-            if await _device_has_open_distribution_lock(db, str(dev_id)):
+            if str(dev_id) in open_lock_device_ids:
                 raise ValueError(
                     f"Device {device['device_id']} is already in an unconfirmed or disputed distribution"
                 )
@@ -683,6 +716,11 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
             )
         )
         new_id = str(cursor.lastrowid)
+
+        await db.executemany(
+            """INSERT INTO distribution_devices (distribution_id, device_id, created_at) VALUES (?, ?, ?)""",
+            [(dist_id, int(dev_id), now) for dev_id in dist_data.device_ids],
+        )
 
         manifest_file = None
         try:
@@ -973,24 +1011,20 @@ async def confirm_disputed_return(
         await db.commit()
 
         device_ids = dist.get("device_ids", []) or []
-        for dev_id in device_ids:
-            try:
-                await device_service.update_device_holder(
-                    device_id=str(dev_id),
-                    holder_id=dist["from_user_id"],
-                    holder_name=dist["from_user_name"],
-                    holder_type=sender_holder_type,
-                    location=dist["from_user_name"],
-                    status=sender_status,
-                    performed_by=str(user.get("id", user.get("_id", ""))),
-                    performed_by_name=str(user.get("name") or "PDIC"),
-                    from_user_id=dist.get("to_user_id"),
-                    from_user_name=dist.get("to_user_name"),
-                    notes=f"Disputed return confirmed for distribution {dist.get('distribution_id')}",
-                    db=db,
-                )
-            except Exception:
-                pass
+        if device_ids:
+            await _bulk_update_device_holders(
+                device_ids=device_ids,
+                holder_id=dist["from_user_id"],
+                holder_name=dist["from_user_name"],
+                holder_type=sender_holder_type,
+                location=dist["from_user_name"],
+                status=sender_status,
+                performed_by=str(user.get("id", user.get("_id", ""))),
+                performed_by_name=str(user.get("name") or "PDIC"),
+                from_user_id=dist.get("to_user_id"),
+                from_user_name=dist.get("to_user_name"),
+                notes=f"Disputed return confirmed for distribution {dist.get('distribution_id')}",
+            )
 
     await notification_service.create_notification(
         user_id=str(dist["from_user_id"]),
@@ -1169,23 +1203,21 @@ async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
                 except (json.JSONDecodeError, TypeError):
                     device_ids = []
 
-            for dev_id in device_ids:
-                try:
-                    await device_service.update_device_holder(
-                        device_id=dev_id, holder_id=dist["to_user_id"],
-                        holder_name=dist["to_user_name"],
-                        holder_type=dist.get("to_user_type", "pdic_staff"),
-                        location=dist["to_user_name"],
-                        status=DeviceStatus.DISTRIBUTED.value,
-                        performed_by=user_id, performed_by_name=user.get("name", "System"),
-                        from_user_id=dist.get("from_user_id"),
-                        from_user_name=dist.get("from_user_name"),
-                        notes=f"Synced from approved distribution {dist.get('distribution_id', '')}",
-                        db=db,
-                    )
-                    synced_count += 1
-                except Exception as e:
-                    errors.append(f"Device {dev_id}: {str(e)}")
+            if device_ids:
+                updated = await _bulk_update_device_holders(
+                    device_ids=device_ids,
+                    holder_id=dist["to_user_id"],
+                    holder_name=dist["to_user_name"],
+                    holder_type=dist.get("to_user_type", "pdic_staff"),
+                    location=dist["to_user_name"],
+                    status=DeviceStatus.DISTRIBUTED.value,
+                    performed_by=user_id,
+                    performed_by_name=user.get("name", "System"),
+                    from_user_id=dist.get("from_user_id"),
+                    from_user_name=dist.get("from_user_name"),
+                    notes=f"Synced from approved distribution {dist.get('distribution_id', '')}",
+                )
+                synced_count += len(updated)
 
     return {"total_distributions": len(distributions), "devices_synced": synced_count, "errors": errors}
 

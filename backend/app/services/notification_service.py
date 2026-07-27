@@ -180,15 +180,16 @@ async def send_bulk_notification(
     link: Optional[str] = None
 ) -> int:
     """Send notification to multiple users"""
-    async with get_db() as db:
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        count = 0
-        for uid in user_ids:
-            await db.execute(
-                """INSERT INTO notifications (user_id, title, message, type, category, is_read, link, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (uid, title, message, notification_type, category, 0, link, now)
-            )
-            count += 1
-        await db.commit()
-        return count
+    notifications = [
+        {
+            "user_id": uid,
+            "title": title,
+            "message": message,
+            "notification_type": notification_type,
+            "category": category,
+            "link": link,
+        }
+        for uid in user_ids
+    ]
+    await bulk_create_notifications(notifications)
+    return len(user_ids)

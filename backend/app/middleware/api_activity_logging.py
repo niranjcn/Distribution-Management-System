@@ -33,6 +33,7 @@ class ApiActivityLoggingMiddleware(BaseHTTPMiddleware):
                     actor_id = str(user.get("id") or user.get("_id") or user.get("user_id") or user.get("sub") or "")
                     actor_name = str(user.get("name") or user.get("email") or "Anonymous")
                     actor_role = str(user.get("role") or "")
+                    request.state.current_user = user
             except Exception:
                 pass
 

@@ -5,7 +5,7 @@ from app.database import get_db
 
 logger = logging.getLogger(__name__)
 
-UPDATE_INTERVAL_SECONDS = 60
+UPDATE_INTERVAL_SECONDS = 300
 
 _last_new_users = 0
 _last_dist_created = 0
@@ -17,116 +17,91 @@ _last_device_distributions = {}
 
 LOW_STOCK_THRESHOLD = 10
 
+# Single consolidated query grouping all aggregate counts
+_CONSOLIDATED_QUERY = """
+SELECT
+  (SELECT COUNT(*) FROM users) AS total_users,
+  (SELECT COUNT(*) FROM users WHERE status = 'active') AS active_users,
+  (SELECT COUNT(*) FROM users WHERE role = 'operator') AS total_operators,
+  (SELECT COUNT(*) FROM users WHERE role = 'operator' AND status = 'active') AS active_operators,
+  (SELECT COUNT(*) FROM users WHERE role = 'cluster') AS total_clusters,
+  (SELECT COUNT(*) FROM users WHERE role = 'cluster' AND status = 'active') AS active_clusters,
+  (SELECT COUNT(*) FROM users WHERE role = 'sub_distributor') AS total_sub_distributors,
+  (SELECT COUNT(*) FROM users WHERE role = 'sub_distributor' AND status = 'active') AS active_sub_distributors,
+  (SELECT COUNT(*) FROM devices) AS total_devices,
+  (SELECT COUNT(*) FROM devices WHERE status = 'available') AS available_devices,
+  (SELECT COUNT(*) FROM distributions) AS total_distributions,
+  (SELECT COUNT(*) FROM distributions WHERE status = 'delivered') AS completed_distributions,
+  (SELECT COUNT(*) FROM distributions WHERE status = 'rejected') AS failed_distributions,
+  (SELECT COUNT(*) FROM api_activity_logs WHERE path = '/api/auth/login' AND status_code = 200) AS success_logins,
+  (SELECT COUNT(*) FROM api_activity_logs WHERE path = '/api/auth/login' AND status_code >= 400) AS failed_logins
+"""
 
-async def _sync_gauge_from_db(gauge, query, params=None):
-    async with get_db() as db:
-        cursor = await db.execute(query, params or ())
-        row = await cursor.fetchone()
-        gauge.set(row[0] if row else 0)
 
-
-async def _update_user_metrics():
+async def _update_all_metrics():
     from app.core.metrics import (
         total_users, active_users,
         total_operators, active_operators,
         total_clusters, active_clusters,
         total_sub_distributors, active_sub_distributors,
         new_users_created_total,
-    )
-
-    global _last_new_users
-
-    try:
-        async with get_db() as db:
-            cursor = await db.execute("SELECT COUNT(*) FROM users")
-            total = (await cursor.fetchone())[0]
-            total_users.set(total)
-
-            cursor = await db.execute("SELECT COUNT(*) FROM users WHERE status = 'active'")
-            active_users.set((await cursor.fetchone())[0])
-
-            cursor = await db.execute("SELECT COUNT(*) FROM users WHERE role = 'operator'")
-            total_operators.set((await cursor.fetchone())[0])
-
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM users WHERE role = 'operator' AND status = 'active'"
-            )
-            active_operators.set((await cursor.fetchone())[0])
-
-            cursor = await db.execute("SELECT COUNT(*) FROM users WHERE role = 'cluster'")
-            total_clusters.set((await cursor.fetchone())[0])
-
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM users WHERE role = 'cluster' AND status = 'active'"
-            )
-            active_clusters.set((await cursor.fetchone())[0])
-
-            cursor = await db.execute("SELECT COUNT(*) FROM users WHERE role = 'sub_distributor'")
-            total_sub_distributors.set((await cursor.fetchone())[0])
-
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM users WHERE role = 'sub_distributor' AND status = 'active'"
-            )
-            active_sub_distributors.set((await cursor.fetchone())[0])
-
-        diff = total - _last_new_users
-        if diff > 0:
-            new_users_created_total.inc(diff)
-        _last_new_users = total
-    except Exception as exc:
-        logger.exception("Failed to update user Prometheus metrics: %s", exc)
-
-
-async def _update_device_metrics():
-    from app.core.metrics import inventory_items_total, low_stock_items_total
-
-    try:
-        async with get_db() as db:
-            cursor = await db.execute("SELECT COUNT(*) FROM devices")
-            inventory_items_total.set((await cursor.fetchone())[0])
-
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM devices WHERE status = 'available'"
-            )
-            available = (await cursor.fetchone())[0]
-            low_stock_items_total.set(max(0, LOW_STOCK_THRESHOLD - available))
-    except Exception as exc:
-        logger.exception("Failed to update device Prometheus metrics: %s", exc)
-
-
-async def _update_distribution_metrics():
-    from app.core.metrics import (
+        inventory_items_total, low_stock_items_total,
         distributions_created_total,
         distributions_completed_total,
         distributions_failed_total,
         device_distributions_total,
+        successful_logins_total, failed_logins_total,
     )
 
-    global _last_dist_created, _last_dist_completed, _last_dist_failed, _last_device_distributions
+    global _last_new_users, _last_dist_created, _last_dist_completed, _last_dist_failed
+    global _last_device_distributions, _last_success_logins, _last_failed_logins
 
     try:
         async with get_db() as db:
-            cursor = await db.execute("SELECT COUNT(*) FROM distributions")
-            total = (await cursor.fetchone())[0]
+            cursor = await db.execute(_CONSOLIDATED_QUERY)
+            row = await cursor.fetchone()
 
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM distributions WHERE status = 'delivered'"
-            )
-            completed = (await cursor.fetchone())[0]
+            total_users_n = row[0]
+            active_users_n = row[1]
+            total_operators_n = row[2]
+            active_operators_n = row[3]
+            total_clusters_n = row[4]
+            active_clusters_n = row[5]
+            total_sub_distributors_n = row[6]
+            active_sub_distributors_n = row[7]
+            total_devices_n = row[8]
+            available_devices_n = row[9]
+            total_distributions_n = row[10]
+            completed_distributions_n = row[11]
+            failed_distributions_n = row[12]
+            success_logins_n = row[13]
+            failed_logins_n = row[14]
 
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM distributions WHERE status = 'rejected'"
-            )
-            failed = (await cursor.fetchone())[0]
-
-            cursor = await db.execute(
+            cursor2 = await db.execute(
                 "SELECT status, COUNT(*) AS total FROM distributions GROUP BY status"
             )
-            rows = await cursor.fetchall()
-            by_status = {}
-            for row in rows:
-                by_status[str(row[0])] = int(row[1])
+            by_status = {str(r[0]): int(r[1]) for r in await cursor2.fetchall()}
 
+        # User gauges
+        total_users.set(total_users_n)
+        active_users.set(active_users_n)
+        total_operators.set(total_operators_n)
+        active_operators.set(active_operators_n)
+        total_clusters.set(total_clusters_n)
+        active_clusters.set(active_clusters_n)
+        total_sub_distributors.set(total_sub_distributors_n)
+        active_sub_distributors.set(active_sub_distributors_n)
+
+        diff_users = total_users_n - _last_new_users
+        if diff_users > 0:
+            new_users_created_total.inc(diff_users)
+        _last_new_users = total_users_n
+
+        # Device gauges
+        inventory_items_total.set(total_devices_n)
+        low_stock_items_total.set(max(0, LOW_STOCK_THRESHOLD - available_devices_n))
+
+        # Distribution gauges + counters
         for status, count in by_status.items():
             prev = _last_device_distributions.get(status, 0)
             diff = count - prev
@@ -134,59 +109,34 @@ async def _update_distribution_metrics():
                 device_distributions_total.labels(status=status).inc(diff)
         _last_device_distributions = by_status
 
-        diff = total - _last_dist_created
-        if diff > 0:
-            distributions_created_total.inc(diff)
-        _last_dist_created = total
+        diff_created = total_distributions_n - _last_dist_created
+        if diff_created > 0:
+            distributions_created_total.inc(diff_created)
+        _last_dist_created = total_distributions_n
 
-        diff = completed - _last_dist_completed
-        if diff > 0:
-            distributions_completed_total.inc(diff)
-        _last_dist_completed = completed
+        diff_completed = completed_distributions_n - _last_dist_completed
+        if diff_completed > 0:
+            distributions_completed_total.inc(diff_completed)
+        _last_dist_completed = completed_distributions_n
 
-        diff = failed - _last_dist_failed
-        if diff > 0:
-            distributions_failed_total.inc(diff)
-        _last_dist_failed = failed
+        diff_failed = failed_distributions_n - _last_dist_failed
+        if diff_failed > 0:
+            distributions_failed_total.inc(diff_failed)
+        _last_dist_failed = failed_distributions_n
+
+        # Login counters
+        diff_success = success_logins_n - _last_success_logins
+        if diff_success > 0:
+            successful_logins_total.inc(diff_success)
+        _last_success_logins = success_logins_n
+
+        diff_fail = failed_logins_n - _last_failed_logins
+        if diff_fail > 0:
+            failed_logins_total.inc(diff_fail)
+        _last_failed_logins = failed_logins_n
+
     except Exception as exc:
-        logger.exception("Failed to update distribution Prometheus metrics: %s", exc)
-
-
-async def _update_login_metrics():
-    from app.core.metrics import successful_logins_total, failed_logins_total
-
-    global _last_success_logins, _last_failed_logins
-
-    try:
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM api_activity_logs WHERE path = '/api/auth/login' AND status_code = 200"
-            )
-            success_count = (await cursor.fetchone())[0]
-
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM api_activity_logs WHERE path = '/api/auth/login' AND status_code >= 400"
-            )
-            fail_count = (await cursor.fetchone())[0]
-
-        diff = success_count - _last_success_logins
-        if diff > 0:
-            successful_logins_total.inc(diff)
-        _last_success_logins = success_count
-
-        diff = fail_count - _last_failed_logins
-        if diff > 0:
-            failed_logins_total.inc(diff)
-        _last_failed_logins = fail_count
-    except Exception as exc:
-        logger.exception("Failed to update login Prometheus metrics: %s", exc)
-
-
-async def _update_all_metrics():
-    await _update_user_metrics()
-    await _update_device_metrics()
-    await _update_distribution_metrics()
-    await _update_login_metrics()
+        logger.exception("Failed to update Prometheus metrics: %s", exc)
 
 
 async def metrics_collector_loop():

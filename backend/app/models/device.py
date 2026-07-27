@@ -10,6 +10,7 @@ class DeviceType(str, Enum):
     ROUTER = "Router"
     SWITCH = "Switch"
     MODEM = "Modem"
+    OLT = "OLT"
     ACCESS_POINT = "Access Point"
     SETUP_BOX = "Set-top box"
     OTHER = "Other"

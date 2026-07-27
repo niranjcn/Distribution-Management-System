@@ -796,10 +796,25 @@ async def get_users_by_role(role: str, current_user: dict = Depends(get_current_
 
     try:
         users = await user_service.get_users_by_role(normalized)
+        if actor_role == SUPER_ADMIN:
+            return {"success": True, "message": "Users retrieved successfully", "data": users}
+
+        if actor_role == CLUSTER:
+            filtered = [
+                row for row in users
+                if normalize_role(row.get("role")) == OPERATOR
+                and str(row.get("parent_id")) == str(current_user.get("id"))
+            ]
+            return {"success": True, "message": "Users retrieved successfully", "data": filtered}
+
+        descendant_ids = await _get_descendant_ids(current_user.get("id"))
         filtered = []
         for row in users:
-            if await _can_access_user(current_user, row, write=False):
+            if str(row.get("id")) in descendant_ids:
                 filtered.append(row)
+            elif actor_role in {MANAGER, SUB_DISTRIBUTION_MANAGER}:
+                if current_user.get("parent_id") and str(row.get("id")) == str(current_user["parent_id"]):
+                    filtered.append(row)
         return {"success": True, "message": "Users retrieved successfully", "data": filtered}
     except HTTPException:
         raise

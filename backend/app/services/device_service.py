@@ -10,12 +10,9 @@ from app.utils.hierarchy import get_descendant_user_ids as _get_descendant_user_
 
 async def _get_locked_distribution_device_ids(db) -> set:
     cursor = await db.execute("""
-        SELECT DISTINCT jt.device_id
-        FROM distributions d
-        CROSS JOIN JSON_TABLE(
-            d.device_ids,
-            '$[*]' COLUMNS (device_id VARCHAR(128) PATH '$')
-        ) jt
+        SELECT dd.device_id
+        FROM distribution_devices dd
+        INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
         WHERE d.status IN ('pending_receipt', 'disputed')
     """)
     rows = await cursor.fetchall()
@@ -881,22 +878,27 @@ async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]
 async def get_device_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, int]:
     """Get device statistics"""
     async with get_db() as db:
-        stats = {}
-        for key in ["total", "available", "distributed", "in_use", "defective", "returned"]:
-            conditions = []
-            params = []
-            if key != "total":
-                conditions.append("status = ?")
-                params.append(key)
-            if start_date:
-                conditions.append("created_at >= ?")
-                params.append(start_date)
-            if end_date:
-                conditions.append("created_at <= ?")
-                params.append(end_date)
-            where = " AND ".join(conditions) if conditions else "1=1"
-            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {where}", params)
-            stats[key] = (await cursor.fetchone())[0]
+        conditions = []
+        params = []
+        if start_date:
+            conditions.append("created_at >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("created_at <= ?")
+            params.append(end_date)
+        where = " AND ".join(conditions) if conditions else "1=1"
+        cursor = await db.execute(
+            f"SELECT COALESCE(status, '') AS status, COUNT(*) AS cnt FROM devices WHERE {where} GROUP BY status",
+            params
+        )
+        rows = await cursor.fetchall()
+        stats = {"total": 0, "available": 0, "distributed": 0, "in_use": 0, "defective": 0, "returned": 0}
+        for row in rows:
+            status = row[0]
+            count = int(row[1])
+            stats["total"] += count
+            if status in stats:
+                stats[status] = count
         return stats
 
 

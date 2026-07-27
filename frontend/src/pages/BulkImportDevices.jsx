@@ -8,7 +8,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertCircle, Download, ArrowLeft } from 'lucide-react';
 
 const REGULAR_TEMPLATE_HEADERS = ['Vendor', 'device_type', 'model', 'mac_address', 'serial_number', 'band_type'];
-const VALID_TYPES = ['ONU', 'ONT', 'Router', 'Switch', 'Modem', 'Access Point', 'SB', 'Other'];
+const VALID_TYPES = ['ONU', 'ONT', 'OLT', 'Router', 'Switch', 'Modem', 'Access Point', 'SB', 'Other'];
 const VALID_BANDS = ['single_band', 'dual_band'];
 
 const BulkImportDevices = () => {
@@ -78,6 +78,7 @@ const BulkImportDevices = () => {
     const rows = [
       REGULAR_TEMPLATE_HEADERS.join(','),
       'Huawei,ONT,HG8145V5,,SN-ONT-1001,single_band',
+      'Nokia,OLT,7360 ISAM FX,,,,',
     ];
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);

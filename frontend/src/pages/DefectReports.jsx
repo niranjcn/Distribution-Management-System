@@ -20,6 +20,7 @@ import {
 const DEVICE_TYPE_OPTIONS = [
   'ONU',
   'ONT',
+  'OLT',
   'Router',
   'Switch',
   'Modem',

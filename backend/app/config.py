@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = os.getenv("DB_PASSWORD", "dms_password")
     DB_NAME: str = os.getenv("DB_NAME", "distribution_management_system")
 
+    # Activity log retention
+    ACTIVITY_LOG_RETENTION_DAYS: int = int(os.getenv("ACTIVITY_LOG_RETENTION_DAYS", "90"))
+
     # Database backup
     DB_BACKUP_TIME: str = os.getenv("DB_BACKUP_TIME", "02:00")
     RCLONE_REMOTE: str = os.getenv("RCLONE_REMOTE", "DMS")

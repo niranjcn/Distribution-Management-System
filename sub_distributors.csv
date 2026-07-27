@@ -1,0 +1,11 @@
+role,email,password,name,digital_id,broadband_id,phone,department,location,sub_distributor_email,cluster_email
+sub_distributor,sd1@example.com,Pass@123,Sub Distributor One,SD001,BB001,+911234567890,Distribution,Zone A,,
+sub_distributor,sd2@example.com,Pass@123,Sub Distributor Two,SD002,BB002,+911234567891,Distribution,Zone B,,
+sub_distributor,sd3@example.com,Pass@123,Sub Distributor Three,SD003,BB003,+911234567892,Distribution,Zone C,,
+sub_distributor,sd4@example.com,Pass@123,Sub Distributor Four,SD004,BB004,+911234567893,Distribution,Zone D,,
+sub_distributor,sd5@example.com,Pass@123,Sub Distributor Five,SD005,BB005,+911234567894,Distribution,Zone E,,
+sub_distributor,sd6@example.com,Pass@123,Sub Distributor Six,SD006,BB006,+911234567895,Distribution,Zone F,,
+sub_distributor,sd7@example.com,Pass@123,Sub Distributor Seven,SD007,BB007,+911234567896,Distribution,Zone G,,
+sub_distributor,sd8@example.com,Pass@123,Sub Distributor Eight,SD008,BB008,+911234567897,Distribution,Zone H,,
+sub_distributor,sd9@example.com,Pass@123,Sub Distributor Nine,SD009,BB009,+911234567898,Distribution,Zone I,,
+sub_distributor,sd10@example.com,Pass@123,Sub Distributor Ten,SD010,BB010,+911234567899,Distribution,Zone J,,

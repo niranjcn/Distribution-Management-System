@@ -234,20 +234,21 @@ class TestGetDeviceHistory:
 
 class TestGetDeviceStats:
     async def test_returns_counts(self, mock_dev_db):
-        mock_dev_db.add_result(fetchone_result=(100,))
-        mock_dev_db.add_result(fetchone_result=(50,))
-        mock_dev_db.add_result(fetchone_result=(30,))
-        mock_dev_db.add_result(fetchone_result=(10,))
-        mock_dev_db.add_result(fetchone_result=(5,))
-        mock_dev_db.add_result(fetchone_result=(3,))
+        mock_dev_db.add_result(fetchall_result=[
+            ("available", 50),
+            ("distributed", 30),
+            ("in_use", 10),
+            ("defective", 3),
+            ("returned", 5),
+            ("other", 2),
+        ])
         result = await get_device_stats()
         assert result["total"] == 100
         assert result["available"] == 50
         assert result["distributed"] == 30
 
     async def test_with_date_filter(self, mock_dev_db):
-        for _ in range(6):
-            mock_dev_db.add_result(fetchone_result=(0,))
+        mock_dev_db.add_result(fetchall_result=[])
         result = await get_device_stats("2025-01-01", "2025-12-31")
         assert "created_at" in mock_dev_db.executed_queries[0]
 

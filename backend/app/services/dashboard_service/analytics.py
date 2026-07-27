@@ -228,8 +228,7 @@ async def get_advanced_dashboard_metrics(user: Dict[str, Any],
             SELECT u.role, d.status, COUNT(*) AS total
             FROM devices d
             INNER JOIN users u
-                ON d.current_holder_id REGEXP '^[0-9]+$'
-               AND CAST(d.current_holder_id AS UNSIGNED) = u.id
+                ON d.current_holder_id = CAST(u.id AS BINARY)
             WHERE u.role IN ('sub_distributor', 'cluster', 'operator')
             GROUP BY u.role, d.status
             """
@@ -560,16 +559,16 @@ async def get_distribution_device_analytics(start_date: Optional[str] = None,
         per_holder_cond = per_holder_cond.replace("created_at", "d.created_at")
         cursor = await db.execute(
             f"""SELECT
-                   CAST(d.current_holder_id AS TEXT) AS holder_id,
+                   d.current_holder_id AS holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown') AS holder_name,
                    COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown') AS device_type,
                    COUNT(*) AS total
                FROM devices d
-               INNER JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id AND u.role = 'sub_distributor'
+               INNER JOIN users u ON d.current_holder_id = CAST(u.id AS BINARY) AND u.role = 'sub_distributor'
                WHERE {per_holder_cond}
                AND d.current_holder_id IS NOT NULL
                GROUP BY
-                   CAST(d.current_holder_id AS TEXT),
+                   d.current_holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown'),
                    COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown')
                ORDER BY holder_name, device_type""",
@@ -579,15 +578,15 @@ async def get_distribution_device_analytics(start_date: Optional[str] = None,
 
         cursor = await db.execute(
             """SELECT
-                   CAST(d.current_holder_id AS TEXT) AS holder_id,
+                   d.current_holder_id AS holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown') AS holder_name,
                    COUNT(*) AS total
                FROM devices d
-               INNER JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id AND u.role = 'sub_distributor'
+               INNER JOIN users u ON d.current_holder_id = CAST(u.id AS BINARY) AND u.role = 'sub_distributor'
                WHERE d.status = 'available'
                AND d.current_holder_id IS NOT NULL
                GROUP BY
-                   CAST(d.current_holder_id AS TEXT),
+                   d.current_holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown')
                ORDER BY total DESC"""
         )

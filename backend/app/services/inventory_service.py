@@ -418,12 +418,21 @@ async def get_purchase_orders(
         )
         rows = rows_to_list(await cursor.fetchall())
 
-        for row in rows:
+        if rows:
+            po_ids = [row["po_id"] for row in rows]
+            placeholders = ",".join("?" * len(po_ids))
             lines_cursor = await db.execute(
-                "SELECT * FROM inventory_po_lines WHERE po_id = ? ORDER BY id ASC",
-                (row["po_id"],),
+                f"SELECT * FROM inventory_po_lines WHERE po_id IN ({placeholders}) ORDER BY id ASC",
+                po_ids,
             )
-            row["lines"] = rows_to_list(await lines_cursor.fetchall())
+            all_lines = rows_to_list(await lines_cursor.fetchall())
+            lines_by_po: Dict[str, List[Dict]] = {}
+            for line in all_lines:
+                lines_by_po.setdefault(line["po_id"], []).append(line)
+            for row in rows:
+                row["lines"] = lines_by_po.get(row["po_id"], [])
+        else:
+            all_lines = []
 
         return {
             "data": rows,
@@ -445,20 +454,24 @@ async def create_purchase_order(po_data: PurchaseOrderCreate, user: Dict[str, An
         po_id = generate_purchase_order_id()
         total_amount = 0.0
 
+        item_ids = [line.item_inventory_id for line in po_data.lines]
+        item_placeholders = ",".join(["?"] * len(item_ids))
+        item_cursor = await db.execute(
+            f"SELECT id, inventory_id, item_id, name, price, unit_cost, status FROM external_inventory_items WHERE inventory_id IN ({item_placeholders})",
+            item_ids,
+        )
+        item_rows = await item_cursor.fetchall()
+        items_map: Dict[str, Dict[str, Any]] = {str(r["inventory_id"]): row_to_dict(r) for r in item_rows}
+
         normalized_lines: List[Dict[str, Any]] = []
         for line in po_data.lines:
-            item_cursor = await db.execute(
-                "SELECT id, inventory_id, item_id, name, price, unit_cost, status FROM external_inventory_items WHERE inventory_id = ?",
-                (line.item_inventory_id,),
-            )
-            item_row = await item_cursor.fetchone()
-            if not item_row:
+            item = items_map.get(line.item_inventory_id)
+            if not item:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Item '{line.item_inventory_id}' not found",
                 )
 
-            item = row_to_dict(item_row)
             if item.get("status") != "active":
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -570,12 +583,19 @@ async def get_purchase_order_by_id(po_id: str) -> Optional[Dict[str, Any]]:
         )
         receipts = rows_to_list(await receipts_cursor.fetchall())
 
-        for receipt in receipts:
-            receipt_lines_cursor = await db.execute(
-                "SELECT * FROM inventory_receipt_lines WHERE receipt_id = ? ORDER BY id ASC",
-                (receipt["receipt_id"],),
+        if receipts:
+            receipt_ids = [r["receipt_id"] for r in receipts]
+            placeholders = ",".join("?" * len(receipt_ids))
+            rl_cursor = await db.execute(
+                f"SELECT * FROM inventory_receipt_lines WHERE receipt_id IN ({placeholders}) ORDER BY id ASC",
+                receipt_ids,
             )
-            receipt["lines"] = rows_to_list(await receipt_lines_cursor.fetchall())
+            all_receipt_lines = rows_to_list(await rl_cursor.fetchall())
+            lines_by_receipt_id: Dict[str, List[Dict]] = {}
+            for rl in all_receipt_lines:
+                lines_by_receipt_id.setdefault(rl["receipt_id"], []).append(rl)
+            for receipt in receipts:
+                receipt["lines"] = lines_by_receipt_id.get(receipt["receipt_id"], [])
 
         po["receipts"] = receipts
         return po
@@ -638,6 +658,15 @@ async def receive_purchase_order(
             ),
         )
 
+        receipt_item_ids = [line.item_inventory_id for line in receipt_data.lines]
+        receipt_item_placeholders = ",".join(["?"] * len(receipt_item_ids))
+        receipt_item_cursor = await db.execute(
+            f"SELECT * FROM external_inventory_items WHERE inventory_id IN ({receipt_item_placeholders})",
+            receipt_item_ids,
+        )
+        receipt_item_rows = await receipt_item_cursor.fetchall()
+        receipt_items_map: Dict[str, Dict[str, Any]] = {str(r["inventory_id"]): row_to_dict(r) for r in receipt_item_rows}
+
         for line in receipt_data.lines:
             item_id = line.item_inventory_id
             if item_id not in po_line_map:
@@ -646,18 +675,12 @@ async def receive_purchase_order(
                     detail=f"Item '{item_id}' does not belong to this purchase order",
                 )
 
-            item_cursor = await db.execute(
-                "SELECT * FROM external_inventory_items WHERE inventory_id = ?",
-                (item_id,),
-            )
-            item_row = await item_cursor.fetchone()
-            if not item_row:
+            item = receipt_items_map.get(item_id)
+            if not item:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Item '{item_id}' not found",
                 )
-
-            item = row_to_dict(item_row)
             quantity_received = int(
                 line.quantity_received
                 or po_line_map[item_id].get("quantity_ordered")
@@ -790,12 +813,19 @@ async def get_receipts(
         )
         receipts = rows_to_list(await cursor.fetchall())
 
-        for receipt in receipts:
+        if receipts:
+            receipt_ids = [r["receipt_id"] for r in receipts]
+            placeholders = ",".join("?" * len(receipt_ids))
             lines_cursor = await db.execute(
-                "SELECT * FROM inventory_receipt_lines WHERE receipt_id = ? ORDER BY id ASC",
-                (receipt["receipt_id"],),
+                f"SELECT * FROM inventory_receipt_lines WHERE receipt_id IN ({placeholders}) ORDER BY id ASC",
+                receipt_ids,
             )
-            receipt["lines"] = rows_to_list(await lines_cursor.fetchall())
+            all_lines = rows_to_list(await lines_cursor.fetchall())
+            lines_by_receipt: Dict[str, List[Dict]] = {}
+            for line in all_lines:
+                lines_by_receipt.setdefault(line["receipt_id"], []).append(line)
+            for receipt in receipts:
+                receipt["lines"] = lines_by_receipt.get(receipt["receipt_id"], [])
 
         return {
             "data": receipts,

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Upload,
@@ -14,24 +14,32 @@ import {
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
-import { usersAPI } from '../services/api';
+import { usersAPI, dashboardAPI } from '../services/api';
 
 const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
-const TEMPLATE_HEADERS = [
-  'role', 'email', 'password', 'name', 'digital_id', 'broadband_id',
-  'phone', 'department', 'location', 'sub_distributor_email', 'cluster_email',
-];
 
-const generateTemplate = () => {
-  const headerRow = TEMPLATE_HEADERS.join(',');
-  const sampleRows = [
-    'sub_distributor,sd1@example.com,Pass@123,Sub Distributor One,SD001,,+911234567890,Dept A,Location A,,',
-    'sub_distribution_manager,sdm1@example.com,Pass@123,SD Manager One,,,,,,sd1@example.com,',
-    'cluster,cluster1@example.com,Pass@123,Cluster One,,,,,,sd1@example.com,',
-    'operator,op1@example.com,Pass@123,Operator One,,,,,,,cluster1@example.com',
-  ].join('\n');
-  const bom = '\uFEFF';
-  return new Blob([bom + headerRow + '\n' + sampleRows], { type: 'text/csv;charset=utf-8' });
+const TEMPLATES = {
+  sub_distributor: {
+    filename: 'user-template-sub-distributor.csv',
+    headers: ['role', 'email', 'password', 'name', 'digital_id', 'broadband_id', 'phone', 'department', 'location'],
+    sample: 'sub_distributor,sd1@example.com,Pass@123,Sub Distributor One,SD001,BB001,+911234567890,Dept A,Location A',
+    label: 'Sub Distributor',
+    description: 'role, email, password, name, digital_id, broadband_id, phone, department, location',
+  },
+  cluster: {
+    filename: 'user-template-cluster.csv',
+    headers: ['role', 'email', 'password', 'name', 'cluster_id', 'phone', 'department', 'location', 'sub_distributor_email'],
+    sample: 'cluster,cluster1@example.com,Pass@123,Cluster One,CL001,+911234567890,Dept B,Location B,sd1@example.com',
+    label: 'Cluster',
+    description: 'role, email, password, name, cluster_id, phone, department, location, sub_distributor_email',
+  },
+  operator: {
+    filename: 'user-template-operator.csv',
+    headers: ['role', 'email', 'password', 'name', 'operator_id', 'phone', 'department', 'location', 'sub_distributor_email', 'cluster_email'],
+    sample: 'operator,op1@example.com,Pass@123,Operator One,OP001,+911234567890,Dept C,Location C,,cluster1@example.com',
+    label: 'Operator',
+    description: 'role, email, password, name, operator_id, phone, department, location, sub_distributor_email, cluster_email',
+  },
 };
 
 const BulkUploadUsers = () => {
@@ -40,6 +48,28 @@ const BulkUploadUsers = () => {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
+
+  const downloadTemplate = useCallback(async (key) => {
+    const tpl = TEMPLATES[key];
+    if (!tpl) return;
+    try {
+      await dashboardAPI.trackActivity({
+        action: 'template_export',
+        description: `Exported ${tpl.label} bulk upload template`,
+        context: 'users_bulk_upload_template',
+      });
+    } catch {}
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + tpl.headers.join(',') + '\n' + tpl.sample], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = tpl.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
 
   const handleFileChange = (e) => {
     const selected = e.target.files?.[0];
@@ -98,29 +128,23 @@ const BulkUploadUsers = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card title="Template" icon={FileSpreadsheet} className="lg:col-span-1">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <Card title="Templates" icon={FileSpreadsheet} className="lg:col-span-1">
           <p className="text-sm text-gray-600 mb-4">
-            Download the CSV template, fill in user data, and upload it back.
+            Download a CSV template for the user role you want to upload, fill in the data, and upload it back.
           </p>
-          <p className="text-xs text-gray-500 mb-4">
-            <strong>Columns:</strong> role, email, password, name, digital_id, broadband_id, phone, department, location,
-            sub_distributor_email (for clusters/managers), cluster_email (for operators)
-          </p>
-          <Button variant="secondary" onClick={() => {
-            const blob = generateTemplate();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'user-bulk-upload-template.csv';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }}>
-            <Download className="w-4 h-4" />
-            Download Template
-          </Button>
+          <div className="space-y-3">
+            {Object.entries(TEMPLATES).map(([key, tpl]) => (
+              <div key={key} className="p-3 border border-gray-200 rounded-lg">
+                <p className="text-sm font-medium text-gray-800 mb-1">{tpl.label}</p>
+                <p className="text-xs text-gray-500 mb-2">{tpl.description}</p>
+                <Button variant="outline" size="sm" onClick={() => downloadTemplate(key)}>
+                  <Download className="w-4 h-4" />
+                  Download
+                </Button>
+              </div>
+            ))}
+          </div>
         </Card>
 
         <Card title="Upload File" icon={Upload} className="lg:col-span-2">
