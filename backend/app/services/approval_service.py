@@ -501,28 +501,24 @@ async def reject_request(
 async def get_approval_stats() -> Dict[str, int]:
     """Get approval statistics"""
     async with get_db() as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM approvals WHERE status = 'pending'")
-        pending = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM approvals WHERE status = 'approved'")
-        approved = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM approvals WHERE status = 'rejected'")
-        rejected = (await cursor.fetchone())[0]
+        cursor = await db.execute(
+            "SELECT status, COUNT(*) AS total FROM approvals GROUP BY status"
+        )
+        by_status = {str(row[0]): int(row[1]) for row in await cursor.fetchall()}
 
-        cursor = await db.execute("SELECT COUNT(*) FROM approvals WHERE approval_type = 'distribution' AND status = 'pending'")
-        dist_pending = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM approvals WHERE approval_type = 'return' AND status = 'pending'")
-        ret_pending = (await cursor.fetchone())[0]
-        cursor = await db.execute("SELECT COUNT(*) FROM approvals WHERE approval_type = 'defect' AND status = 'pending'")
-        def_pending = (await cursor.fetchone())[0]
+        cursor = await db.execute(
+            "SELECT approval_type, COUNT(*) AS total FROM approvals WHERE status = 'pending' GROUP BY approval_type"
+        )
+        by_type_pending = {str(row[0]): int(row[1]) for row in await cursor.fetchall()}
 
         return {
-            "total_pending": pending,
-            "approved": approved,
-            "rejected": rejected,
+            "total_pending": by_status.get("pending", 0),
+            "approved": by_status.get("approved", 0),
+            "rejected": by_status.get("rejected", 0),
             "by_type": {
-                "distributions": dist_pending,
-                "returns": ret_pending,
-                "defects": def_pending
+                "distributions": by_type_pending.get("distribution", 0),
+                "returns": by_type_pending.get("return", 0),
+                "defects": by_type_pending.get("defect", 0),
             }
         }
 

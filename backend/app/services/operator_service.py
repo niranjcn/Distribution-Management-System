@@ -156,17 +156,14 @@ async def get_operator_stats(assigned_to: Optional[str] = None) -> Dict[str, int
             base_condition = "assigned_to = ?"
             params = [assigned_to]
 
-        cursor = await db.execute(f"SELECT COUNT(*) FROM operators WHERE {base_condition}", params)
-        total = (await cursor.fetchone())[0]
-
-        cursor = await db.execute(f"SELECT COUNT(*) FROM operators WHERE {base_condition} AND status = 'active'", params)
-        active = (await cursor.fetchone())[0]
-
-        cursor = await db.execute(f"SELECT COUNT(*) FROM operators WHERE {base_condition} AND status = 'inactive'", params)
-        inactive = (await cursor.fetchone())[0]
+        cursor = await db.execute(
+            f"SELECT status, COUNT(*) AS total FROM operators WHERE {base_condition} GROUP BY status",
+            params
+        )
+        by_status = {str(row[0]): int(row[1]) for row in await cursor.fetchall()}
 
         return {
-            "total": total,
-            "active": active,
-            "inactive": inactive
+            "total": by_status.get("active", 0) + by_status.get("inactive", 0),
+            "active": by_status.get("active", 0),
+            "inactive": by_status.get("inactive", 0),
         }

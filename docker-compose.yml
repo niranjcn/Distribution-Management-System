@@ -3,11 +3,6 @@ services:
     image: mysql:8.4
     container_name: dms-mysql
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 3G
     logging:
       driver: json-file
       options:
@@ -19,7 +14,11 @@ services:
       MYSQL_USER: dms_user
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       TZ: Asia/Kolkata
-    command: ["--default-time-zone=+05:30"]
+    command:
+      - "--default-time-zone=+05:30"
+      - "--innodb_buffer_pool_size=2G"
+      - "--max_connections=200"
+      - "--wait_timeout=600"
     ulimits:
       nofile:
         soft: 1024

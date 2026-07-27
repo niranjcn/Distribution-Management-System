@@ -152,22 +152,22 @@ class TestUpdateOperatorDeviceCount:
 
 class TestGetOperatorStats:
     async def test_returns_stats(self, mock_op_db):
-        mock_op_db.add_result(fetchone_result=(10,))
-        mock_op_db.add_result(fetchone_result=(7,))
-        mock_op_db.add_result(fetchone_result=(3,))
+        mock_op_db.add_result(fetchall_result=[
+            ("active", 7),
+            ("inactive", 3),
+        ])
         result = await get_operator_stats()
         assert result == {"total": 10, "active": 7, "inactive": 3}
 
     async def test_zero_counts(self, mock_op_db):
-        mock_op_db.add_result(fetchone_result=(0,))
-        mock_op_db.add_result(fetchone_result=(0,))
-        mock_op_db.add_result(fetchone_result=(0,))
+        mock_op_db.add_result(fetchall_result=[])
         result = await get_operator_stats()
         assert result == {"total": 0, "active": 0, "inactive": 0}
 
     async def test_scoped_by_assigned_to(self, mock_op_db):
-        mock_op_db.add_result(fetchone_result=(5,))
-        mock_op_db.add_result(fetchone_result=(3,))
-        mock_op_db.add_result(fetchone_result=(2,))
+        mock_op_db.add_result(fetchall_result=[
+            ("active", 3),
+            ("inactive", 2),
+        ])
         result = await get_operator_stats(assigned_to="1")
         assert "assigned_to = ?" in mock_op_db.executed_queries[0]

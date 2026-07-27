@@ -324,7 +324,7 @@ async def get_users_by_role(role: str) -> List[Dict[str, Any]]:
     """Get all users by role"""
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT * FROM users WHERE role = ? AND status = 'active'",
+            "SELECT * FROM users WHERE role = ? AND status = 'active' LIMIT 5000",
             (normalize_role(role),)
         )
         rows = await cursor.fetchall()
@@ -338,17 +338,21 @@ async def get_users_by_role(role: str) -> List[Dict[str, Any]]:
 async def get_user_stats() -> Dict[str, int]:
     """Get user statistics"""
     async with get_db() as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM users")
-        total = (await cursor.fetchone())[0]
-        
-        cursor = await db.execute("SELECT COUNT(*) FROM users WHERE status = 'active'")
-        active = (await cursor.fetchone())[0]
-        
-        by_role = {}
-        cursor = await db.execute("SELECT role, COUNT(*) as cnt FROM users GROUP BY role")
+        total = 0
+        active = 0
+        by_role: Dict[str, int] = {}
+        cursor = await db.execute(
+            "SELECT role, status, COUNT(*) as cnt FROM users GROUP BY role, status"
+        )
         for row in await cursor.fetchall():
-            by_role[row[0]] = row[1]
-        
+            role = str(row[0])
+            status = str(row[1])
+            count = int(row[2])
+            total += count
+            if status == "active":
+                active += count
+            by_role[role] = by_role.get(role, 0) + count
+
         return {
             "total": total,
             "active": active,

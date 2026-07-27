@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { returnsAPI } from '../../services/api';
-import kvLogo from '../../kv_logo.webp';
+import kvLogo from '../../kv_logo.png';
 import {
   LayoutDashboard,
   Box,

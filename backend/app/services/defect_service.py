@@ -1573,43 +1573,47 @@ async def get_pending_replacement_defects(
 async def get_defect_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Get defect statistics"""
     async with get_db() as db:
-        async def _count(extra_conditions=None, extra_params=None):
-            conds = []
-            params = []
-            if extra_conditions:
-                conds.append(extra_conditions)
-                params.extend(extra_params)
-            if start_date:
-                conds.append("created_at >= ?")
-                params.append(start_date)
-            if end_date:
-                conds.append("created_at <= ?")
-                params.append(end_date)
-            where = " AND ".join(conds) if conds else "1=1"
-            cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {where}", params)
-            return (await cursor.fetchone())[0]
+        params: List[Any] = []
+        date_filter = "1=1"
+        if start_date:
+            date_filter = "created_at >= ?"
+            params.append(start_date)
+        if end_date:
+            date_filter += " AND created_at <= ?" if date_filter != "1=1" else "created_at <= ?"
+            params.append(end_date)
 
-        total = await _count()
-        reported = await _count("status = 'reported'", [])
-        under_review = await _count("status = 'under_review'", [])
-        resolved = await _count("status = 'resolved'", [])
-        critical = await _count("severity = 'critical'", [])
-        high = await _count("severity = 'high'", [])
-        medium = await _count("severity = 'medium'", [])
-        low = await _count("severity = 'low'", [])
+        total = 0
+        by_status: Dict[str, int] = {}
+        cursor = await db.execute(
+            f"SELECT status, COUNT(*) AS total FROM defects WHERE {date_filter} GROUP BY status",
+            params
+        )
+        for row in await cursor.fetchall():
+            status = str(row[0])
+            count = int(row[1])
+            total += count
+            by_status[status] = count
+
+        by_severity: Dict[str, int] = {}
+        cursor = await db.execute(
+            f"SELECT severity, COUNT(*) AS total FROM defects WHERE {date_filter} GROUP BY severity",
+            params
+        )
+        for row in await cursor.fetchall():
+            by_severity[str(row[0])] = int(row[1])
 
         return {
             "total": total,
             "by_status": {
-                "reported": reported,
-                "under_review": under_review,
-                "resolved": resolved
+                "reported": by_status.get("reported", 0),
+                "under_review": by_status.get("under_review", 0),
+                "resolved": by_status.get("resolved", 0),
             },
             "by_severity": {
-                "critical": critical,
-                "high": high,
-                "medium": medium,
-                "low": low
+                "critical": by_severity.get("critical", 0),
+                "high": by_severity.get("high", 0),
+                "medium": by_severity.get("medium", 0),
+                "low": by_severity.get("low", 0),
             }
         }
 

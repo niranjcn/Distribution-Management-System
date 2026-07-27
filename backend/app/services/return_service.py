@@ -390,44 +390,47 @@ async def cancel_return(return_id: str, user_id: str) -> bool:
 async def get_return_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Get return statistics"""
     async with get_db() as db:
-        async def _count(extra_conditions=None, extra_params=None):
-            conds = []
-            params = []
-            if extra_conditions:
-                conds.append(extra_conditions)
-                params.extend(extra_params)
-            if start_date:
-                conds.append("created_at >= ?")
-                params.append(start_date)
-            if end_date:
-                conds.append("created_at <= ?")
-                params.append(end_date)
-            where = " AND ".join(conds) if conds else "1=1"
-            cursor = await db.execute(f"SELECT COUNT(*) FROM returns WHERE {where}", params)
-            return (await cursor.fetchone())[0]
+        params: List[Any] = []
+        date_filter = "1=1"
+        if start_date:
+            date_filter = "created_at >= ?"
+            params.append(start_date)
+        if end_date:
+            date_filter += " AND created_at <= ?" if date_filter != "1=1" else "created_at <= ?"
+            params.append(end_date)
 
-        total = await _count()
-        pending = await _count("status = 'pending'", [])
-        approved = await _count("status = 'approved'", [])
-        received = await _count("status = 'received'", [])
-        rejected = await _count("status = 'rejected'", [])
+        total = 0
+        by_status: Dict[str, int] = {}
+        cursor = await db.execute(
+            f"SELECT status, COUNT(*) AS total FROM returns WHERE {date_filter} GROUP BY status",
+            params
+        )
+        for row in await cursor.fetchall():
+            status = str(row[0])
+            count = int(row[1])
+            total += count
+            by_status[status] = count
 
-        defective = await _count("reason = 'defective'", [])
-        unused = await _count("reason = 'unused'", [])
-        end_of_contract = await _count("reason = 'end_of_contract'", [])
+        by_reason: Dict[str, int] = {}
+        cursor = await db.execute(
+            f"SELECT reason, COUNT(*) AS total FROM returns WHERE {date_filter} GROUP BY reason",
+            params
+        )
+        for row in await cursor.fetchall():
+            by_reason[str(row[0])] = int(row[1])
 
         return {
             "total": total,
             "by_status": {
-                "pending": pending,
-                "approved": approved,
-                "received": received,
-                "rejected": rejected
+                "pending": by_status.get("pending", 0),
+                "approved": by_status.get("approved", 0),
+                "received": by_status.get("received", 0),
+                "rejected": by_status.get("rejected", 0),
             },
             "by_reason": {
-                "defective": defective,
-                "unused": unused,
-                "end_of_contract": end_of_contract
+                "defective": by_reason.get("defective", 0),
+                "unused": by_reason.get("unused", 0),
+                "end_of_contract": by_reason.get("end_of_contract", 0),
             }
         }
 

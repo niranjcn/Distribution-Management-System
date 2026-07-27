@@ -646,12 +646,15 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
             for row in await cursor_blocked.fetchall():
                 pending_blocked.add(str(row[0]))
 
+        lock_device_ids_int = [int(x) for x in dist_data.device_ids]
+        lock_device_placeholders = ",".join("?" * len(lock_device_ids_int))
         cursor_lock = await db.execute(
-            """SELECT dd.device_id
-               FROM distribution_devices dd
-               INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
-               WHERE d.status IN (?, ?)""",
-            (DistributionStatus.PENDING_RECEIPT.value, DistributionStatus.DISPUTED.value),
+            f"""SELECT dd.device_id
+                FROM distribution_devices dd
+                INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
+                WHERE d.status IN (?, ?)
+                  AND dd.device_id IN ({lock_device_placeholders})""",
+            (DistributionStatus.PENDING_RECEIPT.value, DistributionStatus.DISPUTED.value, *lock_device_ids_int),
         )
         for lock_row in await cursor_lock.fetchall():
             open_lock_device_ids.add(str(lock_row[0]))
@@ -1138,7 +1141,7 @@ async def get_pending_distributions() -> List[Dict[str, Any]]:
     """Get all pending distributions"""
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT * FROM distributions WHERE status = ? ORDER BY created_at DESC",
+            "SELECT * FROM distributions WHERE status = ? ORDER BY created_at DESC LIMIT 1000",
             (DistributionStatus.PENDING.value,)
         )
         rows = await cursor.fetchall()
@@ -1187,7 +1190,7 @@ async def get_distribution_stats(start_date: Optional[str] = None, end_date: Opt
 async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
     """Re-process all approved distributions to sync device holders."""
     async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM distributions WHERE status = ?", (DistributionStatus.APPROVED.value,))
+        cursor = await db.execute("SELECT * FROM distributions WHERE status = ? LIMIT 5000", (DistributionStatus.APPROVED.value,))
         rows = await cursor.fetchall()
 
         distributions = rows_to_list(rows)

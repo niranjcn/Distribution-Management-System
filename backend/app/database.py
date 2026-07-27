@@ -196,6 +196,7 @@ async def _ensure_pool() -> aiomysql.Pool:
                     minsize=5,
                     maxsize=50,
                     pool_recycle=21600,
+                    connect_timeout=10,
                     charset="utf8mb4",
                 )
                 return _pool

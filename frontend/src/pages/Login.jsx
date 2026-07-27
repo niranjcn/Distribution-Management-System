@@ -7,7 +7,7 @@ import {
   LogIn,
   AlertCircle
 } from 'lucide-react';
-import kvLogo from '../kv_logo.webp';
+import kvLogo from '../kv_logo.png';
 
 const Login = () => {
   const [email, setEmail] = useState('');

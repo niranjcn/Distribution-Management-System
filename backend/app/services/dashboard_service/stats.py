@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, Any, Optional
 
 from app.database import get_db
@@ -17,13 +18,28 @@ async def get_dashboard_stats(user: Dict[str, Any],
     stats = {}
 
     if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
-        total_stats = await device_service.get_device_stats()
-        device_stats = await device_service.get_device_stats(start_date, end_date)
-        dist_stats = await distribution_service.get_distribution_stats(start_date, end_date)
-        defect_stats = await defect_service.get_defect_stats(start_date, end_date)
-        return_stats = await return_service.get_return_stats(start_date, end_date)
-        user_stats = await user_service.get_user_stats()
-        approval_stats = await approval_service.get_approval_stats()
+        if start_date or end_date:
+            device_stats, dist_stats, defect_stats, return_stats, user_stats, approval_stats, total_stats = \
+                await asyncio.gather(
+                    device_service.get_device_stats(start_date, end_date),
+                    distribution_service.get_distribution_stats(start_date, end_date),
+                    defect_service.get_defect_stats(start_date, end_date),
+                    return_service.get_return_stats(start_date, end_date),
+                    user_service.get_user_stats(),
+                    approval_service.get_approval_stats(),
+                    device_service.get_device_stats(),
+                )
+        else:
+            device_stats, dist_stats, defect_stats, return_stats, user_stats, approval_stats = \
+                await asyncio.gather(
+                    device_service.get_device_stats(),
+                    distribution_service.get_distribution_stats(),
+                    defect_service.get_defect_stats(),
+                    return_service.get_return_stats(),
+                    user_service.get_user_stats(),
+                    approval_service.get_approval_stats(),
+                )
+            total_stats = device_stats
 
         async with get_db() as db:
             cond, prm = _build_date_filter("1=1", (), start_date, end_date)

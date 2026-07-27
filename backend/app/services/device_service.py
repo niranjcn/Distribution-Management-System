@@ -525,12 +525,12 @@ async def get_available_devices(holder_id: Optional[str] = None) -> List[Dict[st
     async with get_db() as db:
         if holder_id:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status = ? AND current_holder_id = ? ORDER BY created_at DESC",
+                "SELECT * FROM devices WHERE status = ? AND current_holder_id = ? ORDER BY created_at DESC LIMIT 2000",
                 (DeviceStatus.AVAILABLE.value, holder_id)
             )
         else:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status = ? ORDER BY created_at DESC",
+                "SELECT * FROM devices WHERE status = ? ORDER BY created_at DESC LIMIT 2000",
                 (DeviceStatus.AVAILABLE.value,)
             )
         rows = await cursor.fetchall()
@@ -549,12 +549,12 @@ async def get_devices_for_replacement(exclude_device_id: Optional[str] = None) -
         statuses = (DeviceStatus.AVAILABLE.value, DeviceStatus.RETURNED.value)
         if exclude_device_id:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status IN (?, ?) AND id != ? ORDER BY updated_at DESC",
+                "SELECT * FROM devices WHERE status IN (?, ?) AND id != ? ORDER BY updated_at DESC LIMIT 2000",
                 (statuses[0], statuses[1], int(exclude_device_id))
             )
         else:
             cursor = await db.execute(
-                "SELECT * FROM devices WHERE status IN (?, ?) ORDER BY updated_at DESC",
+                "SELECT * FROM devices WHERE status IN (?, ?) ORDER BY updated_at DESC LIMIT 2000",
                 statuses
             )
         rows = await cursor.fetchall()
@@ -565,7 +565,7 @@ async def get_held_devices(holder_id: str) -> List[Dict[str, Any]]:
     """Get all devices currently held by a user (any status) — for sub-level redistribution"""
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT * FROM devices WHERE current_holder_id = ? ORDER BY updated_at DESC",
+            "SELECT * FROM devices WHERE current_holder_id = ? ORDER BY updated_at DESC LIMIT 2000",
             (holder_id,)
         )
         rows = await cursor.fetchall()
@@ -726,22 +726,22 @@ async def get_user_device_overview(user_id: str, user_role: str) -> Dict[str, An
                     subordinate_devices.append(d)
                     sub_device_ids.add(str(d["id"]))
 
-        # Distribution stats from the distributions table
+        # Distribution stats from the distributions table (single query)
         cursor = await db.execute(
-            "SELECT COUNT(*), COALESCE(SUM(device_count), 0) FROM distributions WHERE to_user_id = ?",
-            (user_id,)
+            """SELECT
+                   SUM(CASE WHEN to_user_id = ? THEN 1 ELSE 0 END),
+                   COALESCE(SUM(CASE WHEN to_user_id = ? THEN device_count ELSE 0 END), 0),
+                   SUM(CASE WHEN from_user_id = ? THEN 1 ELSE 0 END),
+                   COALESCE(SUM(CASE WHEN from_user_id = ? THEN device_count ELSE 0 END), 0)
+               FROM distributions
+               WHERE ? IN (to_user_id, from_user_id)""",
+            (user_id, user_id, user_id, user_id, user_id)
         )
         row = await cursor.fetchone()
-        total_distrib_received = int(row[0]) if row else 0
-        total_devices_received = int(row[1]) if row else 0
-
-        cursor = await db.execute(
-            "SELECT COUNT(*), COALESCE(SUM(device_count), 0) FROM distributions WHERE from_user_id = ?",
-            (user_id,)
-        )
-        row = await cursor.fetchone()
-        total_distrib_sent = int(row[0]) if row else 0
-        total_devices_sent = int(row[1]) if row else 0
+        total_distrib_received = int(row[0]) if row and row[0] is not None else 0
+        total_devices_received = int(row[1]) if row and row[1] is not None else 0
+        total_distrib_sent = int(row[2]) if row and row[2] is not None else 0
+        total_devices_sent = int(row[3]) if row and row[3] is not None else 0
 
         # Deduplicate across held + subordinate
         seen_ids = set()

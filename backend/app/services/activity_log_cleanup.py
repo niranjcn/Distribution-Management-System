@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -43,6 +45,30 @@ async def purge_old_notifications() -> None:
         logger.exception("Failed to purge old notifications")
 
 
+MANIFEST_RETENTION_DAYS = 90
+
+
+async def purge_old_manifests() -> None:
+    """Delete distribution manifest .xlsx files older than MANIFEST_RETENTION_DAYS."""
+    cutoff = datetime.now().replace(tzinfo=None) - timedelta(days=MANIFEST_RETENTION_DAYS)
+    manifests_dir = Path(__file__).resolve().parents[2] / "distribution_manifests"
+    if not manifests_dir.is_dir():
+        return
+    try:
+        deleted = 0
+        for entry in os.scandir(str(manifests_dir)):
+            if not entry.name.endswith(".xlsx"):
+                continue
+            mtime = datetime.fromtimestamp(entry.stat().st_mtime)
+            if mtime < cutoff:
+                os.remove(entry.path)
+                deleted += 1
+        if deleted:
+            logger.info("Purged %d manifest files older than %d days", deleted, MANIFEST_RETENTION_DAYS)
+    except Exception:
+        logger.exception("Failed to purge old manifest files")
+
+
 async def start_activity_log_cleanup_scheduler() -> AsyncIOScheduler:
     global SCHEDULER
     if SCHEDULER and SCHEDULER.running:
@@ -61,6 +87,14 @@ async def start_activity_log_cleanup_scheduler() -> AsyncIOScheduler:
         purge_old_notifications,
         CronTrigger(hour=3, minute=5),
         id="notification_cleanup",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        purge_old_manifests,
+        CronTrigger(hour=3, minute=10),
+        id="manifest_cleanup",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
