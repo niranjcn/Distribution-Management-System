@@ -758,14 +758,64 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
                 seen_ids.add(str(d["id"]))
                 all_under_me.append(d)
 
+        # Count queries unbounded by limit for accurate stats
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM devices WHERE current_holder_id = ?",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        held_count = int(row[0]) if row else 0
+
+        subordinate_count = 0
+        if user_role == "sub_distributor":
+            # clusters under this SD + their operators
+            cursor = await db.execute(
+                """SELECT COUNT(*) FROM devices d
+                   JOIN users u ON CAST(d.current_holder_id AS TEXT) = CAST(u.id AS TEXT)
+                   WHERE (u.parent_id = ? AND u.role = 'cluster')
+                      OR (u.role = 'operator' AND u.parent_id IN (
+                          SELECT id FROM users WHERE parent_id = ? AND role = 'cluster'
+                      ))""",
+                (uid, uid)
+            )
+            row = await cursor.fetchone()
+            subordinate_count = int(row[0]) if row else 0
+        elif user_role == "sub_distribution_manager":
+            cursor = await db.execute("SELECT parent_id FROM users WHERE id = ?", (uid,))
+            manager_row = await cursor.fetchone()
+            scope_root_id = str(uid)
+            if manager_row and manager_row["parent_id"] is not None:
+                scope_root_id = str(manager_row["parent_id"])
+            scope_user_ids = {scope_root_id}
+            scope_user_ids.update(await _get_descendant_user_ids(db, scope_root_id))
+            scope_user_ids.discard(str(user_id))
+            scoped_user_list = sorted(scope_user_ids)
+            if scoped_user_list:
+                placeholders = ",".join(["?"] * len(scoped_user_list))
+                cursor = await db.execute(
+                    f"SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS TEXT) IN ({placeholders})",
+                    tuple(scoped_user_list)
+                )
+                row = await cursor.fetchone()
+                subordinate_count = int(row[0]) if row else 0
+        elif user_role == "cluster":
+            cursor = await db.execute(
+                """SELECT COUNT(*) FROM devices d
+                   JOIN users u ON CAST(d.current_holder_id AS TEXT) = CAST(u.id AS TEXT)
+                   WHERE u.parent_id = ? AND u.role = 'operator'""",
+                (uid,)
+            )
+            row = await cursor.fetchone()
+            subordinate_count = int(row[0]) if row else 0
+
         return {
             "held_by_me": held_devices,
             "under_subordinates": subordinate_devices,
             "all_under_me": all_under_me,
             "stats": {
-                "in_my_hand": len(held_devices),
-                "under_subordinates": len(subordinate_devices),
-                "total_in_chain": len(all_under_me),
+                "in_my_hand": held_count,
+                "under_subordinates": subordinate_count,
+                "total_in_chain": held_count + subordinate_count,
                 "total_devices_received": total_devices_received,
                 "total_devices_sent": total_devices_sent,
                 "total_distributions_received": total_distrib_received,
