@@ -13,7 +13,7 @@ from app.utils.helpers import get_pagination, generate_operator_id
 async def get_operators(
     page: int = 1,
     page_size: int = 20,
-    assigned_to: Optional[str] = None,
+    assigned_to: Optional[int] = None,
     status: Optional[str] = None,
     search: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -76,7 +76,7 @@ async def create_operator(operator_data: OperatorCreate, created_by: Dict[str, A
             address=operator_data.address,
             area=operator_data.area,
             city=operator_data.city,
-            assigned_to=str(created_by["_id"]),
+            assigned_to=int(created_by["_id"]),
             assigned_to_name=created_by["name"],
             status=OperatorStatus.ACTIVE.value,
             device_count=0,
@@ -153,7 +153,7 @@ async def update_operator_device_count(operator_id: str) -> None:
             await session.commit()
 
 
-async def get_operator_stats(assigned_to: Optional[str] = None) -> Dict[str, int]:
+async def get_operator_stats(assigned_to: Optional[int] = None) -> Dict[str, int]:
     """Get operator statistics"""
     async with async_session_factory() as session:
         q = select(Operator.status, func.count().label("total"))

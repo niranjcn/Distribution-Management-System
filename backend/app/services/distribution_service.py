@@ -147,14 +147,14 @@ def _sender_display_name(user: Dict[str, Any]) -> str:
 
 async def _bulk_update_device_holders(
     device_ids: List[Any],
-    holder_id: str,
+    holder_id: int,
     holder_name: str,
     holder_type: str,
     location: str,
     status: str,
-    performed_by: str,
+    performed_by: int,
     performed_by_name: str,
-    from_user_id: Optional[str] = None,
+    from_user_id: Optional[int] = None,
     from_user_name: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> List[str]:
@@ -239,17 +239,17 @@ async def _bulk_update_device_holders(
         return [str(dev_id) for dev_id in existing_ids]
 
 
-async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Optional[Set[str]]:
+async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Optional[Set[int]]:
     role = str(user.get("role") or "")
-    user_id = str(user.get("id") or user.get("_id") or "")
-    parent_id = str(user.get("parent_id") or "")
+    user_id = int(user.get("id") or user.get("_id") or 0)
+    parent_id = int(user.get("parent_id") or 0)
 
     if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
         return None
 
-    scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
-    scoped_ids: Set[str] = {scope_root}
-    if str(scope_root).isdigit():
+    scope_root = parent_id if role == "sub_distribution_manager" and parent_id else user_id
+    scoped_ids: Set[int] = {scope_root}
+    if scope_root:
         desc_rows = (await session.execute(
             text("""
                 WITH RECURSIVE descendants AS (
@@ -260,9 +260,9 @@ async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Opt
                 )
                 SELECT id FROM descendants
             """),
-            {"root": int(scope_root)}
+            {"root": scope_root}
         )).scalars().all()
-        scoped_ids.update(str(did) for did in desc_rows if did)
+        scoped_ids.update(did for did in desc_rows if did)
     return scoped_ids
 
 
@@ -581,7 +581,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 
         from_role = from_user["role"]
         to_role = to_user["role"]
-        from_user_id = str(from_user.get("id", from_user.get("_id", "")))
+        from_user_id = int(from_user.get("id", from_user.get("_id", 0)))
 
         if from_role in {"super_admin", "manager", "pdic_staff"}:
             if to_role not in {"sub_distributor", "cluster", "operator"}:
@@ -589,7 +589,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 
         if from_role == "sub_distribution_manager":
             if to_role == "cluster":
-                if str(to_user.get("parent_id", "")) != from_user_id:
+                if int(to_user.get("parent_id", 0)) != from_user_id:
                     raise ValueError("You can only distribute to clusters directly under your account")
             elif to_role == "operator":
                 parent_cluster = (await session.execute(
@@ -598,14 +598,14 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 if not parent_cluster:
                     raise ValueError("Operator's cluster not found")
                 parent_cluster = dict(parent_cluster)
-                if str(parent_cluster.get("parent_id", "")) != from_user_id:
+                if int(parent_cluster.get("parent_id", 0)) != from_user_id:
                     raise ValueError("You can only distribute to operators within your sub-distribution manager chain")
             else:
                 raise ValueError("Sub distribution managers can only distribute to clusters or operators")
 
         elif from_role == "sub_distributor":
             if to_role == "cluster":
-                if str(to_user.get("parent_id", "")) != from_user_id:
+                if int(to_user.get("parent_id", 0)) != from_user_id:
                     raise ValueError("You can only distribute to clusters directly under your account")
             elif to_role == "operator":
                 parent_cluster = (await session.execute(
@@ -614,21 +614,21 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 if not parent_cluster:
                     raise ValueError("Operator's cluster not found")
                 parent_cluster = dict(parent_cluster)
-                if str(parent_cluster.get("parent_id", "")) != from_user_id:
+                if int(parent_cluster.get("parent_id", 0)) != from_user_id:
                     raise ValueError("You can only distribute to operators within your sub-distribution")
             else:
                 raise ValueError("Sub-distributors can only distribute to clusters or operators")
 
         elif from_role == "cluster":
             if to_role == "operator":
-                if str(to_user.get("parent_id", "")) != from_user_id:
+                if int(to_user.get("parent_id", 0)) != from_user_id:
                     raise ValueError("You can only distribute to operators directly under your cluster")
             else:
                 raise ValueError("Clusters can only distribute to operators")
 
         elif from_role == "operator":
             if to_role == "operator":
-                if str(dist_data.to_user_id) == from_user_id:
+                if int(dist_data.to_user_id) == from_user_id:
                     raise ValueError("You cannot distribute to yourself")
                 if str(to_user.get("parent_id", "")) != str(from_user.get("parent_id", "")):
                     raise ValueError("You can only distribute to operators in the same cluster")
@@ -686,7 +686,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 if device["status"] != DeviceStatus.AVAILABLE.value:
                     raise ValueError(f"Device {device['device_id']} is not available")
             else:
-                if str(device.get("current_holder_id", "")) != from_user_id:
+                if int(device.get("current_holder_id", 0)) != from_user_id:
                     raise ValueError(f"Device {device['device_id']} is not in your possession")
                 if str(dev_id) in pending_blocked:
                     raise ValueError(
@@ -703,7 +703,8 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 
         now_dt = datetime.now().replace(tzinfo=None)
         now = now_dt
-        distribution_date = dist_data.date_of_distribution if dist_data.date_of_distribution else now_dt.date()
+        today = now_dt.date()
+        distribution_date = dist_data.date_of_distribution if dist_data.date_of_distribution else today
         dist_id = generate_distribution_id()
 
         result = await session.execute(
@@ -721,13 +722,13 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 "from_user_id": from_user_id,
                 "from_user_name": from_user["name"],
                 "from_user_type": role_to_type.get(from_user["role"], "noc"),
-                "to_user_id": str(to_user["id"]),
+                "to_user_id": int(to_user["id"]),
                 "to_user_name": to_user["name"],
                 "to_user_type": role_to_type.get(to_user["role"], "pdic_staff"),
                 "status": DistributionStatus.PENDING_RECEIPT.value,
                 "request_date": now,
                 "date_of_distribution": distribution_date,
-                "approval_date": now,
+                "approval_date": today,
                 "approved_by": from_user_id,
                 "approved_by_name": from_user["name"],
                 "notes": dist_data.notes,
@@ -736,7 +737,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 "updated_at": now,
             }
         )
-        new_id = str(result.lastrowid)
+        new_id = result.lastrowid
 
         dd_rows = [{"dist_id": dist_id, "device_id": int(dev_id), "now": now} for dev_id in dist_data.device_ids]
         if dd_rows:
@@ -788,22 +789,23 @@ async def update_distribution_status(
         return None
 
     now = datetime.now().replace(tzinfo=None)
-    user_id = str(user.get("id", user.get("_id", "")))
+    user_id = int(user.get("id", user.get("_id", 0)))
     user_role = str(user.get("role", "")).lower()
 
     async with async_session_factory() as session:
         update_parts = ["status = :status", "updated_at = :now"]
         params: Dict[str, Any] = {"status": status, "now": now, "id": int(distribution_id)}
 
+        now_date = now.date()
         if status == DistributionStatus.APPROVED.value:
             update_parts.extend(["approval_date = :now2", "approved_by = :uid", "approved_by_name = :uname"])
-            params["now2"] = now
+            params["now2"] = now_date
             params["uid"] = user_id
             params["uname"] = user["name"]
 
         elif status == DistributionStatus.DELIVERED.value:
             update_parts.append("delivery_date = :now2")
-            params["now2"] = now
+            params["now2"] = now_date
 
         if notes:
             update_parts.append("notes = :notes")
@@ -814,7 +816,7 @@ async def update_distribution_status(
         await session.commit()
 
     await notification_service.create_notification(
-        user_id=dist["from_user_id"],
+        user_id=str(dist["from_user_id"]),
         title=f"Distribution {status.capitalize()}",
         message=f"Distribution {dist['distribution_id']} has been {status}",
         notification_type="success" if status in ["approved", "delivered"] else "warning",
@@ -836,9 +838,9 @@ async def confirm_receipt(
     if not dist:
         raise ValueError("Distribution not found")
 
-    user_id = str(user.get("id", user.get("_id", "")))
+    user_id = int(user.get("id", user.get("_id", 0)))
 
-    if str(dist["to_user_id"]) != user_id:
+    if int(dist["to_user_id"]) != user_id:
         raise ValueError("Only the recipient can confirm receipt of this distribution")
 
     if dist["status"] != DistributionStatus.PENDING_RECEIPT.value:
@@ -872,14 +874,14 @@ async def confirm_receipt(
         holder_type = role_to_type.get(to_user_role, "pdic_staff")
         await _bulk_update_device_holders(
             device_ids=device_ids,
-            holder_id=dist["to_user_id"],
+            holder_id=int(dist["to_user_id"]),
             holder_name=dist["to_user_name"],
             holder_type=holder_type,
             location=dist["to_user_name"],
             status=device_status_for_recipient,
             performed_by=user_id,
             performed_by_name=user["name"],
-            from_user_id=dist["from_user_id"],
+            from_user_id=int(dist["from_user_id"]),
             from_user_name=dist["from_user_name"],
             notes=f"Receipt confirmed for distribution {dist['distribution_id']}",
         )
@@ -887,12 +889,12 @@ async def confirm_receipt(
         async with async_session_factory() as session:
             await session.execute(
                 text("""UPDATE distributions
-                   SET status = :status, approval_date = :now, approved_by = :uid, approved_by_name = :uname,
+                   SET status = :status, approval_date = :today, approved_by = :uid, approved_by_name = :uname,
                        notes = COALESCE(:notes, notes), updated_at = :now2
                    WHERE id = :id"""),
                 {
                     "status": DistributionStatus.APPROVED.value,
-                    "now": now,
+                    "today": now.date(),
                     "uid": user_id,
                     "uname": user["name"],
                     "notes": notes,
@@ -903,7 +905,7 @@ async def confirm_receipt(
             await session.commit()
 
         await notification_service.create_notification(
-            user_id=dist["from_user_id"],
+            user_id=str(dist["from_user_id"]),
             title="Receipt Confirmed",
             message=f"{user['name']} confirmed receipt of {dist['device_count']} device(s) "
                     f"(Distribution: {dist['distribution_id']}).",
@@ -944,7 +946,7 @@ async def confirm_receipt(
             for r in admin_rows
         ] + [
             {
-                "user_id": dist["from_user_id"],
+                "user_id": str(dist["from_user_id"]),
                 "title": "Receipt Disputed",
                 "message": f"{user['name']} reported NOT receiving your device(s) in distribution "
                            f"{dist['distribution_id']}. Admin, manager, and PDIC staff have been notified.",
@@ -994,9 +996,9 @@ async def confirm_disputed_return(
     async with async_session_factory() as session:
         await session.execute(
             text("""UPDATE distributions
-               SET status = :status, notes = COALESCE(:notes, notes), updated_at = :now, delivery_date = :now2
+               SET status = :status, notes = COALESCE(:notes, notes), updated_at = :now, delivery_date = :today
                WHERE id = :id"""),
-            {"status": DistributionStatus.REJECTED.value, "notes": notes, "now": now, "now2": now, "id": int(distribution_id)}
+            {"status": DistributionStatus.REJECTED.value, "notes": notes, "now": now, "today": now.date(), "id": int(distribution_id)}
         )
         await session.commit()
 
@@ -1009,9 +1011,9 @@ async def confirm_disputed_return(
                 holder_type=sender_holder_type,
                 location=dist["from_user_name"],
                 status=sender_status,
-                performed_by=str(user.get("id", user.get("_id", ""))),
+                performed_by=int(user.get("id", user.get("_id", 0))),
                 performed_by_name=str(user.get("name") or "PDIC"),
-                from_user_id=dist.get("to_user_id"),
+                from_user_id=int(dist.get("to_user_id") or 0),
                 from_user_name=dist.get("to_user_name"),
                 notes=f"Disputed return confirmed for distribution {dist.get('distribution_id')}",
             )
@@ -1035,8 +1037,8 @@ async def cancel_distribution(distribution_id: str, user: dict) -> bool:
     dist = await get_distribution_by_id(distribution_id)
     if not dist:
         return False
-    user_id = str(user.get("id", user.get("_id", "")))
-    if dist["created_by"] != user_id and user.get("role") not in ["super_admin", "manager"]:
+    user_id = int(user.get("id", user.get("_id", 0)))
+    if int(dist["created_by"]) != user_id and user.get("role") not in ["super_admin", "manager"]:
         raise ValueError("Only the creator can cancel this distribution")
     if dist["status"] == DistributionStatus.CANCELLED.value:
         raise ValueError("Distribution is already cancelled")
@@ -1060,9 +1062,9 @@ async def get_distribution_manifest_file(distribution_id: str, user: Dict[str, A
         return None
 
     role = user.get("role")
-    user_id = str(user.get("id", user.get("_id", "")))
+    user_id = int(user.get("id", user.get("_id", 0)))
     if role not in ["super_admin", "manager", "pdic_staff"]:
-        if user_id not in [str(dist.get("from_user_id", "")), str(dist.get("to_user_id", ""))]:
+        if user_id not in [int(dist.get("from_user_id", 0)), int(dist.get("to_user_id", 0))]:
             raise ValueError("You are not allowed to access this distribution manifest")
 
     manifest_file = dist.get("manifest_file")
@@ -1090,10 +1092,10 @@ async def get_distribution_mac_nuid_export(
         raise ValueError("Distribution not found")
 
     role = str(user.get("role", "")).lower()
-    user_id = str(user.get("id", user.get("_id", "")))
+    user_id = int(user.get("id", user.get("_id", 0)))
 
     if role not in ["super_admin", "manager", "pdic_staff"]:
-        if user_id not in [str(dist.get("from_user_id", "")), str(dist.get("to_user_id", ""))]:
+        if user_id not in [int(dist.get("from_user_id", 0)), int(dist.get("to_user_id", 0))]:
             raise ValueError("You are not allowed to access this distribution export")
 
     device_ids = dist.get("device_ids") or []
@@ -1180,7 +1182,7 @@ async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
         distributions = [dict(r) for r in rows]
         synced_count = 0
         errors = []
-        user_id = str(user.get("id", user.get("_id", "system")))
+        user_id = int(user.get("id", user.get("_id", 0)))
 
         for dist in distributions:
             device_ids = dist.get("device_ids", "[]")

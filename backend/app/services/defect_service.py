@@ -31,23 +31,21 @@ def _parse_json_metadata(raw_metadata: Any) -> Dict[str, Any]:
     return {}
 
 
-async def _get_user_role_and_parent(session, user_id: str) -> Optional[Dict[str, Any]]:
-    if not user_id or not str(user_id).isdigit():
-        return None
+async def _get_user_role_and_parent(session, user_id: int) -> Optional[Dict[str, Any]]:
     row = (await session.execute(
         text("SELECT id, role, parent_id FROM users WHERE id = :uid"),
-        {"uid": int(user_id)}
+        {"uid": user_id}
     )).mappings().first()
     return dict(row) if row else None
 
 
 async def _resolve_defect_lineage_ids(
     session,
-    reporter_id: str,
+    reporter_id: int,
     reporter_role: str
-) -> Dict[str, Optional[str]]:
-    operator_id: Optional[str] = None
-    sub_distributor_id: Optional[str] = None
+) -> Dict[str, Optional[int]]:
+    operator_id: Optional[int] = None
+    sub_distributor_id: Optional[int] = None
 
     normalized_role = (reporter_role or "").strip().lower()
     if not normalized_role:
@@ -55,7 +53,7 @@ async def _resolve_defect_lineage_ids(
         normalized_role = (user_row.get("role") if user_row else "") or ""
 
     if normalized_role == "operator":
-        operator_id = str(reporter_id)
+        operator_id = reporter_id
 
         op_row = (await session.execute(
             text("SELECT id, role, parent_id FROM users WHERE CAST(id AS CHAR) = CAST(:uid AS CHAR)"),
@@ -69,17 +67,17 @@ async def _resolve_defect_lineage_ids(
             )).mappings().first()
             if parent_row:
                 if parent_row["role"] == "sub_distributor":
-                    sub_distributor_id = str(parent_row["id"])
+                    sub_distributor_id = int(parent_row["id"])
                 elif parent_row["role"] == "cluster" and parent_row["parent_id"] is not None:
                     sub_row = (await session.execute(
                         text("SELECT id FROM users WHERE id = :pid AND role = 'sub_distributor'"),
                         {"pid": int(parent_row["parent_id"])}
                     )).mappings().first()
                     if sub_row:
-                        sub_distributor_id = str(sub_row["id"])
+                        sub_distributor_id = int(sub_row["id"])
 
     elif normalized_role == "sub_distributor":
-        sub_distributor_id = str(reporter_id)
+        sub_distributor_id = reporter_id
 
     elif normalized_role == "cluster":
         row = (await session.execute(
@@ -92,7 +90,7 @@ async def _resolve_defect_lineage_ids(
                 {"pid": int(row["parent_id"])}
             )).mappings().first()
             if sub_row:
-                sub_distributor_id = str(sub_row["id"])
+                sub_distributor_id = int(sub_row["id"])
 
     return {
         "operator_id": operator_id,
@@ -255,8 +253,8 @@ async def get_defects(
     status: Optional[str] = None,
     severity: Optional[str] = None,
     defect_type: Optional[str] = None,
-    reported_by: Optional[str] = None,
-    holder_user_id: Optional[str] = None,
+    reported_by: Optional[int] = None,
+    holder_user_id: Optional[int] = None,
     search: Optional[str] = None,
     search_by: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -278,13 +276,13 @@ async def get_defects(
             params["defect_type"] = defect_type
         if reported_by:
             conditions.append("reported_by = :reported_by")
-            params["reported_by"] = str(reported_by)
+            params["reported_by"] = reported_by
         if holder_user_id:
             conditions.append(
                 "(reported_by = :holder_uid OR CAST(device_id AS UNSIGNED) IN (SELECT id FROM devices WHERE current_holder_id = :holder_uid2))"
             )
-            params["holder_uid"] = str(holder_user_id)
-            params["holder_uid2"] = str(holder_user_id)
+            params["holder_uid"] = holder_user_id
+            params["holder_uid2"] = holder_user_id
         if start_date:
             conditions.append("created_at >= :start_date")
             params["start_date"] = start_date
@@ -370,7 +368,7 @@ async def create_defect(
     reporter: Dict[str, Any],
     sync_device_status: bool = True
 ) -> Dict[str, Any]:
-    reporter_id = str(reporter.get("_id") or reporter.get("id"))
+    reporter_id = int(reporter.get("_id") or reporter.get("id"))
     reporter_name = reporter.get("name") or "System"
     reporter_role = reporter.get("role") or ""
     requested_target = defect_data.report_target.value if defect_data.report_target else None
@@ -518,7 +516,7 @@ async def forward_defect_to_management(
     notes: Optional[str] = None
 ) -> Dict[str, Any]:
     forwarder_role = forwarder.get("role")
-    forwarder_id = str(forwarder.get("id") or forwarder.get("_id"))
+    forwarder_id = int(forwarder.get("id") or forwarder.get("_id"))
     forwarder_name = forwarder.get("name") or "Sub Distributor"
 
     if forwarder_role != "sub_distributor":
@@ -657,7 +655,7 @@ async def update_defect_status(
             update_parts.append("payment_due_user_name = :payment_due_user_name")
             update_parts.append("payment_confirmed = 0")
             update_params["return_amount"] = amount
-            update_params["payment_due_user_id"] = str(defect.get("reported_by") or "")
+            update_params["payment_due_user_id"] = defect.get("reported_by")
             update_params["payment_due_user_name"] = str(defect.get("reported_by_name") or "Unknown")
             if payment_bill_url:
                 update_parts.append("payment_bill_url = :payment_bill_url")
@@ -677,7 +675,7 @@ async def update_defect_status(
             await device_service.update_device_status(
                 device_id=defect["device_id"],
                 status=DeviceStatus.DEFECTIVE.value,
-                performed_by=str(user.get("_id") or user.get("id")),
+                performed_by=int(user.get("_id") or user.get("id")),
                 performed_by_name=user.get("name", "Unknown"),
                 notes=f"Defect report {defect.get('report_id', defect_id)} approved"
             )
@@ -766,7 +764,7 @@ async def confirm_defect_payment(
     notes: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     now = datetime.now().replace(tzinfo=None)
-    confirmer_id = str(confirmer.get("_id") or confirmer.get("id") or "")
+    confirmer_id = int(confirmer.get("_id") or confirmer.get("id"))
     confirmer_name = str(confirmer.get("name") or "Management")
 
     async with async_session_factory() as session:
@@ -838,7 +836,7 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
         if scope_user_ids is not None:
             ph = ",".join([f":sr_{i}" for i in range(len(scope_user_ids))])
             conditions.append(
-                f"COALESCE(NULLIF(d.payment_due_user_id, ''), d.reported_by) IN ({ph})"
+                f"COALESCE(d.payment_due_user_id, d.reported_by) IN ({ph})"
             )
             for i, sid in enumerate(sorted(scope_user_ids)):
                 params[f"sr_{i}"] = sid
@@ -857,7 +855,7 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
                     SUM(COALESCE(d.return_amount, 0)) AS total_due
                 FROM defects d
                 LEFT JOIN returns r ON ((CAST(r.defect_id AS UNSIGNED) = d.id) OR r.return_id = d.auto_return_id)
-                LEFT JOIN users due ON due.id = CAST(COALESCE(NULLIF(d.payment_due_user_id, ''), d.reported_by) AS UNSIGNED)
+                LEFT JOIN users due ON due.id = COALESCE(d.payment_due_user_id, d.reported_by)
                 LEFT JOIN users parent ON parent.id = due.parent_id
                 WHERE {where_clause}
                 GROUP BY due.id,
@@ -875,7 +873,7 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
 async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     async with async_session_factory() as session:
         scope_user_ids = await _get_report_scope_user_ids(session, current_user) if current_user else None
-        requested_user_id = str(user_id)
+        requested_user_id = int(user_id)
         if scope_user_ids is not None and requested_user_id not in scope_user_ids:
             raise PermissionError("Requested user is outside your hierarchy scope")
 
@@ -904,7 +902,7 @@ async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[st
                 FROM defects d
                 LEFT JOIN returns r ON ((CAST(r.defect_id AS UNSIGNED) = d.id) OR r.return_id = d.auto_return_id)
                 LEFT JOIN devices dev ON dev.id = d.device_id
-                WHERE COALESCE(NULLIF(d.payment_due_user_id, ''), d.reported_by) = :uid
+                WHERE COALESCE(d.payment_due_user_id, d.reported_by) = :uid
                   AND COALESCE(d.return_amount, 0) > 0
                   AND COALESCE(d.payment_confirmed, 0) = 0
                   AND COALESCE(r.status, '') = 'received'
@@ -948,7 +946,7 @@ async def resolve_defect(
             {
                 "status": DefectStatus.RESOLVED.value,
                 "resolution": resolution,
-                "resolved_by": str(resolver["_id"]),
+                "resolved_by": int(resolver["_id"]),
                 "resolved_by_name": resolver["name"],
                 "resolved_at": now,
                 "updated_at": now,
@@ -961,7 +959,7 @@ async def resolve_defect(
             await device_service.update_device_status(
                 device_id=defect["device_id"],
                 status=DeviceStatus.MAINTENANCE.value,
-                performed_by=str(resolver["_id"]),
+                performed_by=int(resolver["_id"]),
                 performed_by_name=resolver["name"],
                 notes=f"Defect resolved: {defect['report_id']}"
             )
@@ -991,7 +989,7 @@ async def replace_defect_device(
     resolver: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Replace a defective device by selecting existing stock or registering a new device."""
-    resolver_id = str(resolver.get("_id") or resolver.get("id"))
+    resolver_id = int(resolver.get("_id") or resolver.get("id"))
     resolver_name = resolver.get("name") or "System"
     pre_created_device: Optional[Dict[str, Any]] = None
 
@@ -1125,7 +1123,7 @@ async def replace_defect_device(
             update_parts.append("payment_due_user_name = :payment_due_user_name")
             update_parts.append("payment_confirmed = 0")
             update_params["return_amount"] = float(effective_return_amount)
-            update_params["payment_due_user_id"] = str(defect.get("reported_by") or "")
+            update_params["payment_due_user_id"] = defect.get("reported_by")
             update_params["payment_due_user_name"] = str(defect.get("reported_by_name") or "Unknown")
 
         if service_charge is not None:
@@ -1208,7 +1206,7 @@ async def confirm_replacement_receipt(
     confirmer: Dict[str, Any],
     notes: Optional[str] = None
 ) -> Dict[str, Any]:
-    confirmer_id = str(confirmer.get("_id") or confirmer.get("id"))
+    confirmer_id = int(confirmer.get("_id") or confirmer.get("id"))
     confirmer_name = confirmer.get("name") or "Operator"
     confirmer_role = str(confirmer.get("role") or "operator")
 
@@ -1281,12 +1279,12 @@ async def confirm_replacement_receipt(
     replacement_status = DeviceStatus.IN_USE.value if confirmer_role == "operator" else DeviceStatus.DISTRIBUTED.value
     updated_device = await device_service.update_device_holder(
         device_id=str(new_device["id"]),
-        holder_id=confirmer_id,
+        holder_id=int(confirmer_id),
         holder_name=confirmer_name,
         holder_type=confirmer_role,
         location=confirmer_name,
         status=replacement_status,
-        performed_by=confirmer_id,
+        performed_by=int(confirmer_id),
         performed_by_name=confirmer_name,
         from_user_id=None,
         from_user_name=None,
@@ -1327,7 +1325,7 @@ async def enquire_replacement_status(
     enquirer: Dict[str, Any],
     message: str
 ) -> Dict[str, Any]:
-    enquirer_id = str(enquirer.get("_id") or enquirer.get("id"))
+    enquirer_id = int(enquirer.get("_id") or enquirer.get("id"))
     enquirer_name = enquirer.get("name") or "Operator"
 
     async with async_session_factory() as session:

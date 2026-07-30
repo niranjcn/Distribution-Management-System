@@ -163,7 +163,7 @@ async def create_user(user_data: UserCreate, creator_role: str = "super_admin") 
         # Store digital_id / broadband_id if provided
         if user_data.digital_id or user_data.broadband_id:
             await digital_id_service.create_digital_id_for_user(
-                user_id=str(u.id),
+                user_id=u.id,
                 email=user_data.email.lower(),
                 phone=user_data.phone,
                 digital_id=user_data.digital_id,

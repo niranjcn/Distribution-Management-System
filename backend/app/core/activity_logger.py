@@ -24,12 +24,12 @@ MEANINGFUL_ACTIVITY_RULES = [
 ]
 
 
-def extract_actor_details(user: Optional[Dict[str, Any]]) -> Tuple[str, str, str]:
+def extract_actor_details(user: Optional[Dict[str, Any]]) -> Tuple[int, str, str]:
     """Safely normalize auth payload variants to actor id/name/role strings."""
     if not isinstance(user, dict):
-        return "", "Unknown", ""
+        return 0, "Unknown", ""
 
-    actor_id = str(user.get("id") or user.get("_id") or user.get("user_id") or user.get("sub") or "")
+    actor_id = int(user.get("id") or user.get("_id") or user.get("user_id") or user.get("sub") or 0)
     actor_name = str(user.get("name") or user.get("email") or "Unknown")
     actor_role = str(user.get("role") or "")
     return actor_id, actor_name, actor_role
@@ -136,7 +136,7 @@ async def log_api_activity(
     method: str,
     path: str,
     status_code: int,
-    actor_id: Optional[str] = None,
+    actor_id: Optional[int] = None,
     actor_name: Optional[str] = None,
     actor_role: Optional[str] = None,
     ip_address: Optional[str] = None,

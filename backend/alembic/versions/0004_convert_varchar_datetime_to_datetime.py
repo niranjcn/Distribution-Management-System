@@ -179,14 +179,179 @@ def upgrade() -> None:
         ("created_at", "NOT NULL"),
     ])
 
+    # ── Convert VARCHAR(64) ID columns to Integer ──────────────────────
+
+    def _modify_int(table: str, columns: list[tuple[str, str]]) -> None:
+        for col_name, nullable in columns:
+            nullable_sql = "" if nullable == "NOT NULL" else ""
+            # Convert empty strings to NULL first where nullable
+            if not nullable_sql:
+                op.execute(f"UPDATE {table} SET {col_name} = NULL WHERE {col_name} = ''")
+            op.execute(f"ALTER TABLE {table} MODIFY COLUMN {col_name} INTEGER {nullable_sql}")
+
+    _modify_int("devices", [("current_holder_id", "")])
+    _modify_int("device_history", [
+        ("device_id", "NOT NULL"), ("from_user_id", ""),
+        ("to_user_id", ""), ("performed_by", ""),
+    ])
+    _modify_int("distributions", [
+        ("from_user_id", "NOT NULL"), ("to_user_id", "NOT NULL"),
+        ("approved_by", ""), ("created_by", "NOT NULL"),
+    ])
+    _modify_int("defects", [
+        ("reported_by", "NOT NULL"), ("forwarded_to_management_by", ""),
+        ("operator_id", ""), ("sub_distributor_id", ""),
+        ("resolved_by", ""), ("payment_confirmed_by", ""),
+        ("payment_due_user_id", ""),
+    ])
+    _modify_int("returns", [
+        ("requested_by", "NOT NULL"), ("approved_by", ""),
+    ])
+    _modify_int("operators", [("assigned_to", "NOT NULL")])
+    _modify_int("notifications", [("user_id", "NOT NULL")])
+    _modify_int("external_inventory_items", [("created_by", "")])
+    _modify_int("inventory_purchase_orders", [("ordered_by", "NOT NULL")])
+    _modify_int("inventory_receipts", [("received_by", "NOT NULL")])
+    _modify_int("inventory_stock_movements", [("performed_by", "")])
+    _modify_int("api_activity_logs", [("actor_id", "")])
+
+    # ── Convert FLOAT monetary columns to DECIMAL(10,2) / DECIMAL(12,2) ──
+
+    def _modify_decimal(table: str, columns: list[tuple[str, str, int, int]]) -> None:
+        for col_name, nullable, precision, scale in columns:
+            nullable_sql = "" if nullable == "NOT NULL" else ""
+            default_sql = " DEFAULT 0" if nullable == "NOT NULL" else ""
+            op.execute(
+                f"ALTER TABLE {table} MODIFY COLUMN {col_name} "
+                f"DECIMAL({precision}, {scale}) {nullable_sql}{default_sql}"
+            )
+
+    _modify_decimal("defects", [
+        ("return_amount", "", 10, 2),
+        ("service_charge", "", 10, 2),
+    ])
+    _modify_decimal("external_inventory_items", [
+        ("price", "", 10, 2),
+        ("unit_cost", "", 10, 2),
+    ])
+    _modify_decimal("inventory_purchase_orders", [
+        ("total_amount", "", 10, 2),
+    ])
+    _modify_decimal("inventory_po_lines", [
+        ("unit_cost", "", 10, 2),
+        ("line_total", "", 12, 2),
+    ])
+    _modify_decimal("inventory_receipt_lines", [
+        ("unit_cost", "", 10, 2),
+        ("line_total", "", 12, 2),
+    ])
+
+    # ── VARCHAR(255) MAC addresses → VARCHAR(32) ──
+    op.execute("ALTER TABLE devices MODIFY COLUMN mac_address VARCHAR(32) UNIQUE")
+    op.execute("ALTER TABLE returns MODIFY COLUMN mac_address VARCHAR(32)")
+    op.execute("ALTER TABLE external_inventory_items MODIFY COLUMN mac_id VARCHAR(32)")
+
+    # ── returns.reason VARCHAR(64) → VARCHAR(255) ──
+    op.execute("ALTER TABLE returns MODIFY COLUMN reason VARCHAR(255) NOT NULL")
+
+    # ── users.password_hash TEXT → VARCHAR(255) ──
+    op.execute("ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NOT NULL")
+
+    # ── DATETIME → DATE where time-of-day is irrelevant ──
+    op.execute("ALTER TABLE devices MODIFY COLUMN purchase_date DATE")
+    op.execute("ALTER TABLE devices MODIFY COLUMN warranty_expiry DATE")
+    op.execute("ALTER TABLE distributions MODIFY COLUMN date_of_distribution DATE")
+    op.execute("ALTER TABLE distributions MODIFY COLUMN approval_date DATE")
+    op.execute("ALTER TABLE distributions MODIFY COLUMN delivery_date DATE")
+    op.execute("ALTER TABLE inventory_purchase_orders MODIFY COLUMN expected_date DATE")
+
+    # ── Integer boolean flags → BOOLEAN (TINYINT(1)) ──
+    op.execute("ALTER TABLE users MODIFY COLUMN force_email_change BOOLEAN DEFAULT 0")
+    op.execute("ALTER TABLE users MODIFY COLUMN force_password_change BOOLEAN DEFAULT 0")
+    op.execute("ALTER TABLE users MODIFY COLUMN is_verified BOOLEAN DEFAULT 0")
+    op.execute("ALTER TABLE defects MODIFY COLUMN forwarded_to_management BOOLEAN DEFAULT 0")
+    op.execute("ALTER TABLE defects MODIFY COLUMN payment_confirmed BOOLEAN DEFAULT 0")
+    op.execute("ALTER TABLE notifications MODIFY COLUMN is_read BOOLEAN DEFAULT 0")
+
 
 def downgrade() -> None:
-    """Revert DATETIME columns back to VARCHAR(64)."""
+    """Revert DATETIME columns back to VARCHAR(64) and Integer back to VARCHAR(64)."""
     def _revert_columns(table: str, columns: list[tuple[str, str]]) -> None:
         for col_name, nullable in columns:
             nullable_sql = "" if nullable == "NOT NULL" else ""
             op.execute(f"ALTER TABLE {table} MODIFY COLUMN {col_name} VARCHAR(64) {nullable_sql}")
 
+    # Revert Integer columns back to VARCHAR(64)
+    def _revert_int(table: str, columns: list[tuple[str, str]]) -> None:
+        for col_name, nullable in columns:
+            nullable_sql = "" if nullable == "NOT NULL" else ""
+            op.execute(f"ALTER TABLE {table} MODIFY COLUMN {col_name} VARCHAR(64) {nullable_sql}")
+
+    _revert_int("devices", [("current_holder_id", "")])
+    _revert_int("device_history", [
+        ("device_id", "NOT NULL"), ("from_user_id", ""),
+        ("to_user_id", ""), ("performed_by", ""),
+    ])
+    _revert_int("distributions", [
+        ("from_user_id", "NOT NULL"), ("to_user_id", "NOT NULL"),
+        ("approved_by", ""), ("created_by", "NOT NULL"),
+    ])
+    _revert_int("defects", [
+        ("reported_by", "NOT NULL"), ("forwarded_to_management_by", ""),
+        ("operator_id", ""), ("sub_distributor_id", ""),
+        ("resolved_by", ""), ("payment_confirmed_by", ""),
+        ("payment_due_user_id", ""),
+    ])
+    _revert_int("returns", [
+        ("requested_by", "NOT NULL"), ("approved_by", ""),
+    ])
+    _revert_int("operators", [("assigned_to", "NOT NULL")])
+    _revert_int("notifications", [("user_id", "NOT NULL")])
+    _revert_int("external_inventory_items", [("created_by", "")])
+    _revert_int("inventory_purchase_orders", [("ordered_by", "NOT NULL")])
+    _revert_int("inventory_receipts", [("received_by", "NOT NULL")])
+    _revert_int("inventory_stock_movements", [("performed_by", "")])
+    _revert_int("api_activity_logs", [("actor_id", "")])
+
+    # Revert DECIMAL columns back to FLOAT
+    def _revert_float(table: str, columns: list[str]) -> None:
+        for col_name in columns:
+            op.execute(f"ALTER TABLE {table} MODIFY COLUMN {col_name} FLOAT DEFAULT 0")
+
+    _revert_float("defects", ["return_amount", "service_charge"])
+    _revert_float("external_inventory_items", ["price", "unit_cost"])
+    _revert_float("inventory_purchase_orders", ["total_amount"])
+    _revert_float("inventory_po_lines", ["unit_cost", "line_total"])
+    _revert_float("inventory_receipt_lines", ["unit_cost", "line_total"])
+
+    # Revert VARCHAR(32) MAC addresses back to VARCHAR(255)
+    op.execute("ALTER TABLE devices MODIFY COLUMN mac_address VARCHAR(255) UNIQUE")
+    op.execute("ALTER TABLE returns MODIFY COLUMN mac_address VARCHAR(255)")
+    op.execute("ALTER TABLE external_inventory_items MODIFY COLUMN mac_id VARCHAR(255)")
+
+    # Revert returns.reason VARCHAR(255) back to VARCHAR(64)
+    op.execute("ALTER TABLE returns MODIFY COLUMN reason VARCHAR(64) NOT NULL")
+
+    # Revert users.password_hash VARCHAR(255) back to TEXT
+    op.execute("ALTER TABLE users MODIFY COLUMN password_hash TEXT NOT NULL")
+
+    # Revert DATE columns back to DATETIME
+    op.execute("ALTER TABLE devices MODIFY COLUMN purchase_date DATETIME")
+    op.execute("ALTER TABLE devices MODIFY COLUMN warranty_expiry DATETIME")
+    op.execute("ALTER TABLE distributions MODIFY COLUMN date_of_distribution DATETIME")
+    op.execute("ALTER TABLE distributions MODIFY COLUMN approval_date DATETIME")
+    op.execute("ALTER TABLE distributions MODIFY COLUMN delivery_date DATETIME")
+    op.execute("ALTER TABLE inventory_purchase_orders MODIFY COLUMN expected_date DATETIME")
+
+    # Revert BOOLEAN boolean flags back to Integer
+    op.execute("ALTER TABLE users MODIFY COLUMN force_email_change INTEGER DEFAULT 0")
+    op.execute("ALTER TABLE users MODIFY COLUMN force_password_change INTEGER DEFAULT 0")
+    op.execute("ALTER TABLE users MODIFY COLUMN is_verified INTEGER DEFAULT 0")
+    op.execute("ALTER TABLE defects MODIFY COLUMN forwarded_to_management INTEGER DEFAULT 0")
+    op.execute("ALTER TABLE defects MODIFY COLUMN payment_confirmed INTEGER DEFAULT 0")
+    op.execute("ALTER TABLE notifications MODIFY COLUMN is_read INTEGER DEFAULT 0")
+
+    # Revert DATETIME columns back to VARCHAR(64)
     _revert_columns("users", [
         ("created_at", "NOT NULL"), ("updated_at", "NOT NULL"),
         ("last_login", ""), ("locked_until", ""),

@@ -64,10 +64,10 @@ async def _validate_operator_transfer_fix_request(session, operator_user: dict, 
     defective_device = result.mappings().first()
     defective_device = dict(defective_device) if defective_device else {}
 
-    operator_id = str(operator_user["id"])
-    reported_by = str(defect.get("reported_by")) if defect.get("reported_by") is not None else None
+    operator_id = int(operator_user["id"])
+    reported_by = int(defect["reported_by"]) if defect.get("reported_by") is not None else None
     holder_id = (
-        str(defective_device.get("current_holder_id"))
+        int(defective_device["current_holder_id"])
         if defective_device.get("current_holder_id") is not None
         else None
     )
@@ -174,7 +174,7 @@ async def submit_change_request(
                 for row in super_admin_rows:
                     super_admin_notification_payloads.append(
                         {
-                            "user_id": str(row["id"]),
+                            "user_id": int(row["id"]),
                             "title": "Credential Change Request Pending",
                             "message": (
                                 f"{current_user['name']} ({current_user['role']}) submitted a "
@@ -198,7 +198,7 @@ async def submit_change_request(
                 managers = result.mappings().all()
                 defect_report_id = defect.get("report_id") if defect else None
                 for row in managers:
-                    manager_id = str(row["id"])
+                    manager_id = int(row["id"])
                     manager_notification_payloads.append(
                         {
                             "user_id": manager_id,
@@ -364,7 +364,7 @@ async def review_change_request(
                         await device_service.update_device_status(
                             device_id=dev_id,
                             status=new_dev_status,
-                            performed_by=current_user["id"],
+                            performed_by=int(current_user["id"]),
                             performed_by_name=current_user["name"],
                             notes=f"Approved via change request {request_id}"
                         )
@@ -529,7 +529,7 @@ async def review_change_request(
 
             if req["request_type"] == "replacement_transfer_fix":
                 operator_notification_payload = {
-                    "user_id": str(req["requested_by"]),
+                    "user_id": int(req["requested_by"]),
                     "title": (
                         "Replacement Transfer Fix Approved"
                         if review.action == "approve"
@@ -553,7 +553,7 @@ async def review_change_request(
             elif review.action == "reject":
                 rejection_link = "/devices/edit-requests" if req.get("request_type") == "device_edit_change" else "/change-requests"
                 requester_rejection_notification_payload = {
-                    "user_id": str(req["requested_by"]),
+                    "user_id": int(req["requested_by"]),
                     "title": "Update Request Rejected",
                     "message": (
                         f"Your {str(req.get('request_type') or 'update').replace('_', ' ')} request "
@@ -590,9 +590,9 @@ async def review_change_request(
                     holder_type="operator",
                     location=transfer_plan["target_location"],
                     status="distributed",
-                    performed_by=str(current_user["id"]),
+                    performed_by=int(current_user["id"]),
                     performed_by_name=current_user["name"],
-                    from_user_id=(str(transfer_plan["from_user_id"]) if transfer_plan["from_user_id"] is not None else None),
+                    from_user_id=(int(transfer_plan["from_user_id"]) if transfer_plan["from_user_id"] is not None else None),
                     from_user_name=transfer_plan["from_user_name"],
                     notes=(
                         f"Replacement transfer-fix approved via {request_id} for "
@@ -602,7 +602,7 @@ async def review_change_request(
 
             # Additional explicit transfer confirmation for the operator.
             await notification_service.create_notification(
-                user_id=str(req["requested_by"]),
+                user_id=int(req["requested_by"]),
                 title="Replacement Device Transferred",
                 message=(
                     f"Replacement device {transfer_plan.get('replacement_device_code') or transfer_plan.get('replacement_serial') or ''} "

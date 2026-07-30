@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime
 from app.db_models.base import Base
 
 
@@ -9,22 +9,22 @@ class Distribution(Base):
     distribution_id = Column(String(128), unique=True, nullable=False)
     device_ids = Column(Text, nullable=False)
     device_count = Column(Integer, default=0)
-    from_user_id = Column(String(64), nullable=False)
+    from_user_id = Column(Integer, nullable=False)
     from_user_name = Column(String(255))
-    from_user_type = Column(String(64))
-    to_user_id = Column(String(64), nullable=False)
+    from_user_type = Column(String(32))
+    to_user_id = Column(Integer, nullable=False)
     to_user_name = Column(String(255))
-    to_user_type = Column(String(64))
-    status = Column(String(64), default="pending")
+    to_user_type = Column(String(32))
+    status = Column(String(32), default="pending")
     request_date = Column(DateTime, nullable=False)
-    date_of_distribution = Column(DateTime)
-    approval_date = Column(DateTime)
-    delivery_date = Column(DateTime)
-    notes = Column(Text)
+    date_of_distribution = Column(Date)
+    approval_date = Column(Date)
+    delivery_date = Column(Date)
+    notes = Column(String(500))
     manifest_file = Column(String(255))
-    approved_by = Column(String(64))
+    approved_by = Column(Integer)
     approved_by_name = Column(String(255))
-    created_by = Column(String(64), nullable=False)
+    created_by = Column(Integer, nullable=False)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 

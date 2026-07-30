@@ -15,7 +15,7 @@ async def get_returns(
     page_size: int = 20,
     status: Optional[str] = None,
     reason: Optional[str] = None,
-    requested_by: Optional[str] = None,
+    requested_by: Optional[int] = None,
     search: Optional[str] = None,
     search_by: Optional[str] = None,
     current_user: Optional[Dict[str, Any]] = None,
@@ -175,7 +175,7 @@ async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) ->
                 "device_serial": device["serial_number"],
                 "device_type": device["device_type"],
                 "mac_address": device.get("mac_address"),
-                "requested_by": str(requester["_id"]),
+                "requested_by": int(requester["_id"]),
                 "requested_by_name": requester["name"],
                 "return_to": str(return_to_user["id"]),
                 "return_to_name": return_to_user["name"],
@@ -246,7 +246,7 @@ async def update_return_status(
         if status == ReturnStatus.APPROVED.value:
             await session.execute(
                 text("UPDATE returns SET status = :status, approval_date = :now, approved_by = :uid, approved_by_name = :uname, updated_at = :now2 WHERE id = :id"),
-                {"status": status, "now": now, "uid": str(user["_id"]), "uname": user["name"], "now2": now, "id": int(return_id)}
+                {"status": status, "now": now, "uid": int(user["_id"]), "uname": user["name"], "now2": now, "id": int(return_id)}
             )
 
         elif status == ReturnStatus.RECEIVED.value:
@@ -296,7 +296,7 @@ async def update_return_status(
         await device_service.update_device_status(
             device_id=return_req["device_id"],
             status=DeviceStatus.RETURNED.value,
-            performed_by=str(user["_id"]),
+            performed_by=int(user["_id"]),
             performed_by_name=user["name"],
             notes=f"Device returned and received at PDIC via {return_req['return_id']}"
         )
@@ -307,9 +307,9 @@ async def update_return_status(
             holder_type="noc",
             location="PDIC",
             status=DeviceStatus.RETURNED.value,
-            performed_by=str(user["_id"]),
+            performed_by=int(user["_id"]),
             performed_by_name=user["name"],
-            from_user_id=return_req["requested_by"],
+            from_user_id=int(return_req["requested_by"]),
             from_user_name=return_req["requested_by_name"],
             notes=f"Returned and received at PDIC via {return_req['return_id']}"
         )
@@ -334,7 +334,7 @@ async def update_return_status(
 
     if status == ReturnStatus.APPROVED.value:
         enabled_roles = ["super_admin", "manager", "pdic_staff"]
-        acting_user_id = str(user.get("_id") or user.get("id"))
+        acting_user_id = int(user.get("_id") or user.get("id"))
         roles_ph = ",".join([f":r_{i}" for i in range(len(enabled_roles))])
         roles_params = {f"r_{i}": r for i, r in enumerate(enabled_roles)}
         roles_params["acting_uid"] = acting_user_id
@@ -362,7 +362,7 @@ async def update_return_status(
     return await get_return_by_id(return_id)
 
 
-async def cancel_return(return_id: str, user_id: str) -> bool:
+async def cancel_return(return_id: str, user_id: int) -> bool:
     async with async_session_factory() as session:
         return_req = (await session.execute(
             text("SELECT * FROM returns WHERE id = :id"), {"id": int(return_id)}
@@ -437,7 +437,7 @@ async def auto_create_defect_return(
     device_id: str,
     defect_id: str,
     defect_report_id: str,
-    requester_id: str,
+    requester_id: int,
     requester_name: str
 ) -> Optional[Dict[str, Any]]:
     async with async_session_factory() as session:

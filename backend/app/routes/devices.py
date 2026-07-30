@@ -1104,7 +1104,7 @@ async def bulk_upload_devices(
                             "status_after": "available",
                             "location": "PDIC",
                             "notes": "Device registered in system",
-                            "performed_by": str(current_user["id"]),
+                            "performed_by": int(current_user["id"]),
                             "performed_by_name": created_by_name,
                             "timestamp": now,
                         })
@@ -1135,7 +1135,7 @@ async def bulk_upload_devices(
                                     "status_after": "available",
                                     "location": "PDIC",
                                     "notes": "Device registered in system",
-                                    "performed_by": str(current_user["id"]),
+                                    "performed_by": int(current_user["id"]),
                                     "performed_by_name": created_by_name,
                                     "timestamp": now,
                                 },
@@ -1216,7 +1216,7 @@ async def create_device(
 
         device = await device_service.create_device(
             device_data=device_data,
-            created_by=current_user["id"],
+            created_by=int(current_user["id"]),
             created_by_name=(current_user.get("name") or current_user.get("email") or "PDIC Staff")
         )
 
@@ -1381,7 +1381,7 @@ async def update_device_status(
         device = await device_service.update_device_status(
             device_id=device_id,
             status=status_value,
-            performed_by=current_user["id"],
+            performed_by=int(current_user["id"]),
             performed_by_name=current_user["name"],
             notes=notes
         )

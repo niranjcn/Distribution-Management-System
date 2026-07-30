@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, BigInteger, DateTime
+from sqlalchemy import Column, Integer, String, Text, BigInteger, DateTime
+from sqlalchemy import Boolean as SqlBool
 from app.db_models.base import Base
 
 
@@ -8,16 +9,16 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False)
     name = Column(String(255), nullable=False)
-    password_hash = Column(Text, nullable=False)
+    password_hash = Column(String(255), nullable=False)
     role = Column(String(64), nullable=False)
     status = Column(String(32), default="active")
-    force_email_change = Column(Integer, default=0)
-    force_password_change = Column(Integer, default=0)
+    force_email_change = Column(SqlBool, default=False)
+    force_password_change = Column(SqlBool, default=False)
     phone = Column(String(64))
     designation = Column(String(255))
     location = Column(String(255))
     parent_id = Column(Integer)
-    is_verified = Column(Integer, default=0)
+    is_verified = Column(SqlBool, default=False)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
     last_login = Column(DateTime)
@@ -42,16 +43,16 @@ class ChangeRequest(Base):
     requested_by = Column(Integer, nullable=False)
     requested_by_name = Column(String(255), nullable=False)
     requested_by_role = Column(String(64), nullable=False)
-    request_type = Column(String(128), nullable=False)
+    request_type = Column(String(64), nullable=False)
     new_email = Column(String(255))
     new_password = Column(String(255))
     device_id = Column(String(64))
     requested_status = Column(String(64))
-    reason = Column(Text)
+    reason = Column(String(500))
     status = Column(String(32), default="pending")
     reviewed_by = Column(Integer)
     reviewed_by_name = Column(String(255))
-    review_note = Column(Text)
+    review_note = Column(String(500))
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 

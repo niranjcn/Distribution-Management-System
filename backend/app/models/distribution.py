@@ -82,8 +82,8 @@ class DistributionResponse(BaseModel):
     status: DistributionStatus
     request_date: datetime
     date_of_distribution: Optional[date] = None
-    approval_date: Optional[datetime] = None
-    delivery_date: Optional[datetime] = None
+    approval_date: Optional[date] = None
+    delivery_date: Optional[date] = None
     notes: Optional[str] = None
     manifest_file: Optional[str] = None
     approved_by: Optional[str] = None

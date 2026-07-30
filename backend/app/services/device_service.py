@@ -18,7 +18,7 @@ async def _get_locked_distribution_device_ids(session) -> set:
         INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
         WHERE d.status IN ('pending_receipt', 'disputed')
     """))
-    return {str(row[0]) for row in result}
+    return {row[0] for row in result}
 
 
 def _augment_device_record(device: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -67,9 +67,9 @@ async def get_devices(
         if manufacturer:
             conditions.append(Device.manufacturer == manufacturer)
         if holder_id:
-            conditions.append(Device.current_holder_id == holder_id)
+            conditions.append(Device.current_holder_id == int(holder_id))
         if holder_ids:
-            normalized = [str(h).strip() for h in holder_ids if str(h).strip()]
+            normalized = [int(h) for h in holder_ids if str(h).strip()]
             if normalized:
                 conditions.append(Device.current_holder_id.in_(normalized))
         if start_date:
@@ -138,7 +138,7 @@ async def get_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]:
         return _augment_device_record(inst.to_dict()) if inst else None
 
 
-async def create_device(device_data: DeviceCreate, created_by: str, created_by_name: str) -> Dict[str, Any]:
+async def create_device(device_data: DeviceCreate, created_by: int, created_by_name: str) -> Dict[str, Any]:
     """Create a new device"""
     async with async_session_factory() as session:
         is_sb = device_data.device_type.value == "Set-top box"
@@ -211,7 +211,7 @@ async def create_device(device_data: DeviceCreate, created_by: str, created_by_n
         )
         session.add(d)
         await session.flush()
-        new_id = str(d.id)
+        new_id = d.id
 
         await _add_device_history(session, new_id, "registered", performed_by=created_by,
                                   performed_by_name=created_by_name, status_after=DeviceStatus.AVAILABLE.value,
@@ -219,7 +219,7 @@ async def create_device(device_data: DeviceCreate, created_by: str, created_by_n
         await session.commit()
 
         # Read back using same session
-        inst = await session.get(Device, int(new_id))
+        inst = await session.get(Device, new_id)
         if inst:
             return _augment_device_record(inst.to_dict())
 
@@ -343,7 +343,7 @@ async def delete_device(device_id: str) -> bool:
         if not inst:
             return False
         await session.delete(inst)
-        await session.execute(text("DELETE FROM device_history WHERE device_id = :did"), {"did": device_id})
+        await session.execute(text("DELETE FROM device_history WHERE device_id = :did"), {"did": int(device_id)})
         await session.commit()
         return True
 
@@ -351,7 +351,7 @@ async def delete_device(device_id: str) -> bool:
 async def update_device_status(
     device_id: str,
     status: str,
-    performed_by: str,
+    performed_by: int,
     performed_by_name: str,
     notes: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
@@ -374,7 +374,7 @@ async def update_device_status(
         inst.status = status
         inst.updated_at = now
 
-        await _add_device_history(session, device_id, "status_changed",
+        await _add_device_history(session, int(device_id), "status_changed",
                                   performed_by=performed_by, performed_by_name=performed_by_name,
                                   status_before=old_status, status_after=status,
                                   location=device.get("current_location"),
@@ -387,14 +387,14 @@ async def update_device_status(
 async def _update_device_holder_impl(
     session,
     device_id: str,
-    holder_id: Optional[str],
+    holder_id: Optional[int],
     holder_name: Optional[str],
     holder_type: str,
     location: str,
     status: str,
-    performed_by: str,
+    performed_by: int,
     performed_by_name: str,
-    from_user_id: Optional[str] = None,
+    from_user_id: Optional[int] = None,
     from_user_name: Optional[str] = None,
     notes: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
@@ -413,7 +413,7 @@ async def _update_device_holder_impl(
     inst.status = status
     inst.updated_at = now
 
-    await _add_device_history(session, device_id, "distributed",
+    await _add_device_history(session, int(device_id), "distributed",
                               from_user_id=from_user_id, from_user_name=from_user_name,
                               to_user_id=holder_id, to_user_name=holder_name,
                               performed_by=performed_by, performed_by_name=performed_by_name,
@@ -426,14 +426,14 @@ async def _update_device_holder_impl(
 
 async def update_device_holder(
     device_id: str,
-    holder_id: Optional[str],
+    holder_id: Optional[int],
     holder_name: Optional[str],
     holder_type: str,
     location: str,
     status: str,
-    performed_by: str,
+    performed_by: int,
     performed_by_name: str,
-    from_user_id: Optional[str] = None,
+    from_user_id: Optional[int] = None,
     from_user_name: Optional[str] = None,
     notes: Optional[str] = None,
     db_session=None
@@ -458,14 +458,14 @@ async def get_available_devices(holder_id: Optional[str] = None) -> List[Dict[st
     async with async_session_factory() as session:
         q = select(Device).where(Device.status == DeviceStatus.AVAILABLE.value)
         if holder_id:
-            q = q.where(Device.current_holder_id == holder_id)
+            q = q.where(Device.current_holder_id == int(holder_id))
         q = q.order_by(Device.created_at.desc()).limit(2000)
         rows = (await session.execute(q)).scalars().all()
         locked_ids = await _get_locked_distribution_device_ids(session)
         return [
             _augment_device_record(r.to_dict())
             for r in rows
-            if str(r.id) not in locked_ids
+            if r.id not in locked_ids
         ]
 
 
@@ -544,14 +544,14 @@ async def get_devices_for_replacement(
 async def get_held_devices(holder_id: str) -> List[Dict[str, Any]]:
     """Get all devices currently held by a user (any status) — for sub-level redistribution"""
     async with async_session_factory() as session:
-        q = (select(Device).where(Device.current_holder_id == holder_id)
+        q = (select(Device).where(Device.current_holder_id == int(holder_id))
              .order_by(Device.updated_at.desc()).limit(2000))
         rows = (await session.execute(q)).scalars().all()
         locked_ids = await _get_locked_distribution_device_ids(session)
         return [
             _augment_device_record(r.to_dict())
             for r in rows
-            if str(r.id) not in locked_ids
+            if r.id not in locked_ids
         ]
 
 
@@ -561,7 +561,7 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
         uid = int(user_id)
 
         # Devices directly held by this user
-        held_q = select(Device).where(Device.current_holder_id == user_id).order_by(Device.updated_at.desc()).limit(limit)
+        held_q = select(Device).where(Device.current_holder_id == uid).order_by(Device.updated_at.desc()).limit(limit)
         held_rows = (await session.execute(held_q)).scalars().all()
         held_devices = [r.to_dict() for r in held_rows]
         held_device_ids = {str(d["id"]) for d in held_devices}
@@ -732,7 +732,7 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
                 all_under_me.append(d)
 
         # Count queries
-        held_count_q = select(func.count()).select_from(Device).where(Device.current_holder_id == user_id)
+        held_count_q = select(func.count()).select_from(Device).where(Device.current_holder_id == uid)
         held_count = (await session.execute(held_count_q)).scalar()
 
         subordinate_count = 0
@@ -797,17 +797,17 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
 async def get_device_history(device_id: str) -> List[Dict[str, Any]]:
     """Get device history"""
     async with async_session_factory() as session:
-        q = (select(DeviceHistory).where(DeviceHistory.device_id == device_id)
+        q = (select(DeviceHistory).where(DeviceHistory.device_id == int(device_id))
              .order_by(DeviceHistory.timestamp.desc()))
         rows = (await session.execute(q)).scalars().all()
         return [r.to_dict() for r in rows]
 
 
 async def _add_device_history(
-    session, device_id: str, action: str,
-    performed_by: str = None, performed_by_name: str = None,
-    from_user_id: str = None, from_user_name: str = None,
-    to_user_id: str = None, to_user_name: str = None,
+    session, device_id: int, action: str,
+    performed_by: int = None, performed_by_name: str = None,
+    from_user_id: Optional[int] = None, from_user_name: str = None,
+    to_user_id: Optional[int] = None, to_user_name: str = None,
     status_before: str = None, status_after: str = None,
     location: str = None, notes: str = None
 ):
@@ -829,7 +829,7 @@ async def repair_device_holder_from_history(device_id: str) -> Optional[Dict[str
     """Repair device holder by applying the most recent 'distributed' history entry."""
     async with async_session_factory() as session:
         hq = (select(DeviceHistory).where(and_(
-            DeviceHistory.device_id == device_id, DeviceHistory.action == "distributed"
+            DeviceHistory.device_id == int(device_id), DeviceHistory.action == "distributed"
         )).order_by(DeviceHistory.timestamp.desc()).limit(1))
         entry = (await session.execute(hq)).scalar_one_or_none()
         if not entry:
@@ -859,7 +859,7 @@ async def repair_device_holder_from_history(device_id: str) -> Optional[Dict[str
         if not inst:
             return None
 
-        inst.current_holder_id = str(to_user_id)
+        inst.current_holder_id = to_user_id
         inst.current_holder_name = to_user_name
         inst.current_holder_type = holder_type
         inst.current_location = to_user_name
@@ -883,7 +883,7 @@ async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]
 
         device = inst.to_dict()
 
-        hq = (select(DeviceHistory).where(DeviceHistory.device_id == device["id"])
+        hq = (select(DeviceHistory).where(DeviceHistory.device_id == int(device["id"]))
               .order_by(DeviceHistory.timestamp.desc()))
         history_rows = (await session.execute(hq)).scalars().all()
         device["history"] = [r.to_dict() for r in history_rows]

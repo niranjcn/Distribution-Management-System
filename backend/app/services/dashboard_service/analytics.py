@@ -238,7 +238,7 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
             SELECT u.role, d.status, COUNT(*) AS total
             FROM devices d
             INNER JOIN users u
-                ON d.current_holder_id = CAST(u.id AS BINARY)
+                ON d.current_holder_id = u.id
             WHERE u.role IN ('sub_distributor', 'cluster', 'operator')
             GROUP BY u.role, d.status
             """)
@@ -574,14 +574,14 @@ async def get_distribution_device_analytics(start_date: Optional[str] = None,
                    COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown') AS device_type,
                    COUNT(*) AS total
                FROM devices d
-               INNER JOIN users u ON d.current_holder_id = CAST(u.id AS BINARY) AND u.role = 'sub_distributor'
-               WHERE {per_holder_cond}
-               AND d.current_holder_id IS NOT NULL
-               GROUP BY
-                   d.current_holder_id,
-                   COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown'),
-                   COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown')
-               ORDER BY holder_name, device_type"""),
+                INNER JOIN users u ON d.current_holder_id = u.id AND u.role = 'sub_distributor'
+                WHERE {per_holder_cond}
+                AND d.current_holder_id IS NOT NULL
+                GROUP BY
+                    d.current_holder_id,
+                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown'),
+                    COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown')
+                ORDER BY holder_name, device_type"""),
             dd_params
         )
         per_holder_rows = result.mappings().all()
@@ -592,8 +592,8 @@ async def get_distribution_device_analytics(start_date: Optional[str] = None,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown') AS holder_name,
                    COUNT(*) AS total
                FROM devices d
-               INNER JOIN users u ON d.current_holder_id = CAST(u.id AS BINARY) AND u.role = 'sub_distributor'
-               WHERE d.status = 'available'
+                INNER JOIN users u ON d.current_holder_id = u.id AND u.role = 'sub_distributor'
+                WHERE d.status = 'available'
                AND d.current_holder_id IS NOT NULL
                GROUP BY
                    d.current_holder_id,

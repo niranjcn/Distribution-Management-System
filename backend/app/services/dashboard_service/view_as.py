@@ -177,7 +177,7 @@ async def generate_report(
                    COALESCE(NULLIF(TRIM(u.name), ''), 'Unknown') AS holder_name,
                    COUNT(*) AS total_sent
                 FROM devices d
-                LEFT JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id
+                LEFT JOIN users u ON d.current_holder_id = u.id
                 WHERE d.status IN ('distributed', 'in_use') AND {date_cond_d}
                 GROUP BY CAST(d.current_holder_id AS CHAR), COALESCE(NULLIF(TRIM(u.name), ''), 'Unknown')
                 ORDER BY total_sent DESC"""),
@@ -198,7 +198,7 @@ async def generate_report(
             text(f"""SELECT d.*,
                        COALESCE(NULLIF(TRIM(u.name), ''), 'Unknown') AS holder_name
                 FROM devices d
-                LEFT JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id
+                LEFT JOIN users u ON d.current_holder_id = u.id
                 WHERE d.status IN ('distributed', 'in_use') AND {date_cond_d}
                 ORDER BY d.id ASC"""),
             date_params_tup

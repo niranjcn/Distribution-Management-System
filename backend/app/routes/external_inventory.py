@@ -380,7 +380,7 @@ async def bulk_upload_external_inventory_items(
                 }
 
             now = datetime.now().replace(tzinfo=None)
-            actor_id = str(current_user.get("id") or current_user.get("_id") or current_user.get("user_id") or current_user.get("sub") or "")
+            actor_id = int(current_user.get("id") or current_user.get("_id") or current_user.get("user_id") or current_user.get("sub") or 0)
             if not actor_id:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -652,12 +652,12 @@ async def get_external_inventory_purchase_orders(
     try:
         user_role = str(current_user.get("role") or "").lower()
         is_management_user = user_role in {"super_admin", "manager", "pdic_staff"}
-        user_id = str(
+        user_id = int(
             current_user.get("id")
             or current_user.get("_id")
             or current_user.get("user_id")
             or current_user.get("sub")
-            or ""
+            or 0
         )
 
         result = await inventory_service.get_purchase_orders(

@@ -259,7 +259,7 @@ async def get_my_pending_dues(
         )
 
     try:
-        user_id = str(current_user.get("id") or current_user.get("_id") or "")
+        user_id = int(current_user.get("id") or current_user.get("_id"))
         payload = await defect_service.get_pending_dues_for_user(user_id, current_user=current_user)
         return {
             "success": True,
@@ -298,7 +298,7 @@ async def get_defects(
     try:
         # Determine scope based on user role.
         # Always cast id to str to avoid SQLite integer/text type mismatches (422 cause).
-        user_id_str = str(current_user["id"])
+        user_id_str = int(current_user["id"])
         reported_by = None
         holder_user_id = None
 

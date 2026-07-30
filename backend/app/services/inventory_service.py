@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
@@ -249,7 +249,7 @@ async def create_item(item_data: InventoryItemCreate, user: Dict[str, Any]) -> D
                 "location": item_data.location,
                 "notes": item_data.notes,
                 "image_url": item_data.image_url,
-                "created_by": actor["id"],
+                "created_by": int(actor["id"]),
                 "created_at": now,
                 "updated_at": now,
             },
@@ -552,8 +552,8 @@ async def create_purchase_order(po_data: PurchaseOrderCreate, user: Dict[str, An
                 "po_id": po_id,
                 "supplier_name": po_data.name,
                 "status": po_data.status.value,
-                "expected_date": po_data.expected_date,
-                "ordered_by": actor["id"],
+                "expected_date": date.fromisoformat(po_data.expected_date) if po_data.expected_date else None,
+                "ordered_by": int(actor["id"]),
                 "ordered_by_name": actor["name"],
                 "total_amount": total_amount,
                 "notes": po_data.notes,
@@ -695,7 +695,7 @@ async def receive_purchase_order(
                 "receipt_id": receipt_id,
                 "po_id": po_id,
                 "supplier_name": po.get("supplier_name"),
-                "received_by": actor["id"],
+                "received_by": int(actor["id"]),
                 "received_by_name": actor["name"],
                 "notes": receipt_data.notes,
                 "created_at": now,
@@ -787,7 +787,7 @@ async def receive_purchase_order(
                     "reference_type": "purchase_submit",
                     "reference_id": receipt_id,
                     "notes": f"{base_note}. {confirmation_note}",
-                    "performed_by": actor["id"],
+                    "performed_by": int(actor["id"]),
                     "performed_by_name": actor["name"],
                     "created_at": now,
                 },

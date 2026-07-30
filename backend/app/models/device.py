@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, model_validator, field_validator
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -80,8 +80,8 @@ class DeviceBase(BaseModel):
 
 
 class DeviceCreate(DeviceBase):
-    purchase_date: Optional[datetime] = None
-    warranty_expiry: Optional[datetime] = None
+    purchase_date: Optional[date] = None
+    warranty_expiry: Optional[date] = None
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -96,7 +96,7 @@ class DeviceUpdate(BaseModel):
     nuid: Optional[str] = None
     status: Optional[DeviceStatus] = None
     current_location: Optional[str] = None
-    warranty_expiry: Optional[datetime] = None
+    warranty_expiry: Optional[date] = None
     metadata: Optional[Dict[str, Any]] = None
 
     @field_validator("device_type", mode="before")
@@ -118,8 +118,8 @@ class Device(DeviceBase):
     current_holder_id: Optional[str] = None
     current_holder_name: Optional[str] = None
     current_holder_type: Optional[HolderType] = None
-    purchase_date: Optional[datetime] = None
-    warranty_expiry: Optional[datetime] = None
+    purchase_date: Optional[date] = None
+    warranty_expiry: Optional[date] = None
     created_at: datetime
     updated_at: datetime
     metadata: Optional[Dict[str, Any]] = None
@@ -145,8 +145,8 @@ class DeviceResponse(BaseModel):
     current_holder_id: Optional[str] = None
     current_holder_name: Optional[str] = None
     current_holder_type: Optional[HolderType] = None
-    purchase_date: Optional[datetime] = None
-    warranty_expiry: Optional[datetime] = None
+    purchase_date: Optional[date] = None
+    warranty_expiry: Optional[date] = None
     created_at: datetime
     updated_at: datetime
 
@@ -162,7 +162,7 @@ class DeviceEditRequest(BaseModel):
     nuid: Optional[str] = None
     status: Optional[DeviceStatus] = None
     current_location: Optional[str] = None
-    warranty_expiry: Optional[datetime] = None
+    warranty_expiry: Optional[date] = None
     metadata: Optional[Dict[str, Any]] = None
 
     @field_validator("device_type", mode="before")
