@@ -3,7 +3,8 @@ import json
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
 from typing import Optional
 from pydantic import BaseModel
-from app.database import get_db, row_to_dict, rows_to_list
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 from app.models.device import DeviceUpdate
 from app.middleware.auth_middleware import get_current_user, require_admin, require_admin_or_manager
 from app.utils.security import get_password_hash
@@ -39,13 +40,13 @@ ALLOWED_TRANSFER_FIX_DEFECT_STATUSES = {
 }
 
 
-async def _validate_operator_transfer_fix_request(db, operator_user: dict, defect_id: str) -> dict:
+async def _validate_operator_transfer_fix_request(session, operator_user: dict, defect_id: str) -> dict:
     """Validate that operator is involved in the defect and transfer-fix is applicable."""
     if not str(defect_id).isdigit():
         raise HTTPException(status_code=400, detail="defect_id must be numeric")
 
-    cursor = await db.execute("SELECT * FROM defects WHERE id = ?", (int(defect_id),))
-    defect = await cursor.fetchone()
+    result = await session.execute(text("SELECT * FROM defects WHERE id = :defect_id"), {"defect_id": int(defect_id)})
+    defect = result.mappings().first()
     if not defect:
         raise HTTPException(status_code=404, detail="Defect not found")
     defect = dict(defect)
@@ -59,8 +60,8 @@ async def _validate_operator_transfer_fix_request(db, operator_user: dict, defec
     if not defect.get("replacement_device_id"):
         raise HTTPException(status_code=400, detail="Defect has no replacement device mapping yet")
 
-    cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(defect["device_id"]),))
-    defective_device = await cursor.fetchone()
+    result = await session.execute(text("SELECT * FROM devices WHERE id = :device_id"), {"device_id": int(defect["device_id"])})
+    defective_device = result.mappings().first()
     defective_device = dict(defective_device) if defective_device else {}
 
     operator_id = str(operator_user["id"])
@@ -119,59 +120,61 @@ async def submit_change_request(
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
     try:
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
         request_id = f"CR-{uuid.uuid4().hex[:8].upper()}"
         hashed_new_password = get_password_hash(data.new_password) if data.new_password else None
         manager_notification_payloads = []
         super_admin_notification_payloads = []
 
-        async with get_db() as db:
+        async with async_session_factory() as session:
             defect = None
             if data.request_type == "replacement_transfer_fix":
-                defect = await _validate_operator_transfer_fix_request(db, current_user, data.device_id)
+                defect = await _validate_operator_transfer_fix_request(session, current_user, data.device_id)
 
-                cursor = await db.execute(
-                    """SELECT id FROM change_requests
+                result = await session.execute(
+                    text("""SELECT id FROM change_requests
                        WHERE request_type = 'replacement_transfer_fix'
-                       AND requested_by = ? AND device_id = ? AND status = 'pending'
-                       LIMIT 1""",
-                    (int(current_user["id"]), str(data.device_id)),
+                       AND requested_by = :requested_by AND device_id = :device_id AND status = 'pending'
+                       LIMIT 1"""),
+                    {"requested_by": int(current_user["id"]), "device_id": str(data.device_id)},
                 )
-                existing = await cursor.fetchone()
+                existing = result.mappings().first()
                 if existing:
                     raise HTTPException(
                         status_code=400,
                         detail="A transfer-fix request is already pending for this defect",
                     )
 
-            await db.execute(
-                """INSERT INTO change_requests
+            await session.execute(
+                text("""INSERT INTO change_requests
                    (request_id, requested_by, requested_by_name, requested_by_role,
                     request_type, new_email, new_password, device_id, requested_status,
                     reason, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                (
-                    request_id,
-                    int(current_user["id"]),
-                    current_user["name"],
-                    current_user["role"],
-                    data.request_type,
-                    data.new_email,
-                    hashed_new_password,
-                    data.device_id,
-                    data.requested_status if data.request_type != "replacement_transfer_fix" else "transfer_fix",
-                    data.reason,
-                    now, now
-                )
+                   VALUES (:request_id, :requested_by, :requested_by_name, :requested_by_role,
+                    :request_type, :new_email, :new_password, :device_id, :requested_status,
+                    :reason, 'pending', :now, :now)"""),
+                {
+                    "request_id": request_id,
+                    "requested_by": int(current_user["id"]),
+                    "requested_by_name": current_user["name"],
+                    "requested_by_role": current_user["role"],
+                    "request_type": data.request_type,
+                    "new_email": data.new_email,
+                    "new_password": hashed_new_password,
+                    "device_id": data.device_id,
+                    "requested_status": data.requested_status if data.request_type != "replacement_transfer_fix" else "transfer_fix",
+                    "reason": data.reason,
+                    "now": now,
+                }
             )
 
             if data.request_type in {"email_change", "password_reset", "both"}:
-                cursor = await db.execute("SELECT id FROM users WHERE role = 'super_admin' AND status = 'active'")
-                super_admin_rows = await cursor.fetchall()
+                result = await session.execute(text("SELECT id FROM users WHERE role = 'super_admin' AND status = 'active'"))
+                super_admin_rows = result.mappings().all()
                 for row in super_admin_rows:
                     super_admin_notification_payloads.append(
                         {
-                            "user_id": str(row[0]),
+                            "user_id": str(row["id"]),
                             "title": "Credential Change Request Pending",
                             "message": (
                                 f"{current_user['name']} ({current_user['role']}) submitted a "
@@ -191,11 +194,11 @@ async def submit_change_request(
                     )
 
             if data.request_type == "replacement_transfer_fix":
-                cursor = await db.execute("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
-                managers = await cursor.fetchall()
+                result = await session.execute(text("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')"))
+                managers = result.mappings().all()
                 defect_report_id = defect.get("report_id") if defect else None
                 for row in managers:
-                    manager_id = str(row[0])
+                    manager_id = str(row["id"])
                     manager_notification_payloads.append(
                         {
                             "user_id": manager_id,
@@ -218,7 +221,7 @@ async def submit_change_request(
                             },
                         }
                     )
-            await db.commit()
+            await session.commit()
 
         if manager_notification_payloads:
             await notification_service.bulk_create_notifications(manager_notification_payloads)
@@ -249,9 +252,9 @@ async def get_change_requests(
         raise HTTPException(status_code=403, detail="Access denied")
 
     try:
-        async with get_db() as db:
+        async with async_session_factory() as session:
             conditions = []
-            params = []
+            params = {}
 
             if role == "manager":
                 # Managers can review:
@@ -263,24 +266,26 @@ async def get_change_requests(
             if status_filter:
                 if status_filter == "rejected":
                     # Backward compatibility: older rows may have been saved as `rejectd`.
-                    conditions.append("(status = ? OR status = ?)")
-                    params.extend(["rejected", "rejectd"])
+                    conditions.append("(status = :status_0 OR status = :status_1)")
+                    params["status_0"] = "rejected"
+                    params["status_1"] = "rejectd"
                 else:
-                    conditions.append("status = ?")
-                    params.append(status_filter)
+                    conditions.append("status = :status")
+                    params["status"] = status_filter
 
             where = " AND ".join(conditions) if conditions else "1=1"
 
-            cursor = await db.execute(f"SELECT COUNT(*) FROM change_requests WHERE {where}", params)
-            total = (await cursor.fetchone())[0]
+            total_result = await session.execute(text(f"SELECT COUNT(*) FROM change_requests WHERE {where}"), params)
+            total = total_result.scalar()
 
             offset = (page - 1) * page_size
-            cursor = await db.execute(
-                f"SELECT * FROM change_requests WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                params + [page_size, offset]
+            query_params = {**params, "limit": page_size, "offset": offset}
+            result = await session.execute(
+                text(f"SELECT * FROM change_requests WHERE {where} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"),
+                query_params
             )
-            rows = await cursor.fetchall()
-            items = rows_to_list(rows)
+            rows = result.mappings().all()
+            items = [dict(r) for r in rows]
 
             # Never expose stored password material in API responses.
             for item in items:
@@ -322,15 +327,15 @@ async def review_change_request(
         operator_notification_payload = None
         requester_rejection_notification_payload = None
         transfer_plan = None
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT * FROM change_requests WHERE request_id = ?", (request_id,)
+        async with async_session_factory() as session:
+            result = await session.execute(
+                text("SELECT * FROM change_requests WHERE request_id = :request_id"), {"request_id": request_id}
             )
-            row = await cursor.fetchone()
+            row = result.mappings().first()
             if not row:
                 raise HTTPException(status_code=404, detail="Request not found")
 
-            req = row_to_dict(row)
+            req = dict(row)
 
             credential_request = req.get("request_type") in {"email_change", "password_reset", "both"}
             if credential_request and role == "manager" and req.get("requested_by_role") != "pdic_staff":
@@ -348,7 +353,7 @@ async def review_change_request(
             if req["status"] != "pending":
                 raise HTTPException(status_code=400, detail="Request already reviewed")
 
-            now = datetime.now().replace(tzinfo=None).isoformat()
+            now = datetime.now().replace(tzinfo=None)
 
             if review.action == "approve":
                 if req["request_type"] == "device_status_change":
@@ -414,40 +419,40 @@ async def review_change_request(
                     stored_password_value = req.get("new_password")
 
                     update_fields = []
-                    update_params = []
+                    update_params = {}
 
                     if req["request_type"] in ["email_change", "both"] and email_to_set:
                         # Check email uniqueness
-                        cursor = await db.execute(
-                            "SELECT id FROM users WHERE email = ? AND id != ?",
-                            (email_to_set.lower(), req["requested_by"])
+                        email_result = await session.execute(
+                            text("SELECT id FROM users WHERE email = :email AND id != :user_id"),
+                            {"email": email_to_set.lower(), "user_id": req["requested_by"]}
                         )
-                        if await cursor.fetchone():
+                        if email_result.mappings().first():
                             raise HTTPException(status_code=400, detail="Email already in use by another user")
-                        update_fields.append("email = ?")
-                        update_params.append(email_to_set.lower())
+                        update_fields.append("email = :email")
+                        update_params.update({"email": email_to_set.lower()})
 
                     if req["request_type"] in ["password_reset", "both"]:
                         if password_to_set:
                             if len(password_to_set) < 6:
                                 raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-                            update_fields.append("password_hash = ?")
-                            update_params.append(get_password_hash(password_to_set))
+                            update_fields.append("password_hash = :password_hash")
+                            update_params["password_hash"] = get_password_hash(password_to_set)
                         elif stored_password_value:
                             if not _looks_like_bcrypt_hash(stored_password_value):
                                 raise HTTPException(
                                     status_code=500,
                                     detail="Insecure stored password material detected; recreate this request",
                                 )
-                            update_fields.append("password_hash = ?")
-                            update_params.append(stored_password_value)
+                            update_fields.append("password_hash = :password_hash")
+                            update_params["password_hash"] = stored_password_value
 
                     if update_fields:
-                        update_fields.append("updated_at = ?")
-                        update_params.append(now)
-                        update_params.append(req["requested_by"])
-                        await db.execute(
-                            f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?",
+                        update_fields.append("updated_at = :updated_at")
+                        update_params["updated_at"] = now
+                        update_params["user_id"] = req["requested_by"]
+                        await session.execute(
+                            text(f"UPDATE users SET {', '.join(update_fields)} WHERE id = :user_id"),
                             update_params
                         )
                         if req["request_type"] in ["password_reset", "both"]:
@@ -464,8 +469,8 @@ async def review_change_request(
                     if not defect_id or not str(defect_id).isdigit():
                         raise HTTPException(status_code=400, detail="Invalid defect id in transfer-fix request")
 
-                    cursor = await db.execute("SELECT * FROM defects WHERE id = ?", (int(defect_id),))
-                    defect = await cursor.fetchone()
+                    result = await session.execute(text("SELECT * FROM defects WHERE id = :defect_id"), {"defect_id": int(defect_id)})
+                    defect = result.mappings().first()
                     if not defect:
                         raise HTTPException(status_code=404, detail="Defect not found for transfer-fix request")
                     defect = dict(defect)
@@ -474,8 +479,8 @@ async def review_change_request(
                     if not replacement_device_id:
                         raise HTTPException(status_code=400, detail="No replacement device mapped for this defect")
 
-                    cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(defect["device_id"]),))
-                    old_device_row = await cursor.fetchone()
+                    result = await session.execute(text("SELECT * FROM devices WHERE id = :device_id"), {"device_id": int(defect["device_id"])})
+                    old_device_row = result.mappings().first()
                     old_device = dict(old_device_row) if old_device_row else {}
 
                     # Always transfer to the operator who requested the fix.
@@ -490,8 +495,8 @@ async def review_change_request(
                             detail="Unable to determine operator holder for replacement transfer"
                         )
 
-                    cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(replacement_device_id),))
-                    replacement_row = await cursor.fetchone()
+                    result = await session.execute(text("SELECT * FROM devices WHERE id = :device_id"), {"device_id": int(replacement_device_id)})
+                    replacement_row = result.mappings().first()
                     if not replacement_row:
                         raise HTTPException(status_code=404, detail="Replacement device not found")
                     replacement_device = dict(replacement_row)
@@ -517,9 +522,9 @@ async def review_change_request(
 
                     # If it was marked waiting and this transfer fix is approved, return it to pending confirmation.
                     if defect.get("status") == "replacement_waiting_for_device":
-                        await db.execute(
-                            "UPDATE defects SET status = ?, updated_at = ? WHERE id = ?",
-                            ("replacement_pending_confirmation", now, int(defect_id))
+                        await session.execute(
+                            text("UPDATE defects SET status = :status, updated_at = :updated_at WHERE id = :defect_id"),
+                            {"status": "replacement_pending_confirmation", "updated_at": now, "defect_id": int(defect_id)}
                         )
 
             if req["request_type"] == "replacement_transfer_fix":
@@ -568,13 +573,13 @@ async def review_change_request(
                 }
 
             # Update the request status
-            await db.execute(
-                """UPDATE change_requests SET status = ?, reviewed_by = ?, reviewed_by_name = ?,
-                   review_note = ?, updated_at = ? WHERE request_id = ?""",
-                ("approved" if review.action == "approve" else "rejected", int(current_user["id"]), current_user["name"],
-                 review.review_note, now, request_id)
+            await session.execute(
+                text("""UPDATE change_requests SET status = :status, reviewed_by = :reviewed_by, reviewed_by_name = :reviewed_by_name,
+                   review_note = :review_note, updated_at = :updated_at WHERE request_id = :request_id"""),
+                {"status": "approved" if review.action == "approve" else "rejected", "reviewed_by": int(current_user["id"]), "reviewed_by_name": current_user["name"],
+                 "review_note": review.review_note, "updated_at": now, "request_id": request_id}
             )
-            await db.commit()
+            await session.commit()
 
         if review.action == "approve" and req["request_type"] == "replacement_transfer_fix" and transfer_plan:
             if not transfer_plan["already_assigned"]:

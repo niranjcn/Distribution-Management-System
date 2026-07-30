@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
 import json
 
-from app.database import get_db, row_to_dict, rows_to_list
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 from app.utils.helpers import get_pagination
 from app.core.activity_logger import log_business_activity
 
@@ -22,38 +23,41 @@ async def create_reassignment_request(
     children: List[Dict[str, Any]],
     actor_name: str
 ) -> Dict[str, Any]:
-    async with get_db() as db:
-        now = datetime.now().replace(tzinfo=None).isoformat()
+    async with async_session_factory() as session:
+        now = datetime.now().replace(tzinfo=None)
         children_json = json.dumps(children)
 
         year = datetime.now().year
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM reassignment_requests WHERE request_id LIKE ?",
-            (f"REASSIGN-{year}-%",)
+        result = await session.execute(
+            text("SELECT COUNT(*) FROM reassignment_requests WHERE request_id LIKE :pattern"),
+            {"pattern": f"REASSIGN-{year}-%"}
         )
-        count = (await cursor.fetchone())[0] or 0
+        count = result.scalar() or 0
         request_id = f"REASSIGN-{year}-{count + 1:04d}"
 
-        cursor = await db.execute(
-            """INSERT INTO reassignment_requests
+        result = await session.execute(
+            text("""INSERT INTO reassignment_requests
             (request_id, deleted_user_id, deleted_user_name, deleted_user_role, status,
              children_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)""",
-            (
-                request_id,
-                int(deleted_user["id"]),
-                deleted_user.get("name", ""),
-                deleted_user.get("role", ""),
-                children_json,
-                now,
-                now
-            )
+            VALUES (:request_id, :deleted_user_id, :deleted_user_name, :deleted_user_role, 'pending', :children_json, :created_at, :updated_at)"""),
+            {
+                "request_id": request_id,
+                "deleted_user_id": int(deleted_user["id"]),
+                "deleted_user_name": deleted_user.get("email", ""),
+                "deleted_user_role": deleted_user.get("role", ""),
+                "children_json": children_json,
+                "created_at": now,
+                "updated_at": now
+            }
         )
-        await db.commit()
+        await session.commit()
 
-        cursor = await db.execute("SELECT * FROM reassignment_requests WHERE id = ?", (cursor.lastrowid,))
-        row = await cursor.fetchone()
-        return row_to_dict(row) if row else {"request_id": request_id, "status": "pending"}
+        result = await session.execute(
+            text("SELECT * FROM reassignment_requests WHERE id = :id"),
+            {"id": result.inserted_primary_key[0]}
+        )
+        row = result.mappings().first()
+        return dict(row) if row else {"request_id": request_id, "status": "pending"}
 
 
 async def get_reassignment_requests(
@@ -61,25 +65,28 @@ async def get_reassignment_requests(
     page_size: int = 20,
     status: Optional[str] = None
 ) -> Dict[str, Any]:
-    async with get_db() as db:
+    async with async_session_factory() as session:
         conditions = []
-        params = []
+        params = {}
         if status:
-            conditions.append("status = ?")
-            params.append(status)
+            conditions.append("status = :status")
+            params["status"] = status
 
         where = " AND ".join(conditions) if conditions else "1=1"
 
-        cursor = await db.execute(f"SELECT COUNT(*) FROM reassignment_requests WHERE {where}", params)
-        total = (await cursor.fetchone())[0]
+        result = await session.execute(
+            text(f"SELECT COUNT(*) FROM reassignment_requests WHERE {where}"),
+            params
+        )
+        total = result.scalar()
 
         offset = (page - 1) * page_size
-        cursor = await db.execute(
-            f"SELECT * FROM reassignment_requests WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [page_size, offset]
+        result = await session.execute(
+            text(f"SELECT * FROM reassignment_requests WHERE {where} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"),
+            {**params, "limit": page_size, "offset": offset}
         )
-        rows = await cursor.fetchall()
-        data = rows_to_list(rows)
+        rows = result.mappings().all()
+        data = [dict(r) for r in rows]
         for req in data:
             if req.get("children_json"):
                 try:
@@ -95,15 +102,15 @@ async def get_reassignment_requests(
 
 
 async def get_reassignment_request(request_id: str) -> Optional[Dict[str, Any]]:
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM reassignment_requests WHERE id = ?",
-            (int(request_id),)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text("SELECT * FROM reassignment_requests WHERE id = :id"),
+            {"id": int(request_id)}
         )
-        row = await cursor.fetchone()
+        row = result.mappings().first()
         if not row:
             return None
-        req = row_to_dict(row)
+        req = dict(row)
         if req.get("children_json"):
             try:
                 req["children"] = json.loads(req["children_json"])
@@ -135,13 +142,16 @@ async def reassign_users(
     new_parent_role: str,
     deleted_by_user: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, str]:
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM reassignment_requests WHERE id = ?", (int(request_id),))
-        row = await cursor.fetchone()
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text("SELECT * FROM reassignment_requests WHERE id = :id"),
+            {"id": int(request_id)}
+        )
+        row = result.mappings().first()
         if not row:
             return False, "Reassignment request not found"
 
-        req = row_to_dict(row)
+        req = dict(row)
         if req.get("status") != "pending":
             return False, f"Request is already {req.get('status')}"
 
@@ -159,31 +169,46 @@ async def reassign_users(
         direct_children = _get_direct_children(children)
 
         deleted_user_id = int(req["deleted_user_id"])
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
 
         if direct_children:
             child_ids = [int(child["id"]) for child in direct_children]
-            placeholders = ",".join("?" * len(child_ids))
-            await db.execute(
-                f"UPDATE users SET parent_id = ?, updated_at = ? WHERE id IN ({placeholders})",
-                [new_parent_id, now] + child_ids
+            placeholders = ",".join(f":id_{i}" for i in range(len(child_ids)))
+            params_dict = {"parent_id": new_parent_id, "updated_at": now}
+            for i, cid in enumerate(child_ids):
+                params_dict[f"id_{i}"] = cid
+            await session.execute(
+                text(f"UPDATE users SET parent_id = :parent_id, updated_at = :updated_at WHERE id IN ({placeholders})"),
+                params_dict
             )
 
-        await db.execute(
-            """UPDATE reassignment_requests
-            SET status = 'completed', reassigned_to_id = ?, reassigned_to_name = ?,
-                reassigned_to_role = ?, updated_at = ?
-            WHERE id = ?""",
-            (new_parent_id, new_parent_name, new_parent_role, now, int(request_id))
+        await session.execute(
+            text("""UPDATE reassignment_requests
+            SET status = 'completed', reassigned_to_id = :reassigned_to_id, reassigned_to_name = :reassigned_to_name,
+                reassigned_to_role = :reassigned_to_role, updated_at = :updated_at
+            WHERE id = :id"""),
+            {
+                "reassigned_to_id": new_parent_id,
+                "reassigned_to_name": new_parent_name,
+                "reassigned_to_role": new_parent_role,
+                "updated_at": now,
+                "id": int(request_id)
+            }
         )
 
-        cursor = await db.execute("SELECT name, email, role FROM users WHERE id = ?", (deleted_user_id,))
-        deleted_user_row = await cursor.fetchone()
+        result = await session.execute(
+            text("SELECT name, email, role FROM users WHERE id = :id"),
+            {"id": deleted_user_id}
+        )
+        deleted_user_row = result.mappings().first()
         deleted_user_name = dict(deleted_user_row)["name"] if deleted_user_row else str(deleted_user_id)
 
-        await db.execute("DELETE FROM users WHERE id = ?", (deleted_user_id,))
+        await session.execute(
+            text("DELETE FROM users WHERE id = :id"),
+            {"id": deleted_user_id}
+        )
 
-        await db.commit()
+        await session.commit()
 
         if deleted_by_user:
             await log_business_activity(
@@ -196,20 +221,23 @@ async def reassign_users(
 
 
 async def reject_request(request_id: str) -> Tuple[bool, str]:
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM reassignment_requests WHERE id = ?", (int(request_id),))
-        row = await cursor.fetchone()
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text("SELECT * FROM reassignment_requests WHERE id = :id"),
+            {"id": int(request_id)}
+        )
+        row = result.mappings().first()
         if not row:
             return False, "Reassignment request not found"
 
-        req = row_to_dict(row)
+        req = dict(row)
         if req.get("status") != "pending":
             return False, f"Request is already {req.get('status')}"
 
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        await db.execute(
-            "UPDATE reassignment_requests SET status = 'rejected', updated_at = ? WHERE id = ?",
-            (now, int(request_id))
+        now = datetime.now().replace(tzinfo=None)
+        await session.execute(
+            text("UPDATE reassignment_requests SET status = 'rejected', updated_at = :updated_at WHERE id = :id"),
+            {"updated_at": now, "id": int(request_id)}
         )
-        await db.commit()
+        await session.commit()
         return True, "Request rejected"

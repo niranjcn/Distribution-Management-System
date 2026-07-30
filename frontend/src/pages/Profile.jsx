@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { authAPI, usersAPI, adminUpdateCredentials } from '../services/api';
+import { authAPI, usersAPI, adminUpdateCredentials, digitalIdsAPI } from '../services/api';
 import { updateStoredUser } from '../utils/authStorage';
 import { 
   User, Mail, Phone, Building, MapPin, Lock, 
@@ -21,8 +21,7 @@ const Profile = () => {
 
   const [profileData, setProfileData] = useState({
     name: user?.name || '',
-    phone: user?.phone || '',
-    department: user?.department || '',
+    designation: user?.designation || '',
     location: user?.location || '',
   });
 
@@ -36,14 +35,17 @@ const Profile = () => {
     newEmail: ''
   });
 
+  const [phoneData, setPhoneData] = useState({
+    newPhone: user?.phone || ''
+  });
+
   const handleProfileUpdate = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
       const payload = {
         name: profileData.name,
-        phone: profileData.phone,
-        department: profileData.department,
+        designation: profileData.designation,
         location: profileData.location,
       };
 
@@ -55,6 +57,22 @@ const Profile = () => {
       showToast('Profile updated successfully', 'success');
     } catch (err) {
       showToast(err.message || 'Failed to update profile', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePhoneChange = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const response = await usersAPI.updateUser(user.id, { phone: phoneData.newPhone });
+      const updatedUser = { ...user, ...(response.data || {}), phone: phoneData.newPhone };
+      setUser(updatedUser);
+      updateStoredUser(updatedUser);
+      showToast('Phone number updated successfully', 'success');
+    } catch (err) {
+      showToast(err.message || 'Failed to update phone number', 'error');
     } finally {
       setSaving(false);
     }
@@ -206,26 +224,13 @@ const Profile = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  <Phone className="w-4 h-4 inline mr-2" />Phone Number
-                </label>
-                <input
-                  type="tel"
-                  value={profileData.phone}
-                  onChange={(e) => setProfileData({ ...profileData, phone: e.target.value })}
-                  placeholder="Enter phone number"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  <Building className="w-4 h-4 inline mr-2" />Department
+                  <Building className="w-4 h-4 inline mr-2" />Designation
                 </label>
                 <input
                   type="text"
-                  value={profileData.department}
-                  onChange={(e) => setProfileData({ ...profileData, department: e.target.value })}
-                  placeholder="Enter department"
+                  value={profileData.designation}
+                  onChange={(e) => setProfileData({ ...profileData, designation: e.target.value })}
+                  placeholder="Enter designation"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -290,6 +295,44 @@ const Profile = () => {
 
               <Button type="submit" icon={Mail} disabled={saving}>
                 {saving ? 'Submitting...' : 'Change Email'}
+              </Button>
+            </form>
+          </Card>
+
+          <Card title="Change Phone Number">
+            <form onSubmit={handlePhoneChange} className="space-y-4 max-w-md">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Current Phone</label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    type="tel"
+                    value={user?.phone || ''}
+                    disabled
+                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New Phone Number</label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    type="tel"
+                    value={phoneData.newPhone}
+                    onChange={(e) => setPhoneData({ newPhone: e.target.value })}
+                    placeholder="Enter new phone number"
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                    minLength={10}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Your phone number will be updated immediately when you save.</p>
+              </div>
+
+              <Button type="submit" icon={Phone} disabled={saving}>
+                {saving ? 'Submitting...' : 'Change Phone'}
               </Button>
             </form>
           </Card>

@@ -1,9 +1,11 @@
 import asyncio
 from typing import Dict, Any, Optional
 
-from app.database import get_db
+from sqlalchemy import text
+
+from app.database_sqlalchemy import async_session_factory
 from app.core.cache import cached
-from app.services import device_service, distribution_service, defect_service, return_service, user_service, approval_service, operator_service
+from app.services import device_service, distribution_service, defect_service, return_service, user_service, operator_service
 
 from .helpers import _build_date_filter, _resolve_scope_root_for_sub_distribution_manager, _get_descendant_user_ids
 
@@ -11,7 +13,6 @@ from .helpers import _build_date_filter, _resolve_scope_root_for_sub_distributio
 async def get_dashboard_stats(user: Dict[str, Any],
                               start_date: Optional[str] = None,
                               end_date: Optional[str] = None) -> Dict[str, Any]:
-    """Get dashboard statistics based on user role"""
     role = user.get("role")
     user_id = str(user.get("_id", user.get("id", "")))
     scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
@@ -31,44 +32,41 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
 
     if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
         if start_date or end_date:
-            device_stats, dist_stats, defect_stats, return_stats, user_stats, approval_stats, total_stats = \
+            device_stats, dist_stats, defect_stats, return_stats, user_stats, total_stats = \
                 await asyncio.gather(
                     device_service.get_device_stats(start_date, end_date),
                     distribution_service.get_distribution_stats(start_date, end_date),
                     defect_service.get_defect_stats(start_date, end_date),
                     return_service.get_return_stats(start_date, end_date),
                     user_service.get_user_stats(),
-                    approval_service.get_approval_stats(),
                     device_service.get_device_stats(),
                 )
+            approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
         else:
-            device_stats, dist_stats, defect_stats, return_stats, user_stats, approval_stats = \
+            device_stats, dist_stats, defect_stats, return_stats, user_stats = \
                 await asyncio.gather(
                     device_service.get_device_stats(),
                     distribution_service.get_distribution_stats(),
                     defect_service.get_defect_stats(),
                     return_service.get_return_stats(),
                     user_service.get_user_stats(),
-                    approval_service.get_approval_stats(),
                 )
+            approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
             total_stats = device_stats
 
-        async with get_db() as db:
-            cond, prm = _build_date_filter("1=1", (), start_date, end_date)
-            cursor = await db.execute(
-                f"SELECT COUNT(*) FROM distributions WHERE {cond}", prm
-            )
-            distributions_filtered = (await cursor.fetchone())[0]
+        async with async_session_factory() as session:
+            cond, prm = _build_date_filter("1=1", {}, start_date, end_date)
+            distributions_filtered = (await session.execute(
+                text(f"SELECT COUNT(*) FROM distributions WHERE {cond}"), prm
+            )).scalar() or 0
 
-            cursor = await db.execute(
-                f"SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL AND {cond}", prm
-            )
-            replacements_in_range = (await cursor.fetchone())[0]
+            replacements_in_range = (await session.execute(
+                text(f"SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL AND {cond}"), prm
+            )).scalar() or 0
 
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL"
-            )
-            total_replacements = (await cursor.fetchone())[0]
+            total_replacements = (await session.execute(
+                text("SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL")
+            )).scalar() or 0
 
         total_active = (
             total_stats.get("available", 0) +
@@ -135,49 +133,53 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
         }
 
     elif role == "sub_distributor":
-        async with get_db() as db:
-            dc, dp = _build_date_filter("current_holder_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(
-                f"SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) AS available FROM devices WHERE {dc}", dp
-            )
-            row = await cursor.fetchone()
-            my_devices = int(row[0])
-            available_devices = int(row[1]) if row[1] is not None else 0
+        async with async_session_factory() as session:
+            dc, dp = _build_date_filter("current_holder_id = :uid", {"uid": user_id}, start_date, end_date)
+            row = (await session.execute(
+                text(f"SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) AS available FROM devices WHERE {dc}"),
+                dp
+            )).mappings().first()
+            my_devices = int(row["total"])
+            available_devices = int(row["available"]) if row["available"] is not None else 0
 
-            sc, sp = _build_date_filter("from_user_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(
-                f"SELECT COUNT(*) AS sent, SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending FROM distributions WHERE {sc}", sp
-            )
-            row = await cursor.fetchone()
-            sent = int(row[0])
-            pending = int(row[1]) if row[1] is not None else 0
+            sc, sp = _build_date_filter("from_user_id = :uid2", {"uid2": user_id}, start_date, end_date)
+            row = (await session.execute(
+                text(f"SELECT COUNT(*) AS sent, SUM(CASE WHEN status = 'pending_receipt' THEN 1 ELSE 0 END) AS pending FROM distributions WHERE {sc}"),
+                sp
+            )).mappings().first()
+            sent = int(row["sent"])
+            pending = int(row["pending"]) if row["pending"] is not None else 0
 
-            rc, rp = _build_date_filter("to_user_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {rc}", rp)
-            received = int((await cursor.fetchone())[0])
+            rc, rp = _build_date_filter("to_user_id = :uid3", {"uid3": user_id}, start_date, end_date)
+            received = (await session.execute(
+                text(f"SELECT COUNT(*) FROM distributions WHERE {rc}"), rp
+            )).scalar() or 0
 
-            cursor = await db.execute("SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = ?", (int(user_id),))
-            sub_dist_manager_ids = [row[0] for row in await cursor.fetchall()]
+            sub_rows = (await session.execute(
+                text("SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = :pid"),
+                {"pid": int(user_id)}
+            )).mappings().all()
+            sub_dist_manager_ids = [int(r["id"]) for r in sub_rows]
             candidate_cluster_parent_ids = [int(user_id)] + sub_dist_manager_ids
-            if candidate_cluster_parent_ids:
-                placeholders = ",".join("?" * len(candidate_cluster_parent_ids))
-                cursor = await db.execute(
-                    f"SELECT id FROM users WHERE role = 'cluster' AND parent_id IN ({placeholders})",
-                    tuple(candidate_cluster_parent_ids)
-                )
-                cluster_ids = [row[0] for row in await cursor.fetchall()]
-            else:
-                cluster_ids = []
 
+            cluster_ids = []
+            if candidate_cluster_parent_ids:
+                cph = ",".join([f":cp_{i}" for i in range(len(candidate_cluster_parent_ids))])
+                cparams = {f"cp_{i}": cid for i, cid in enumerate(candidate_cluster_parent_ids)}
+                cluster_rows = (await session.execute(
+                    text(f"SELECT id FROM users WHERE role = 'cluster' AND parent_id IN ({cph})"),
+                    cparams
+                )).mappings().all()
+                cluster_ids = [int(r["id"]) for r in cluster_rows]
+
+            operator_count = 0
             if cluster_ids:
-                placeholders = ",".join("?" * len(cluster_ids))
-                cursor = await db.execute(
-                    f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND parent_id IN ({placeholders})",
-                    tuple(cluster_ids)
-                )
-                operator_count = int((await cursor.fetchone())[0])
-            else:
-                operator_count = 0
+                oph = ",".join([f":oc_{i}" for i in range(len(cluster_ids))])
+                oparams = {f"oc_{i}": cid for i, cid in enumerate(cluster_ids)}
+                operator_count = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND parent_id IN ({oph})"),
+                    oparams
+                )).scalar() or 0
 
         stats = {
             "my_devices": my_devices,
@@ -190,54 +192,58 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
         }
 
     elif role == "sub_distribution_manager":
-        async with get_db() as db:
-            scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
+        async with async_session_factory() as session:
+            scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id))
 
             if not scope_ids:
                 branch_devices = available_devices = sent = received = pending = operator_count = defect_reports = return_requests = 0
             else:
-                placeholders = ",".join(["?"] * len(scope_ids))
-                sp_ids = tuple(scope_ids)
-                str_scope_ids = [str(s) for s in scope_ids]
-                str_pl = ",".join(["?"] * len(str_scope_ids))
-                sp_str = tuple(str_scope_ids)
+                ph = ",".join([f":s_{i}" for i in range(len(scope_ids))])
+                str_ph = ",".join([f":ss_{i}" for i in range(len(scope_ids))])
+                sp_map = {f"s_{i}": sid for i, sid in enumerate(scope_ids)}
+                str_map = {f"ss_{i}": str(sid) for i, sid in enumerate(scope_ids)}
 
-                dc, dp = _build_date_filter(f"current_holder_id IN ({placeholders})", sp_ids, start_date, end_date)
-                ac, ap = _build_date_filter(f"current_holder_id IN ({placeholders}) AND status = 'available'", sp_ids, start_date, end_date)
-                sc, sp = _build_date_filter(f"from_user_id IN ({placeholders})", sp_ids, start_date, end_date)
-                rc, rp = _build_date_filter(f"to_user_id IN ({placeholders})", sp_ids, start_date, end_date)
-                dec, dep = _build_date_filter(f"reported_by IN ({str_pl})", sp_str, start_date, end_date)
-                rec, rep = _build_date_filter(f"requested_by IN ({str_pl})", sp_str, start_date, end_date)
+                date_cond, date_prm = _build_date_filter("1=1", {}, start_date, end_date)
 
-                cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {dc}", dp)
-                branch_devices = (await cursor.fetchone())[0]
+                branch_devices = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({ph}) AND {date_cond}"),
+                    {**sp_map, **date_prm}
+                )).scalar() or 0
 
-                cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {ac}", ap)
-                available_devices = (await cursor.fetchone())[0]
+                available_devices = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({ph}) AND status = 'available' AND {date_cond}"),
+                    {**sp_map, **date_prm}
+                )).scalar() or 0
 
-                cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {sc}", sp)
-                sent = (await cursor.fetchone())[0]
+                sent = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM distributions WHERE from_user_id IN ({ph}) AND {date_cond}"),
+                    {**sp_map, **date_prm}
+                )).scalar() or 0
 
-                cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {rc}", rp)
-                received = (await cursor.fetchone())[0]
+                received = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM distributions WHERE to_user_id IN ({ph}) AND {date_cond}"),
+                    {**sp_map, **date_prm}
+                )).scalar() or 0
 
-                cursor = await db.execute(
-                    "SELECT COUNT(*) FROM distributions WHERE to_user_id = ? AND status = 'pending_receipt'",
-                    (int(user_id),)
-                )
-                pending = (await cursor.fetchone())[0]
+                pending = (await session.execute(
+                    text("SELECT COUNT(*) FROM distributions WHERE to_user_id = :uid AND status = 'pending_receipt'"),
+                    {"uid": int(user_id)}
+                )).scalar() or 0
 
-                cursor = await db.execute(
-                    f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND id IN ({placeholders})",
-                    sp_ids
-                )
-                operator_count = (await cursor.fetchone())[0]
+                operator_count = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND id IN ({ph})"),
+                    sp_map
+                )).scalar() or 0
 
-                cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dec}", dep)
-                defect_reports = (await cursor.fetchone())[0]
+                defect_reports = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM defects WHERE reported_by IN ({str_ph}) AND {date_cond}"),
+                    {**str_map, **date_prm}
+                )).scalar() or 0
 
-                cursor = await db.execute(f"SELECT COUNT(*) FROM returns WHERE {rec}", rep)
-                return_requests = (await cursor.fetchone())[0]
+                return_requests = (await session.execute(
+                    text(f"SELECT COUNT(*) FROM returns WHERE requested_by IN ({str_ph}) AND {date_cond}"),
+                    {**str_map, **date_prm}
+                )).scalar() or 0
 
         stats = {
             "my_devices": branch_devices,
@@ -253,18 +259,21 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
         }
 
     elif role == "cluster":
-        async with get_db() as db:
-            dc, dp = _build_date_filter("current_holder_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {dc}", dp)
-            my_devices = (await cursor.fetchone())[0]
+        async with async_session_factory() as session:
+            dc, dp = _build_date_filter("current_holder_id = :uid", {"uid": user_id}, start_date, end_date)
+            my_devices = (await session.execute(
+                text(f"SELECT COUNT(*) FROM devices WHERE {dc}"), dp
+            )).scalar() or 0
 
-            sc, sp = _build_date_filter("from_user_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {sc}", sp)
-            sent = (await cursor.fetchone())[0]
+            sc, sp = _build_date_filter("from_user_id = :uid2", {"uid2": user_id}, start_date, end_date)
+            sent = (await session.execute(
+                text(f"SELECT COUNT(*) FROM distributions WHERE {sc}"), sp
+            )).scalar() or 0
 
-            rc, rp = _build_date_filter("to_user_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {rc}", rp)
-            received = (await cursor.fetchone())[0]
+            rc, rp = _build_date_filter("to_user_id = :uid3", {"uid3": user_id}, start_date, end_date)
+            received = (await session.execute(
+                text(f"SELECT COUNT(*) FROM distributions WHERE {rc}"), rp
+            )).scalar() or 0
         operator_stats_data = await operator_service.get_operator_stats(user_id)
         stats = {
             "my_devices": my_devices,
@@ -274,18 +283,22 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
         }
 
     elif role == "operator":
-        async with get_db() as db:
-            dc, dp = _build_date_filter("current_holder_id = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {dc}", dp)
-            my_devices = (await cursor.fetchone())[0]
+        async with async_session_factory() as session:
+            uid = user_id
+            dc, dp = _build_date_filter("current_holder_id = :uid", {"uid": uid}, start_date, end_date)
+            my_devices = (await session.execute(
+                text(f"SELECT COUNT(*) FROM devices WHERE {dc}"), dp
+            )).scalar() or 0
 
-            dfc, dfp = _build_date_filter("reported_by = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dfc}", dfp)
-            my_defects = (await cursor.fetchone())[0]
+            dfc, dfp = _build_date_filter("reported_by = :uid2", {"uid2": uid}, start_date, end_date)
+            my_defects = (await session.execute(
+                text(f"SELECT COUNT(*) FROM defects WHERE {dfc}"), dfp
+            )).scalar() or 0
 
-            rc, rp = _build_date_filter("requested_by = ?", (user_id,), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM returns WHERE {rc}", rp)
-            my_returns = (await cursor.fetchone())[0]
+            rc, rp = _build_date_filter("requested_by = :uid3", {"uid3": uid}, start_date, end_date)
+            my_returns = (await session.execute(
+                text(f"SELECT COUNT(*) FROM returns WHERE {rc}"), rp
+            )).scalar() or 0
         stats = {
             "my_devices": my_devices,
             "my_defects": my_defects,

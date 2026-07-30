@@ -21,24 +21,24 @@ const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
 const TEMPLATES = {
   sub_distributor: {
     filename: 'user-template-sub-distributor.csv',
-    headers: ['role', 'email', 'password', 'name', 'digital_id', 'broadband_id', 'phone', 'department', 'location'],
-    sample: 'sub_distributor,sd1@example.com,Pass@123,Sub Distributor One,SD001,BB001,+911234567890,Dept A,Location A',
+    headers: ['role', 'email', 'password', 'name', 'digital_id', 'broadband_id', 'phone', 'designation', 'location'],
+    sample: 'sub_distributor,sd1@example.com,Pass@123,Sub Distributor One,SD001,BB001,+911234567890,Designation A,Location A',
     label: 'Sub Distributor',
-    description: 'role, email, password, name, digital_id, broadband_id, phone, department, location',
+    description: 'role, email, password, name, digital_id, broadband_id, phone, designation, location',
   },
   cluster: {
     filename: 'user-template-cluster.csv',
-    headers: ['role', 'email', 'password', 'name', 'cluster_id', 'phone', 'department', 'location', 'sub_distributor_email'],
-    sample: 'cluster,cluster1@example.com,Pass@123,Cluster One,CL001,+911234567890,Dept B,Location B,sd1@example.com',
+    headers: ['role', 'email', 'password', 'name', 'cluster_id', 'phone', 'designation', 'location', 'sub_distributor_email'],
+    sample: 'cluster,cluster1@example.com,Pass@123,Cluster One,CL001,+911234567890,Designation B,Location B,sd1@example.com',
     label: 'Cluster',
-    description: 'role, email, password, name, cluster_id, phone, department, location, sub_distributor_email',
+    description: 'role, email, password, name, cluster_id, phone, designation, location, sub_distributor_email',
   },
   operator: {
     filename: 'user-template-operator.csv',
-    headers: ['role', 'email', 'password', 'name', 'operator_id', 'phone', 'department', 'location', 'sub_distributor_email', 'cluster_email'],
-    sample: 'operator,op1@example.com,Pass@123,Operator One,OP001,+911234567890,Dept C,Location C,,cluster1@example.com',
+    headers: ['role', 'email', 'password', 'name', 'operator_id', 'phone', 'designation', 'location', 'sub_distributor_email', 'cluster_email'],
+    sample: 'operator,op1@example.com,Pass@123,Operator One,OP001,+911234567890,Designation C,Location C,,cluster1@example.com',
     label: 'Operator',
-    description: 'role, email, password, name, operator_id, phone, department, location, sub_distributor_email, cluster_email',
+    description: 'role, email, password, name, operator_id, phone, designation, location, sub_distributor_email, cluster_email',
   },
 };
 

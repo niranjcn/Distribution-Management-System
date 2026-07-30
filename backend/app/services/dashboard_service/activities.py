@@ -1,32 +1,31 @@
 from typing import Dict, Any, List, Optional
 
-from app.database import get_db
+from sqlalchemy import text
+
+from app.database_sqlalchemy import async_session_factory
 from app.core.activity_logger import log_api_activity
 
 
 async def get_recent_activities(user: Dict[str, Any], limit: int = 10) -> list:
-    """Get recent activities based on user role"""
     role = user.get("role")
     user_id = str(user.get("_id", user.get("id", "")))
-
     activities = []
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
-            cursor = await db.execute(
-                "SELECT * FROM device_history ORDER BY timestamp DESC LIMIT ?", (limit,)
-            )
+            rows = (await session.execute(
+                text("SELECT * FROM device_history ORDER BY timestamp DESC LIMIT :lim"),
+                {"lim": limit}
+            )).mappings().all()
         else:
-            cursor = await db.execute(
-                """SELECT * FROM device_history
-                WHERE performed_by = ? OR from_user_id = ? OR to_user_id = ?
-                ORDER BY timestamp DESC LIMIT ?""",
-                (user_id, user_id, user_id, limit)
-            )
-        rows = await cursor.fetchall()
+            rows = (await session.execute(
+                text("""SELECT * FROM device_history
+                WHERE performed_by = :uid OR from_user_id = :uid2 OR to_user_id = :uid3
+                ORDER BY timestamp DESC LIMIT :lim"""),
+                {"uid": user_id, "uid2": user_id, "uid3": user_id, "lim": limit}
+            )).mappings().all()
 
-        for h in rows:
-            hd = dict(h)
+        for hd in rows:
             activities.append({
                 "id": str(hd["id"]),
                 "action": hd["action"],
@@ -49,174 +48,162 @@ async def get_admin_activities(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Get unified activity stream for admin users with filtering."""
     normalized_category = (category or "all").strip().lower()
     activities: List[Dict[str, Any]] = []
     fetch_limit = (page + 1) * page_size
     table_total = 0
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         if normalized_category in {"all", "device"}:
             conditions = ["1=1"]
-            params: List[Any] = []
+            params: Dict[str, Any] = {}
 
-            conditions.append("action != ?")
-            params.append("bulk_registered")
+            conditions.append("action != :bulk_action")
+            params["bulk_action"] = "bulk_registered"
 
-            conditions.append("(notes IS NULL OR notes NOT LIKE ?)")
-            params.append("Device replaced by % for defect %")
-            conditions.append("(notes IS NULL OR notes NOT LIKE ?)")
-            params.append("Device serviced and reassigned for defect %")
+            conditions.append("(notes IS NULL OR notes NOT LIKE :excl1)")
+            params["excl1"] = "Device replaced by % for defect %"
+            conditions.append("(notes IS NULL OR notes NOT LIKE :excl2)")
+            params["excl2"] = "Device serviced and reassigned for defect %"
 
             if actor:
-                conditions.append("performed_by_name LIKE ?")
-                params.append(f"%{actor}%")
+                conditions.append("performed_by_name LIKE :actor")
+                params["actor"] = f"%{actor}%"
 
             if search:
                 like = f"%{search}%"
-                conditions.append("(action LIKE ? OR notes LIKE ? OR device_id LIKE ? OR performed_by_name LIKE ?)")
-                params.extend([like, like, like, like])
+                conditions.append("(action LIKE :sl1 OR notes LIKE :sl2 OR device_id LIKE :sl3 OR performed_by_name LIKE :sl4)")
+                for i, key in enumerate(["sl1", "sl2", "sl3", "sl4"]):
+                    params[key] = like
 
             if start_date:
-                conditions.append("timestamp >= ?")
-                params.append(start_date)
+                conditions.append("timestamp >= :start_date")
+                params["start_date"] = start_date
 
             if end_date:
-                conditions.append("timestamp <= ?")
-                params.append(end_date)
+                conditions.append("timestamp <= :end_date")
+                params["end_date"] = end_date
 
-            where_clause = " AND ".join(conditions)
-            cursor = await db.execute(
-                f"SELECT COUNT(*) FROM device_history WHERE {where_clause}",
-                params,
-            )
-            table_total += (await cursor.fetchone())[0]
+            where = " AND ".join(conditions)
+            table_total += (await session.execute(
+                text(f"SELECT COUNT(*) FROM device_history WHERE {where}"), params
+            )).scalar() or 0
 
-            cursor = await db.execute(
-                f"""SELECT id, device_id, action, notes, performed_by_name, timestamp
+            rows = (await session.execute(
+                text(f"""SELECT id, device_id, action, notes, performed_by_name, timestamp
                     FROM device_history
-                    WHERE {where_clause}
+                    WHERE {where}
                     ORDER BY timestamp DESC
-                    LIMIT ?""",
-                params + [fetch_limit],
-            )
-            for row in await cursor.fetchall():
-                item = dict(row)
+                    LIMIT :lim"""),
+                {**params, "lim": fetch_limit}
+            )).mappings().all()
+            for item in rows:
                 actor_name = item.get("performed_by_name") or "Unknown"
                 description = (
                     item.get("notes")
                     or f"{item.get('action', 'updated')} on device {item.get('device_id', '-')}."
                 )
-                activities.append(
-                    {
-                        "id": f"device-{item.get('id')}",
-                        "category": "device",
-                        "action": item.get("action") or "device_update",
-                        "actor": actor_name,
-                        "description": description,
-                        "date": item.get("timestamp"),
-                        "link": None,
-                    }
-                )
+                activities.append({
+                    "id": f"device-{item.get('id')}",
+                    "category": "device",
+                    "action": item.get("action") or "device_update",
+                    "actor": actor_name,
+                    "description": description,
+                    "date": item.get("timestamp"),
+                    "link": None,
+                })
 
         if normalized_category in {"all", "inventory"}:
             conditions = ["1=1"]
-            params = []
+            params: Dict[str, Any] = {}
 
             if actor:
-                conditions.append("performed_by_name LIKE ?")
-                params.append(f"%{actor}%")
+                conditions.append("performed_by_name LIKE :actor")
+                params["actor"] = f"%{actor}%"
 
             if search:
                 like = f"%{search}%"
-                conditions.append("(movement_type LIKE ? OR notes LIKE ? OR item_sku LIKE ? OR item_name LIKE ? OR performed_by_name LIKE ?)")
-                params.extend([like, like, like, like, like])
+                conditions.append("(movement_type LIKE :sl1 OR notes LIKE :sl2 OR item_sku LIKE :sl3 OR item_name LIKE :sl4 OR performed_by_name LIKE :sl5)")
+                for i, key in enumerate([f"sl{i+1}" for i in range(5)]):
+                    params[key] = like
 
             if start_date:
-                conditions.append("created_at >= ?")
-                params.append(start_date)
+                conditions.append("created_at >= :start_date")
+                params["start_date"] = start_date
 
             if end_date:
-                conditions.append("created_at <= ?")
-                params.append(end_date)
+                conditions.append("created_at <= :end_date")
+                params["end_date"] = end_date
 
-            where_clause = " AND ".join(conditions)
-            cursor = await db.execute(
-                f"SELECT COUNT(*) FROM inventory_stock_movements WHERE {where_clause}",
-                params,
-            )
-            table_total += (await cursor.fetchone())[0]
+            where = " AND ".join(conditions)
+            table_total += (await session.execute(
+                text(f"SELECT COUNT(*) FROM inventory_stock_movements WHERE {where}"), params
+            )).scalar() or 0
 
-            cursor = await db.execute(
-                f"""SELECT id, item_sku, item_name, movement_type, notes, performed_by_name, created_at
+            rows = (await session.execute(
+                text(f"""SELECT id, item_sku, item_name, movement_type, notes, performed_by_name, created_at
                     FROM inventory_stock_movements
-                    WHERE {where_clause}
+                    WHERE {where}
                     ORDER BY created_at DESC
-                    LIMIT ?""",
-                params + [fetch_limit],
-            )
-            for row in await cursor.fetchall():
-                item = dict(row)
+                    LIMIT :lim"""),
+                {**params, "lim": fetch_limit}
+            )).mappings().all()
+            for item in rows:
                 actor_name = item.get("performed_by_name") or "Unknown"
                 description = (
                     item.get("notes")
                     or f"{item.get('movement_type', 'movement')} for {item.get('item_sku') or item.get('item_name') or '-'}."
                 )
-                activities.append(
-                    {
-                        "id": f"inventory-{item.get('id')}",
-                        "category": "inventory",
-                        "action": item.get("movement_type") or "movement",
-                        "actor": actor_name,
-                        "description": description,
-                        "date": item.get("created_at"),
-                        "link": None,
-                    }
-                )
+                activities.append({
+                    "id": f"inventory-{item.get('id')}",
+                    "category": "inventory",
+                    "action": item.get("movement_type") or "movement",
+                    "actor": actor_name,
+                    "description": description,
+                    "date": item.get("created_at"),
+                    "link": None,
+                })
 
         if normalized_category in {"all", "api"}:
             conditions = ["1=1"]
-            params = []
+            params: Dict[str, Any] = {}
 
-            conditions.append("description NOT LIKE ?")
-            params.append("% returned %")
+            conditions.append("description NOT LIKE :excl")
+            params["excl"] = "% returned %"
 
             if actor:
-                conditions.append("actor_name LIKE ?")
-                params.append(f"%{actor}%")
+                conditions.append("actor_name LIKE :actor")
+                params["actor"] = f"%{actor}%"
 
             if search:
                 like = f"%{search}%"
-                conditions.append("(description LIKE ? OR path LIKE ? OR method LIKE ? OR actor_name LIKE ?)")
-                params.extend([like, like, like, like])
+                conditions.append("(description LIKE :sl1 OR path LIKE :sl2 OR method LIKE :sl3 OR actor_name LIKE :sl4)")
+                for i, key in enumerate([f"sl{i+1}" for i in range(4)]):
+                    params[key] = like
 
             if start_date:
-                conditions.append("created_at >= ?")
-                params.append(start_date)
+                conditions.append("created_at >= :start_date")
+                params["start_date"] = start_date
 
             if end_date:
-                conditions.append("created_at <= ?")
-                params.append(end_date)
+                conditions.append("created_at <= :end_date")
+                params["end_date"] = end_date
 
-            where_clause = " AND ".join(conditions)
-            cursor = await db.execute(
-                f"SELECT COUNT(*) FROM api_activity_logs WHERE {where_clause}",
-                params,
-            )
-            table_total += (await cursor.fetchone())[0]
+            where = " AND ".join(conditions)
+            table_total += (await session.execute(
+                text(f"SELECT COUNT(*) FROM api_activity_logs WHERE {where}"), params
+            )).scalar() or 0
 
-            cursor = await db.execute(
-                f"""SELECT id, actor_name, method, path, status_code, description, created_at
+            rows = (await session.execute(
+                text(f"""SELECT id, actor_name, method, path, status_code, description, created_at
                     FROM api_activity_logs
-                    WHERE {where_clause}
+                    WHERE {where}
                     ORDER BY created_at DESC
-                    LIMIT ?""",
-                params + [fetch_limit],
-            )
-            for row in await cursor.fetchall():
-                item = dict(row)
+                    LIMIT :lim"""),
+                {**params, "lim": fetch_limit}
+            )).mappings().all()
+            for item in rows:
                 path_value = str(item.get("path") or "")
-
                 link = None
                 if path_value.startswith("/activity/devices"):
                     link = "/devices"
@@ -235,17 +222,15 @@ async def get_admin_activities(
                 elif path_value.startswith("/activity/external-inventory"):
                     link = "/external-inventory"
 
-                activities.append(
-                    {
-                        "id": f"api-{item.get('id')}",
-                        "category": "api",
-                        "action": f"{item.get('method', 'API')} {item.get('path', '')}",
-                        "actor": item.get("actor_name") or "Anonymous",
-                        "description": item.get("description") or "API activity",
-                        "date": item.get("created_at"),
-                        "link": link,
-                    }
-                )
+                activities.append({
+                    "id": f"api-{item.get('id')}",
+                    "category": "api",
+                    "action": f"{item.get('method', 'API')} {item.get('path', '')}",
+                    "actor": item.get("actor_name") or "Anonymous",
+                    "description": item.get("description") or "API activity",
+                    "date": item.get("created_at"),
+                    "link": link,
+                })
 
     activities.sort(key=lambda x: str(x.get("date") or ""), reverse=True)
     start_idx = max(0, (page - 1) * page_size)
@@ -269,7 +254,6 @@ async def track_client_activity(
     description: str,
     context: Optional[str] = None,
 ) -> None:
-    """Persist explicit client-side activity events (for UI-only actions)."""
     user_id = str(user.get("id") or user.get("_id") or user.get("user_id") or user.get("sub") or "")
     actor_name = str(user.get("name") or user.get("email") or "Unknown")
     actor_role = str(user.get("role") or "")

@@ -10,6 +10,7 @@ const ForcedCredentialUpdate = () => {
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -34,7 +35,7 @@ const ForcedCredentialUpdate = () => {
 
     setLoading(true);
     try {
-      const result = await completeForcedCredentialUpdate(currentPassword, newEmail, newPassword);
+      const result = await completeForcedCredentialUpdate(currentPassword, newEmail, newPhone, newPassword);
       if (!result.success) {
         setError(result.error || 'Failed to complete update');
         return;
@@ -86,6 +87,18 @@ const ForcedCredentialUpdate = () => {
               value={newEmail}
               onChange={(event) => setNewEmail(event.target.value)}
               required
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-200 mb-1">New Phone Number</label>
+            <input
+              type="tel"
+              className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-slate-100"
+              value={newPhone}
+              onChange={(event) => setNewPhone(event.target.value)}
+              placeholder="Enter your phone number"
+              required
+              minLength={10}
             />
           </div>
           <div>

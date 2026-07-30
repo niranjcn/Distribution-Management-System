@@ -8,7 +8,9 @@ import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { devicesAPI, defectsAPI } from '../services/api';
 import { getDeviceSelectLabel } from '../utils/deviceDisplay';
-import { AlertTriangle, Save, X, Upload, Camera, Loader2 } from 'lucide-react';
+import { AlertTriangle, Save, X, Upload, Camera, Search } from 'lucide-react';
+
+const PAGE_SIZE = 100;
 
 const CreateDefectReport = () => {
   const navigate = useNavigate();
@@ -16,18 +18,23 @@ const CreateDefectReport = () => {
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
-  const [myDevices, setMyDevices] = useState([]);
+  const [devices, setDevices] = useState([]);
+  const [activeDefectDeviceIds, setActiveDefectDeviceIds] = useState(new Set());
+  const [devicePage, setDevicePage] = useState(1);
+  const [hasMoreDevices, setHasMoreDevices] = useState(false);
+  const [loadingDevices, setLoadingDevices] = useState(false);
   const [formData, setFormData] = useState({
     deviceId: '',
     defectType: '',
     severity: '',
     description: '',
     reportTarget: 'manager_admin',
-    imageFiles: [] // Store file objects with local preview URLs
+    imageFiles: []
   });
   const [submitProgress, setSubmitProgress] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentSearch, setCurrentSearch] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -36,7 +43,7 @@ const CreateDefectReport = () => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setDropdownOpen(false);
         if (formData.deviceId) {
-          const dev = myDevices.find(d => String(d._id || d.id) === String(formData.deviceId));
+          const dev = devices.find(d => String(d._id || d.id) === String(formData.deviceId));
           if (dev) {
             setSearchQuery(getDeviceSelectLabel(dev));
           }
@@ -47,33 +54,45 @@ const CreateDefectReport = () => {
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [formData.deviceId, myDevices]);
+  }, [formData.deviceId, devices]);
 
   const isOperator = user?.role === 'operator';
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [devicesRes, defectsRes] = await Promise.all([
-          devicesAPI.getDevices({ page_size: 10000 }),
-          defectsAPI.getDefects({ page_size: 10000 })
-        ]);
+  const fetchDevicesPage = async (page, search, reset) => {
+    setLoadingDevices(true);
+    try {
+      const params = { page, page_size: PAGE_SIZE };
+      if (search) {
+        params.search = search;
+      }
+      const res = await devicesAPI.getDevices(params);
+      const fetchedDevices = res.data || [];
+      const pagination = res.pagination || {};
 
-        const activeDefects = (defectsRes.data || []).filter(d => 
+      setDevices(prev => reset ? fetchedDevices : [...prev, ...fetchedDevices]);
+      setDevicePage(page);
+      setHasMoreDevices(page < (pagination.total_pages || 0));
+    } catch (error) {
+      console.error('Failed to fetch devices:', error);
+    } finally {
+      setLoadingDevices(false);
+    }
+  };
+
+  useEffect(() => {
+    const fetchInitial = async () => {
+      try {
+        const defectsRes = await defectsAPI.getDefects({ page_size: 10000 });
+        const activeDefects = (defectsRes.data || []).filter(d =>
           d.status !== 'resolved' && d.status !== 'rejected' && d.status !== 'replaced'
         );
-        const activeDefectDeviceIds = new Set(activeDefects.map(d => String(d.device_id)));
-
-        const availableDevices = (devicesRes.data || []).filter(d => 
-          !activeDefectDeviceIds.has(String(d._id || d.id))
-        );
-
-        setMyDevices(availableDevices);
+        setActiveDefectDeviceIds(new Set(activeDefects.map(d => String(d.device_id))));
       } catch (error) {
-        console.error('Failed to fetch data:', error);
+        console.error('Failed to fetch active defects:', error);
       }
+      await fetchDevicesPage(1, '', true);
     };
-    fetchData();
+    fetchInitial();
   }, []);
 
   const handleChange = (e) => {
@@ -105,7 +124,6 @@ const CreateDefectReport = () => {
     };
     reader.readAsDataURL(file);
 
-    // Reset input so the same file can be selected again if needed
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -115,6 +133,26 @@ const CreateDefectReport = () => {
       newFiles.splice(index, 1);
       return { ...prev, imageFiles: newFiles };
     });
+  };
+
+  const handleSearch = () => {
+    if (loadingDevices || !searchQuery.trim()) return;
+    setCurrentSearch(searchQuery);
+    setDropdownOpen(true);
+    fetchDevicesPage(1, searchQuery, true);
+  };
+
+  const handleClearSearch = () => {
+    if (loadingDevices) return;
+    setSearchQuery('');
+    setCurrentSearch('');
+    setDropdownOpen(true);
+    fetchDevicesPage(1, '', true);
+  };
+
+  const handleLoadMore = () => {
+    if (loadingDevices) return;
+    fetchDevicesPage(devicePage + 1, currentSearch, false);
   };
 
   const handleSubmit = async (e) => {
@@ -139,7 +177,7 @@ const CreateDefectReport = () => {
     }
 
     setLoading(true);
-    
+
     try {
       const uploadedUrls = [];
       if (formData.imageFiles.length > 0) {
@@ -171,11 +209,11 @@ const CreateDefectReport = () => {
     }
   };
 
-  const selectedDevice = myDevices.find(d => (d._id || d.id) === formData.deviceId);
-
-  const filteredDevices = myDevices.filter(device => 
-    getDeviceSelectLabel(device).toLowerCase().includes((searchQuery || '').toLowerCase())
+  const availableDevices = devices.filter(d =>
+    !activeDefectDeviceIds.has(String(d._id || d.id))
   );
+
+  const selectedDevice = devices.find(d => (d._id || d.id) === formData.deviceId);
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -191,31 +229,53 @@ const CreateDefectReport = () => {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Select Device <span className="text-red-500">*</span>
             </label>
-            <input
-              type="text"
-              placeholder="Search by Serial Number, MAC, or NUID..."
-              value={dropdownOpen ? searchQuery : (selectedDevice ? getDeviceSelectLabel(selectedDevice) : '')}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setDropdownOpen(true);
-                if (formData.deviceId) {
-                  handleChange({ target: { name: 'deviceId', value: '' } });
-                }
-              }}
-              onFocus={() => {
-                setDropdownOpen(true);
-                setSearchQuery('');
-                if (formData.deviceId) {
-                  handleChange({ target: { name: 'deviceId', value: '' } });
-                }
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-              required={!formData.deviceId}
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Search by Serial Number, MAC, or NUID..."
+                value={dropdownOpen ? searchQuery : (selectedDevice ? getDeviceSelectLabel(selectedDevice) : '')}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (formData.deviceId) {
+                    handleChange({ target: { name: 'deviceId', value: '' } });
+                  }
+                }}
+                onFocus={() => {
+                  setDropdownOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSearch();
+                  }
+                }}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                required={!formData.deviceId}
+              />
+              <Button
+                type="button"
+                onClick={handleSearch}
+                disabled={loadingDevices || !searchQuery.trim()}
+                icon={Search}
+              >
+                Search
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleClearSearch}
+                disabled={loadingDevices}
+                icon={X}
+              >
+                Clear
+              </Button>
+            </div>
             {dropdownOpen && (
               <ul className="absolute z-10 w-full mt-1 max-h-60 overflow-y-auto bg-white border border-gray-300 rounded-lg shadow-lg">
-                {filteredDevices.length > 0 ? (
-                  filteredDevices.map(device => (
+                {loadingDevices && devices.length === 0 ? (
+                  <li className="px-3 py-2 text-sm text-gray-500 text-center">Loading...</li>
+                ) : availableDevices.length > 0 ? (
+                  availableDevices.map(device => (
                     <li
                       key={device._id || device.id}
                       onClick={() => {
@@ -230,6 +290,22 @@ const CreateDefectReport = () => {
                   ))
                 ) : (
                   <li className="px-3 py-2 text-sm text-gray-500 text-center">No devices found</li>
+                )}
+                {hasMoreDevices && !loadingDevices && (
+                  <li className="border-t border-gray-100">
+                    <button
+                      type="button"
+                      onClick={handleLoadMore}
+                      className="w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 font-medium"
+                    >
+                      Load More
+                    </button>
+                  </li>
+                )}
+                {loadingDevices && devices.length > 0 && (
+                  <li className="border-t border-gray-100 px-3 py-2 text-sm text-gray-400 text-center">
+                    Loading...
+                  </li>
                 )}
               </ul>
             )}

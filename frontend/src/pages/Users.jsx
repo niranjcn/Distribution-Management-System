@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import DataTable from '../components/ui/DataTable';
 import Card from '../components/ui/Card';
@@ -7,7 +7,7 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI } from '../services/api';
+import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI, digitalIdsAPI } from '../services/api';
 import { 
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
   Building, MapPin, Calendar, Users as UsersIcon, Loader2, Lock,
@@ -43,7 +43,7 @@ const USER_SEARCH_BY_OPTIONS = [
   { value: 'role', label: 'Role' },
   { value: 'status', label: 'Status' },
   { value: 'phone', label: 'Phone' },
-  { value: 'department', label: 'Department' },
+  { value: 'designation', label: 'Designation' },
   { value: 'location', label: 'Location' },
   { value: 'digital_id', label: 'Digital ID' },
   { value: 'broadband_id', label: 'Broadband ID' },
@@ -75,7 +75,7 @@ const emptyForm = {
   clusterId: '',
   operatorId: '',
   phone: '',
-  department: '',
+  designation: '',
   location: '',
   parentId: '',
 };
@@ -102,6 +102,8 @@ const Users = () => {
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [showConfirmResetPassword, setShowConfirmResetPassword] = useState(false);
   const [savingDetail, setSavingDetail] = useState(false);
+  const [detailDigitalIds, setDetailDigitalIds] = useState([]);
+  const origDigitalIdIds = useRef(null);
 
   const [formData, setFormData] = useState(emptyForm);
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -341,7 +343,15 @@ const Users = () => {
       render: (_, row) => (
         <div className="flex gap-2">
           <button
-            onClick={() => { setSelectedUser(row); setShowViewModal(true); }}
+            onClick={async () => {
+              try {
+                const res = await usersAPI.getUser(row._id || row.id);
+                setSelectedUser(res?.data || row);
+              } catch {
+                setSelectedUser(row);
+              }
+              setShowViewModal(true);
+            }}
             className="p-1 hover:bg-gray-100 rounded"
             title="View"
           >
@@ -349,7 +359,23 @@ const Users = () => {
           </button>
           {['super_admin'].includes(currentUser?.role) && (row.role !== 'super_admin' || String(row.id) === String(currentUser.id)) && (
             <button
-              onClick={() => { setDetailUser(row); setDetailForm({ ...row }); setNewPassword(''); setConfirmResetPassword(''); setShowResetPassword(false); setShowConfirmResetPassword(false); }}
+              onClick={async () => {
+                try {
+                  const res = await usersAPI.getUser(row._id || row.id);
+                  const full = res?.data || row;
+                  setDetailUser(full);
+                  setDetailForm({ ...full });
+                  const ids = (full.digital_ids || []).map(e => ({ ...e }));
+                  setDetailDigitalIds(ids);
+                  origDigitalIdIds.current = ids.map(e => e.id).filter(Boolean);
+                } catch {
+                  setDetailUser(row);
+                  setDetailForm({ ...row });
+                  setDetailDigitalIds([]);
+                  origDigitalIdIds.current = [];
+                }
+                setNewPassword(''); setConfirmResetPassword(''); setShowResetPassword(false); setShowConfirmResetPassword(false);
+              }}
               className="p-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200"
               title="Edit Details"
             >
@@ -408,7 +434,7 @@ const Users = () => {
         payload.operator_id = formData.operatorId || null;
       }
       if (formData.phone)      payload.phone = formData.phone;
-      if (formData.department) payload.department = formData.department;
+      if (formData.designation) payload.designation = formData.designation;
       if (formData.location)   payload.location = formData.location;
       if (formData.parentId)   payload.parent_id = formData.parentId;
 
@@ -435,8 +461,12 @@ const Users = () => {
       const payload = {};
       if (formData.name)       payload.name = formData.name;
       if (formData.phone)      payload.phone = formData.phone;
-      if (formData.department) payload.department = formData.department;
+      if (formData.designation) payload.designation = formData.designation;
       if (formData.location)   payload.location = formData.location;
+      if (selectedUser?.role === 'sub_distributor') {
+        payload.digital_id = formData.digitalId || null;
+        payload.broadband_id = formData.broadbandId || null;
+      }
 
       await usersAPI.updateUser(selectedUser._id || selectedUser.id, payload);
       showToast('User updated successfully', 'success');
@@ -589,7 +619,7 @@ const Users = () => {
       role: (row) => row?.role,
       status: (row) => row?.status,
       phone: (row) => row?.phone,
-      department: (row) => row?.department,
+      designation: (row) => row?.designation,
       location: (row) => row?.location,
       digital_id: (row) => row?.digital_id,
       broadband_id: (row) => row?.broadband_id,
@@ -1077,8 +1107,8 @@ const Users = () => {
               <div className="flex items-center gap-3">
                 <Building className="w-5 h-5 text-gray-400" />
                 <div>
-                  <p className="text-sm text-gray-500">Department</p>
-                  <p className="font-medium text-gray-800">{selectedUser.department || 'Not assigned'}</p>
+                  <p className="text-sm text-gray-500">Designation</p>
+                  <p className="font-medium text-gray-800">{selectedUser.designation || 'Not assigned'}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -1118,29 +1148,41 @@ const Users = () => {
                   <p className="font-medium text-gray-800">{selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleString() : 'Never'}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <Shield className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Email Verified</p>
-                  <p className="font-medium text-gray-800">{selectedUser.is_verified ? 'Yes' : 'No'}</p>
+              {/* ── Digital IDs ── */}
+              {selectedUser.digital_ids && selectedUser.digital_ids.length > 0 && (
+                <div className="col-span-2 p-3 bg-gray-50 rounded-lg">
+                  <p className="text-xs text-gray-500 font-medium mb-2">Digital IDs</p>
+                  <div className="space-y-3">
+                    {selectedUser.digital_ids.map((entry, idx) => (
+                      <div key={entry.id || idx} className="text-sm border-b border-gray-200 pb-2 last:border-0 last:pb-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                          <span className="text-gray-400 text-xs">{new Date(entry.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 ml-5">
+                          <div>
+                            <span className="text-gray-400 text-xs block">Digital ID</span>
+                            <span className="font-medium">{entry.digital_id || '---'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400 text-xs block">Broadband ID</span>
+                            <span className="font-medium">{entry.broadband_id || '---'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-
-              {/* ── IDs ── */}
-              <div className="flex items-center gap-3">
-                <Building className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Digital ID</p>
-                  <p className="font-medium text-gray-800">{selectedUser.digital_id || 'Not provided'}</p>
+              )}
+              {(!selectedUser.digital_ids || selectedUser.digital_ids.length === 0) && (
+                <div className="flex items-center gap-3">
+                  <Building className="w-5 h-5 text-gray-400" />
+                  <div>
+                    <p className="text-sm text-gray-500">Digital IDs</p>
+                    <p className="font-medium text-gray-800">None</p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Building className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Broadband ID</p>
-                  <p className="font-medium text-gray-800">{selectedUser.broadband_id || 'Not provided'}</p>
-                </div>
-              </div>
+              )}
               {selectedUser.role === 'cluster' && (
                 <div className="flex items-center gap-3">
                   <Building className="w-5 h-5 text-gray-400" />
@@ -1156,82 +1198,6 @@ const Users = () => {
                   <div>
                     <p className="text-sm text-gray-500">Operator ID</p>
                     <p className="font-medium text-gray-800">{selectedUser.operator_id || 'Not provided'}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Security ── */}
-              <div className="flex items-center gap-3">
-                <Shield className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Force Email Change</p>
-                  <p className="font-medium text-gray-800">{selectedUser.force_email_change ? 'Yes' : 'No'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Shield className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Force Password Change</p>
-                  <p className="font-medium text-gray-800">{selectedUser.force_password_change ? 'Yes' : 'No'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Shield className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Failed Login Attempts</p>
-                  <p className="font-medium text-gray-800">{selectedUser.failed_login_attempts ?? 0}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Shield className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Account Locked Until</p>
-                  <p className="font-medium text-gray-800">{selectedUser.locked_until ? new Date(selectedUser.locked_until).toLocaleString() : 'Not locked'}</p>
-                </div>
-              </div>
-
-              {/* ── Notifications ── */}
-              <div className="flex items-center gap-3">
-                <Mail className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Email Notifications</p>
-                  <p className="font-medium text-gray-800">{selectedUser.email_notifications ? 'Enabled' : 'Disabled'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Bell className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Push Notifications</p>
-                  <p className="font-medium text-gray-800">{selectedUser.push_notifications ? 'Enabled' : 'Disabled'}</p>
-                </div>
-              </div>
-
-              {/* ── Preferences ── */}
-              <div className="flex items-center gap-3">
-                <Building className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Theme</p>
-                  <p className="font-medium text-gray-800 capitalize">{selectedUser.theme || 'Light'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Building className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Compact Mode</p>
-                  <p className="font-medium text-gray-800">{selectedUser.compact_mode ? 'Enabled' : 'Disabled'}</p>
-                </div>
-              </div>
-
-              {/* ── Permissions ── */}
-              {selectedUser.permissions && Object.keys(selectedUser.permissions).length > 0 && (
-                <div className="col-span-2 p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500 font-medium mb-2">Permissions</p>
-                  <div className="flex flex-wrap gap-1">
-                    {Object.entries(selectedUser.permissions).map(([key, val]) => (
-                      <span key={key} className={`px-2 py-0.5 rounded text-xs font-medium ${val ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {key}: {val ? '✓' : '✗'}
-                      </span>
-                    ))}
                   </div>
                 </div>
               )}
@@ -1563,11 +1529,11 @@ const Users = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
               <input
                 type="text"
-                value={formData.department}
-                onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                value={formData.designation}
+                onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="e.g., IT"
               />
@@ -1636,11 +1602,11 @@ const Users = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
               <input
                 type="text"
-                value={formData.department}
-                onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                value={formData.designation}
+                onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -1653,6 +1619,28 @@ const Users = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
+            {selectedUser?.role === 'sub_distributor' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID</label>
+                  <input
+                    type="text"
+                    value={formData.digitalId || ''}
+                    onChange={(e) => setFormData({ ...formData, digitalId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID</label>
+                  <input
+                    type="text"
+                    value={formData.broadbandId || ''}
+                    onChange={(e) => setFormData({ ...formData, broadbandId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </>
+            )}
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" onClick={() => { setShowEditModal(false); setSelectedUser(null); }}>
@@ -1820,7 +1808,7 @@ const Users = () => {
                 { key: 'name', label: 'Full Name' },
                 { key: 'email', label: 'Email' },
                 { key: 'phone', label: 'Phone' },
-                { key: 'department', label: 'Department' },
+                { key: 'designation', label: 'Designation' },
                 { key: 'location', label: 'Location' },
               ].map(({ key, label }) => (
                 <div key={key}>
@@ -1833,25 +1821,47 @@ const Users = () => {
                 </div>
               ))}
               {detailUser.role === 'sub_distributor' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID</label>
-                    <input
-                      value={detailForm.digital_id || ''}
-                      onChange={e => setDetailForm(p => ({ ...p, digital_id: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="Enter digital ID"
-                    />
+                <div className="p-3 bg-gray-50 rounded-lg">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Digital IDs</label>
+                  <div className="space-y-2">
+                    {detailDigitalIds.map((entry, idx) => (
+                      <div key={entry.id || entry._localId || idx} className="flex items-center gap-2">
+                        <input
+                          value={entry.digital_id || ''}
+                          onChange={e => {
+                            const copy = [...detailDigitalIds];
+                            copy[idx] = { ...copy[idx], digital_id: e.target.value };
+                            setDetailDigitalIds(copy);
+                          }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder="Digital ID"
+                        />
+                        <input
+                          value={entry.broadband_id || ''}
+                          onChange={e => {
+                            const copy = [...detailDigitalIds];
+                            copy[idx] = { ...copy[idx], broadband_id: e.target.value };
+                            setDetailDigitalIds(copy);
+                          }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder="Broadband ID"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setDetailDigitalIds(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg shrink-0"
+                          title="Remove"
+                        >×</button>
+                      </div>
+                    ))}
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID</label>
-                    <input
-                      value={detailForm.broadband_id || ''}
-                      onChange={e => setDetailForm(p => ({ ...p, broadband_id: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="Enter broadband ID"
-                    />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDetailDigitalIds(prev => [...prev, { _localId: Date.now() + Math.random(), digital_id: '', broadband_id: '' }])}
+                    className="mt-2 px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-lg hover:bg-blue-50"
+                  >
+                    + Add Digital ID
+                  </button>
                 </div>
               )}
               {detailUser.role === 'cluster' && (
@@ -1889,24 +1899,41 @@ const Users = () => {
                     const updatePayload = {
                       name: detailForm.name,
                       phone: detailForm.phone,
-                      department: detailForm.department,
+                      designation: detailForm.designation,
                       location: detailForm.location,
                     };
-                    if (detailUser.role === 'sub_distributor') {
-                      updatePayload.digital_id = detailForm.digital_id || null;
-                      updatePayload.broadband_id = detailForm.broadband_id || null;
-                    }
                     if (detailUser.role === 'cluster') {
                       updatePayload.cluster_id = detailForm.cluster_id || null;
                     }
                     if (detailUser.role === 'operator') {
                       updatePayload.operator_id = detailForm.operator_id || null;
                     }
-                    // Update basic fields
                     await usersAPI.updateUser(detailUser.id, updatePayload);
-                    // Update email separately if changed
                     if (detailForm.email && detailForm.email !== detailUser.email) {
                       await adminUpdateCredentials(detailUser.id, { email: detailForm.email });
+                    }
+                    // Save digital IDs
+                    if (detailUser.role === 'sub_distributor') {
+                      const origIds = origDigitalIdIds.current || [];
+                      const currentIds = detailDigitalIds.map(e => e.id).filter(Boolean);
+                      const removedIds = origIds.filter(id => !currentIds.includes(String(id)));
+                      for (const id of removedIds) {
+                        await digitalIdsAPI.delete(id);
+                      }
+                      for (const entry of detailDigitalIds) {
+                        if (entry.id) {
+                          await digitalIdsAPI.update(entry.id, {
+                            digital_id: entry.digital_id || null,
+                            broadband_id: entry.broadband_id || null,
+                          });
+                        } else {
+                          await digitalIdsAPI.create({
+                            user_id: detailUser.id,
+                            digital_id: entry.digital_id || null,
+                            broadband_id: entry.broadband_id || null,
+                          });
+                        }
+                      }
                     }
                     showToast('User details saved', 'success');
                   } catch (err) {

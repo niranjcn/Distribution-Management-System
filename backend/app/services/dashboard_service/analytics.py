@@ -1,12 +1,13 @@
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 from app.core.cache import cached
-from app.services import device_service, user_service, defect_service, return_service, distribution_service, approval_service
+from app.services import device_service, user_service, defect_service, return_service, distribution_service
 
 from .helpers import (
-    _build_date_filter,
+    _build_named_date_filter,
     _month_start,
     _shift_months,
     _active_inactive_from_status_counts,
@@ -38,18 +39,22 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
 
     # Role-scoped advanced payload for non-management dashboards.
     if role in ["sub_distribution_manager", "sub_distributor", "cluster", "operator"]:
-        async with get_db() as db:
+        async with async_session_factory() as session:
             if role == "sub_distribution_manager":
-                scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
-                placeholders = ",".join(["?"] * len(scope_ids)) if scope_ids else "?"
-                cursor = await db.execute(
-                    f"SELECT status, COUNT(*) AS total FROM devices WHERE current_holder_id IN ({placeholders}) GROUP BY status",
-                    tuple(scope_ids)
-                )
-                rows = await cursor.fetchall()
-                my_device_status = {str(row[0]): int(row[1]) for row in rows}
+                scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id))
+                if scope_ids:
+                    sid_params = {f"sid{i}": sid for i, sid in enumerate(scope_ids)}
+                    sid_placeholders = ", ".join(f":sid{i}" for i in range(len(scope_ids)))
+                    result = await session.execute(
+                        text(f"SELECT status, COUNT(*) AS total FROM devices WHERE current_holder_id IN ({sid_placeholders}) GROUP BY status"),
+                        sid_params
+                    )
+                    rows = result.mappings().all()
+                else:
+                    rows = []
+                my_device_status = {str(row["status"]): int(row["total"]) for row in rows}
             else:
-                my_device_status = await _get_device_status_counts_for_holder(db, user_id)
+                my_device_status = await _get_device_status_counts_for_holder(session, user_id)
             my_device_active_split = _active_inactive_from_status_counts(my_device_status)
 
             charts = {
@@ -64,66 +69,66 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
 
             if role in ["sub_distribution_manager", "sub_distributor"]:
                 if role == "sub_distribution_manager":
-                    cursor = await db.execute(
-                                                """
-                                                SELECT id
-                                                FROM users
-                                                WHERE role = 'cluster'
-                                                    AND (
-                                                        parent_id = ?
-                                                        OR parent_id IN (
-                                                            SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = ?
-                                                        )
-                                                    )
-                                                """,
-                        (int(scope_root_id), int(scope_root_id))
-                    )
-                    cluster_rows = await cursor.fetchall()
-                    cluster_ids = [int(row[0]) for row in cluster_rows]
-                    if cluster_ids:
-                        placeholders = ",".join("?" * len(cluster_ids))
-                        cursor = await db.execute(
-                            f"""
-                            SELECT
-                                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_total,
-                                SUM(CASE WHEN status != 'active' THEN 1 ELSE 0 END) AS inactive_total
+                    result = await session.execute(
+                        text("""
+                            SELECT id
                             FROM users
-                            WHERE role = 'cluster' AND id IN ({placeholders})
-                            """,
-                            tuple(cluster_ids)
+                            WHERE role = 'cluster'
+                                AND (
+                                    parent_id = :root_id
+                                    OR parent_id IN (
+                                        SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = :root_id
+                                    )
+                                )
+                        """),
+                        {"root_id": int(scope_root_id)}
+                    )
+                    cluster_ids = [int(row[0]) for row in result.all()]
+                    if cluster_ids:
+                        cid_params = {f"cid{i}": cid for i, cid in enumerate(cluster_ids)}
+                        cid_placeholders = ", ".join(f":cid{i}" for i in range(len(cluster_ids)))
+                        result = await session.execute(
+                            text(f"""
+                                SELECT
+                                    SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_total,
+                                    SUM(CASE WHEN status != 'active' THEN 1 ELSE 0 END) AS inactive_total
+                                FROM users
+                                WHERE role = 'cluster' AND id IN ({cid_placeholders})
+                            """),
+                            cid_params
                         )
-                        cs_row = await cursor.fetchone()
+                        cs_row = result.mappings().first()
                         cluster_status_split = {
-                            "active": int((cs_row[0] if cs_row and cs_row[0] is not None else 0)),
-                            "inactive": int((cs_row[1] if cs_row and cs_row[1] is not None else 0)),
+                            "active": int((cs_row["active_total"] if cs_row and cs_row["active_total"] is not None else 0)),
+                            "inactive": int((cs_row["inactive_total"] if cs_row and cs_row["inactive_total"] is not None else 0)),
                         }
                     else:
                         cluster_status_split = {"active": 0, "inactive": 0}
                 else:
-                    cluster_status_split = await _get_user_status_split_by_role(db, "cluster", user_id)
-                    cursor = await db.execute(
-                        "SELECT id FROM users WHERE role = 'cluster' AND parent_id = ?",
-                        (int(user_id),)
+                    cluster_status_split = await _get_user_status_split_by_role(session, "cluster", user_id)
+                    result = await session.execute(
+                        text("SELECT id FROM users WHERE role = 'cluster' AND parent_id = :uid"),
+                        {"uid": int(user_id)}
                     )
-                    cluster_rows = await cursor.fetchall()
-                    cluster_ids = [int(row[0]) for row in cluster_rows]
+                    cluster_ids = [int(row[0]) for row in result.all()]
 
                 if cluster_ids:
-                    placeholders = ",".join("?" * len(cluster_ids))
-                    cursor = await db.execute(
-                        f"""
-                        SELECT
-                            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_total,
-                            SUM(CASE WHEN status != 'active' THEN 1 ELSE 0 END) AS inactive_total
-                        FROM users
-                        WHERE role = 'operator' AND parent_id IN ({placeholders})
-                        """,
-                        tuple(cluster_ids)
+                    op_params = {f"cid{i}": cid for i, cid in enumerate(cluster_ids)}
+                    op_placeholders = ", ".join(f":cid{i}" for i in range(len(cluster_ids)))
+                    result = await session.execute(
+                        text(f"""
+                            SELECT
+                                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_total,
+                                SUM(CASE WHEN status != 'active' THEN 1 ELSE 0 END) AS inactive_total
+                            FROM users
+                            WHERE role = 'operator' AND parent_id IN ({op_placeholders})
+                        """),
+                        op_params
                     )
-                    op_row = await cursor.fetchone()
+                    op_row = result.mappings().first()
                     operator_status_split = {
-                        "active": int((op_row[0] if op_row and op_row[0] is not None else 0)),
-                        "inactive": int((op_row[1] if op_row and op_row[1] is not None else 0)),
+                        "active": int((op_row["active_total"] if op_row and op_row["active_total"] is not None else 0)),
+                        "inactive": int((op_row["inactive_total"] if op_row and op_row["inactive_total"] is not None else 0)),
                     }
                 else:
                     operator_status_split = {"active": 0, "inactive": 0}
@@ -134,7 +139,7 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
                 kpis["my_total_operators"] = int(operator_status_split["active"] + operator_status_split["inactive"])
 
             elif role == "cluster":
-                operator_status_split = await _get_user_status_split_by_role(db, "operator", user_id)
+                operator_status_split = await _get_user_status_split_by_role(session, "operator", user_id)
                 charts["operator_account_active_split"] = operator_status_split
                 kpis["my_total_operators"] = int(operator_status_split["active"] + operator_status_split["inactive"])
 
@@ -164,48 +169,45 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
     defect_stats = await defect_service.get_defect_stats(start_date, end_date)
     return_stats = await return_service.get_return_stats(start_date, end_date)
     dist_stats = await distribution_service.get_distribution_stats(start_date, end_date)
-    approval_stats = await approval_service.get_approval_stats()
+    approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
     alerts = await get_system_alerts(user)
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         # Defect month/year totals (respect range if provided)
-        dc_m, dp_m = _build_date_filter("1=1", (), effective_start, end_date)
-        cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dc_m}", dp_m)
-        defects_this_month = (await cursor.fetchone())[0]
+        dm_params = {}
+        dm_cond = _build_named_date_filter(dm_params, effective_start, end_date)
+        defects_this_month = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {dm_cond}"), dm_params)).scalar() or 0
 
-        dc_y, dp_y = _build_date_filter("1=1", (), effective_year_start, end_date)
-        cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dc_y}", dp_y)
-        defects_this_year = (await cursor.fetchone())[0]
+        dy_params = {}
+        dy_cond = _build_named_date_filter(dy_params, effective_year_start, end_date)
+        defects_this_year = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {dy_cond}"), dy_params)).scalar() or 0
 
         # Replacement metrics (current state - no date filter)
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL"
-        )
-        replacements_total = (await cursor.fetchone())[0]
+        replacements_total = (await session.execute(
+            text("SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL")
+        )).scalar() or 0
 
-        cursor = await db.execute(
-            """SELECT COUNT(*) FROM defects
+        replacements_confirmed = (await session.execute(
+            text("""SELECT COUNT(*) FROM defects
                WHERE replacement_device_id IS NOT NULL
-               AND replacement_confirmed_at IS NOT NULL"""
-        )
-        replacements_confirmed = (await cursor.fetchone())[0]
+               AND replacement_confirmed_at IS NOT NULL""")
+        )).scalar() or 0
 
-        cursor = await db.execute(
-            """SELECT COUNT(*) FROM defects
+        replacements_pending = (await session.execute(
+            text("""SELECT COUNT(*) FROM defects
                WHERE replacement_device_id IS NOT NULL
-               AND replacement_confirmed_at IS NULL"""
-        )
-        replacements_pending = (await cursor.fetchone())[0]
+               AND replacement_confirmed_at IS NULL""")
+        )).scalar() or 0
 
         # Role totals (current state - no date filter)
-        cursor = await db.execute(
-            "SELECT role, COUNT(*) AS total FROM users GROUP BY role"
+        result = await session.execute(
+            text("SELECT role, COUNT(*) AS total FROM users GROUP BY role")
         )
-        role_rows = await cursor.fetchall()
+        role_rows = result.all()
         role_counts = {str(r[0]): int(r[1]) for r in role_rows}
 
-        cursor = await db.execute(
-            """
+        result = await session.execute(
+            text("""
             SELECT
                 role,
                 SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_total,
@@ -213,9 +215,9 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
             FROM users
             WHERE role IN ('sub_distributor', 'cluster', 'operator')
             GROUP BY role
-            """
+            """)
         )
-        role_status_rows = await cursor.fetchall()
+        role_status_rows = result.all()
         role_status_splits = {
             str(row[0]): {
                 "active": int(row[1] or 0),
@@ -225,23 +227,23 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
         }
 
         # Device status distribution (current state - no date filter)
-        cursor = await db.execute(
-            "SELECT status, COUNT(*) AS total FROM devices GROUP BY status"
+        result = await session.execute(
+            text("SELECT status, COUNT(*) AS total FROM devices GROUP BY status")
         )
-        device_rows = await cursor.fetchall()
+        device_rows = result.all()
         device_status_counts = {str(r[0]): int(r[1]) for r in device_rows}
 
-        cursor = await db.execute(
-            """
+        result = await session.execute(
+            text("""
             SELECT u.role, d.status, COUNT(*) AS total
             FROM devices d
             INNER JOIN users u
                 ON d.current_holder_id = CAST(u.id AS BINARY)
             WHERE u.role IN ('sub_distributor', 'cluster', 'operator')
             GROUP BY u.role, d.status
-            """
+            """)
         )
-        holder_rows = await cursor.fetchall()
+        holder_rows = result.all()
         holder_role_status_counts = {
             "sub_distributor": {},
             "cluster": {},
@@ -261,29 +263,31 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
             trend_start = _shift_months(month_start, -11)
             trend_end = _shift_months(month_start, 1)
 
-            cursor = await db.execute(
-                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
-                (trend_start.isoformat(), trend_end.isoformat())
-            )
-            reported_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+            t_params = {"t_start": trend_start.isoformat(), "t_end": trend_end.isoformat()}
 
-            cursor = await db.execute(
-                "SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE status = 'resolved' AND resolved_at >= ? AND resolved_at < ? GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m",
-                (trend_start.isoformat(), trend_end.isoformat())
+            result = await session.execute(
+                text("SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE created_at >= :t_start AND created_at < :t_end GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m"),
+                t_params
             )
-            resolved_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+            reported_by_month = {str(row["m"]): int(row["total"]) for row in result.mappings().all()}
 
-            cursor = await db.execute(
-                "SELECT SUBSTRING(replacement_requested_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE replacement_device_id IS NOT NULL AND replacement_requested_at >= ? AND replacement_requested_at < ? GROUP BY SUBSTRING(replacement_requested_at, 1, 7) ORDER BY m",
-                (trend_start.isoformat(), trend_end.isoformat())
+            result = await session.execute(
+                text("SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE status = 'resolved' AND resolved_at >= :t_start AND resolved_at < :t_end GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m"),
+                t_params
             )
-            replaced_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+            resolved_by_month = {str(row["m"]): int(row["total"]) for row in result.mappings().all()}
 
-            cursor = await db.execute(
-                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total, SUM(CASE WHEN status IN ('approved', 'delivered') THEN 1 ELSE 0 END) AS delivered FROM distributions WHERE created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
-                (trend_start.isoformat(), trend_end.isoformat())
+            result = await session.execute(
+                text("SELECT SUBSTRING(replacement_requested_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE replacement_device_id IS NOT NULL AND replacement_requested_at >= :t_start AND replacement_requested_at < :t_end GROUP BY SUBSTRING(replacement_requested_at, 1, 7) ORDER BY m"),
+                t_params
             )
-            dist_by_month = {str(row["m"]): {"total": int(row["total"]), "delivered": int(row["delivered"])} for row in await cursor.fetchall()}
+            replaced_by_month = {str(row["m"]): int(row["total"]) for row in result.mappings().all()}
+
+            result = await session.execute(
+                text("SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total, SUM(CASE WHEN status IN ('approved', 'delivered') THEN 1 ELSE 0 END) AS delivered FROM distributions WHERE created_at >= :t_start AND created_at < :t_end GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m"),
+                t_params
+            )
+            dist_by_month = {str(row["m"]): {"total": int(row["total"]), "delivered": int(row["delivered"])} for row in result.mappings().all()}
 
             for i in range(11, -1, -1):
                 start = _shift_months(month_start, -i)
@@ -303,31 +307,29 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
 
         # If date range provided, add a single aggregated entry
         if start_date or end_date:
-            dc, dp = _build_date_filter("1=1", (), start_date, end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dc}", dp)
-            reported_total = (await cursor.fetchone())[0]
+            df_params = {}
+            df_cond = _build_named_date_filter(df_params, start_date, end_date)
+            reported_total = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {df_cond}"), df_params)).scalar() or 0
 
-            resolved_conds = ["status = 'resolved'"]
-            resolved_params = []
+            rs_params = {}
+            rs_conds = ["status = 'resolved'"]
             if start_date:
-                resolved_conds.append("resolved_at >= ?")
-                resolved_params.append(start_date)
+                rs_conds.append("resolved_at >= :rs_start")
+                rs_params["rs_start"] = start_date
             if end_date:
-                resolved_conds.append("resolved_at <= ?")
-                resolved_params.append(end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {' AND '.join(resolved_conds)}", tuple(resolved_params))
-            resolved_total = (await cursor.fetchone())[0]
+                rs_conds.append("resolved_at <= :rs_end")
+                rs_params["rs_end"] = end_date
+            resolved_total = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {' AND '.join(rs_conds)}"), rs_params)).scalar() or 0
 
-            replaced_conds = ["replacement_device_id IS NOT NULL"]
-            replaced_params = []
+            rp_params = {}
+            rp_conds = ["replacement_device_id IS NOT NULL"]
             if start_date:
-                replaced_conds.append("replacement_requested_at >= ?")
-                replaced_params.append(start_date)
+                rp_conds.append("replacement_requested_at >= :rp_start")
+                rp_params["rp_start"] = start_date
             if end_date:
-                replaced_conds.append("replacement_requested_at <= ?")
-                replaced_params.append(end_date)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {' AND '.join(replaced_conds)}", tuple(replaced_params))
-            replaced_total = (await cursor.fetchone())[0]
+                rp_conds.append("replacement_requested_at <= :rp_end")
+                rp_params["rp_end"] = end_date
+            replaced_total = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {' AND '.join(rp_conds)}"), rp_params)).scalar() or 0
 
             defect_trend.append({
                 "month": "Filtered",
@@ -336,17 +338,17 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
                 "replaced": replaced_total,
             })
 
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {dc}", dp)
-            total_dist = (await cursor.fetchone())[0]
+            total_dist = (await session.execute(text(f"SELECT COUNT(*) FROM distributions WHERE {df_cond}"), df_params)).scalar() or 0
 
-            dist_delivered_conds = ["status IN ('approved', 'delivered')"]
+            dd_params = {}
+            dd_conds = ["status IN ('approved', 'delivered')"]
             if start_date:
-                dist_delivered_conds.append("created_at >= ?")
+                dd_conds.append("created_at >= :dd_start")
+                dd_params["dd_start"] = start_date
             if end_date:
-                dist_delivered_conds.append("created_at <= ?")
-            dist_params = tuple(p for p in ([start_date] if start_date else []) + ([end_date] if end_date else []) if p)
-            cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {' AND '.join(dist_delivered_conds)}", dist_params)
-            delivered_total = (await cursor.fetchone())[0]
+                dd_conds.append("created_at <= :dd_end")
+                dd_params["dd_end"] = end_date
+            delivered_total = (await session.execute(text(f"SELECT COUNT(*) FROM distributions WHERE {' AND '.join(dd_conds)}"), dd_params)).scalar() or 0
 
             distribution_trend.append({
                 "month": "Filtered",
@@ -359,37 +361,35 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
         if not start_date:
             reliability_start = (now - timedelta(days=60)).isoformat()
 
-        rc, rp = _build_date_filter("1=1", (), reliability_start, end_date)
-        cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {rc}", rp)
-        defects_last_60_days = int((await cursor.fetchone())[0])
+        rl_params = {}
+        rl_cond = _build_named_date_filter(rl_params, reliability_start, end_date)
+        defects_last_60_days = int((await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {rl_cond}"), rl_params)).scalar() or 0)
 
         # Build resolved_at-based date filter for repair rate queries
-        r_conds, r_params = ["1=1"], []
+        rr_params = {}
+        rr_conds = ["1=1"]
         if start_date:
-            r_conds.append("resolved_at >= ?")
-            r_params.append(start_date)
+            rr_conds.append("resolved_at >= :rr_start")
+            rr_params["rr_start"] = start_date
         if end_date:
-            r_conds.append("resolved_at <= ?")
-            r_params.append(end_date)
-        r_cond = " AND ".join(r_conds)
-        r_params = tuple(r_params)
+            rr_conds.append("resolved_at <= :rr_end")
+            rr_params["rr_end"] = end_date
+        rr_cond = " AND ".join(rr_conds)
 
-        cursor = await db.execute(
-            f"""SELECT COUNT(*) FROM defects
+        repaired_within_sla_devices = int((await session.execute(
+            text(f"""SELECT COUNT(*) FROM defects
                WHERE resolved_at IS NOT NULL
                AND TIMESTAMPDIFF(
                    DAY,
                    STR_TO_DATE(SUBSTRING(REPLACE(created_at, 'T', ' '), 1, 19), '%%Y-%%m-%%d %%H:%%i:%%s'),
                    STR_TO_DATE(SUBSTRING(REPLACE(resolved_at, 'T', ' '), 1, 19), '%%Y-%%m-%%d %%H:%%i:%%s')
                ) <= 60
-               AND {r_cond}""", r_params
-        )
-        repaired_within_sla_devices = int((await cursor.fetchone())[0])
+               AND {rr_cond}"""), rr_params
+        )).scalar() or 0)
 
-        cursor = await db.execute(
-            f"SELECT COUNT(*) FROM defects WHERE resolved_at IS NOT NULL AND {r_cond}", r_params
-        )
-        total_resolved_defects = int((await cursor.fetchone())[0])
+        total_resolved_defects = int((await session.execute(
+            text(f"SELECT COUNT(*) FROM defects WHERE resolved_at IS NOT NULL AND {rr_cond}"), rr_params
+        )).scalar() or 0)
 
         total_devices_for_reliability = int(device_stats.get("total", 0))
         defect_incidence_percentage = (
@@ -516,57 +516,59 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
 async def get_distribution_device_analytics(start_date: Optional[str] = None,
                                             end_date: Optional[str] = None) -> Dict[str, Any]:
     """Get distribution device analytics: sent, remaining, by type and manufacturer."""
-    async with get_db() as db:
-        date_cond, date_params = _build_date_filter("status IN ('distributed', 'in_use')", (), start_date, end_date)
-        cursor = await db.execute(
-            f"""SELECT
+    async with async_session_factory() as session:
+        base_cond = "status IN ('distributed', 'in_use')"
+        dd_params = {}
+        date_filter = _build_named_date_filter(dd_params, start_date, end_date)
+        date_cond = f"{base_cond} AND {date_filter}" if date_filter != "1=1" else base_cond
+
+        result = await session.execute(
+            text(f"""SELECT
                    COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
                    COUNT(*) AS total
                FROM devices
                WHERE {date_cond}
                GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
-               ORDER BY total DESC""",
-            date_params
+               ORDER BY total DESC"""),
+            dd_params
         )
-        sent_by_type_rows = await cursor.fetchall()
+        sent_by_type_rows = result.mappings().all()
 
-        cursor = await db.execute(
-            f"SELECT COUNT(*) FROM devices WHERE {date_cond}", date_params
-        )
-        total_sent = (await cursor.fetchone())[0]
+        total_sent = (await session.execute(
+            text(f"SELECT COUNT(*) FROM devices WHERE {date_cond}"), dd_params
+        )).scalar() or 0
 
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM devices WHERE status = 'available'"
-        )
-        remaining_available = (await cursor.fetchone())[0]
+        remaining_available = (await session.execute(
+            text("SELECT COUNT(*) FROM devices WHERE status = 'available'")
+        )).scalar() or 0
 
-        cursor = await db.execute(
-            """SELECT
+        result = await session.execute(
+            text("""SELECT
                    COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
                    COUNT(*) AS total
                FROM devices
                WHERE status = 'available'
                GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
-               ORDER BY total DESC"""
+               ORDER BY total DESC""")
         )
-        remaining_by_type_rows = await cursor.fetchall()
+        remaining_by_type_rows = result.mappings().all()
 
-        cursor = await db.execute(
-            f"""SELECT
+        result = await session.execute(
+            text(f"""SELECT
                    COALESCE(NULLIF(TRIM(manufacturer), ''), 'Unknown') AS manufacturer,
                    COUNT(*) AS total
                FROM devices
                WHERE {date_cond}
                GROUP BY COALESCE(NULLIF(TRIM(manufacturer), ''), 'Unknown')
-               ORDER BY total DESC""",
-            date_params
+               ORDER BY total DESC"""),
+            dd_params
         )
-        by_manufacturer_rows = await cursor.fetchall()
+        by_manufacturer_rows = result.mappings().all()
 
         per_holder_cond = date_cond.replace("status IN ('distributed', 'in_use')", "d.status IN ('distributed', 'in_use')")
         per_holder_cond = per_holder_cond.replace("created_at", "d.created_at")
-        cursor = await db.execute(
-            f"""SELECT
+        result = await session.execute(
+            text(f"""SELECT
                    d.current_holder_id AS holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown') AS holder_name,
                    COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown') AS device_type,
@@ -579,13 +581,13 @@ async def get_distribution_device_analytics(start_date: Optional[str] = None,
                    d.current_holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown'),
                    COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown')
-               ORDER BY holder_name, device_type""",
-            date_params
+               ORDER BY holder_name, device_type"""),
+            dd_params
         )
-        per_holder_rows = await cursor.fetchall()
+        per_holder_rows = result.mappings().all()
 
-        cursor = await db.execute(
-            """SELECT
+        result = await session.execute(
+            text("""SELECT
                    d.current_holder_id AS holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown') AS holder_name,
                    COUNT(*) AS total
@@ -596,9 +598,9 @@ async def get_distribution_device_analytics(start_date: Optional[str] = None,
                GROUP BY
                    d.current_holder_id,
                    COALESCE(NULLIF(TRIM(d.current_holder_name), ''), 'Unknown')
-               ORDER BY total DESC"""
+               ORDER BY total DESC""")
         )
-        per_holder_available_rows = await cursor.fetchall()
+        per_holder_available_rows = result.mappings().all()
 
     remaining_by_type: Dict[str, int] = {
         row["device_type"]: int(row["total"]) for row in remaining_by_type_rows

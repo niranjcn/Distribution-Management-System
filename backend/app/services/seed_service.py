@@ -4,8 +4,9 @@ import secrets
 import string
 
 from app.config import settings
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
 from app.utils.security import get_password_hash
+from sqlalchemy import text
 
 
 def generate_secure_password(length: int = 16) -> str:
@@ -33,27 +34,27 @@ def generate_secure_password(length: int = 16) -> str:
 
 async def seed_initial_data():
     """Seed initial super admin account"""
-    async with get_db() as db:
+    async with async_session_factory() as session:
         # Check if a super admin role or reserved admin email already exists.
-        cursor = await db.execute(
-            "SELECT id, email, role FROM users WHERE role IN ('super_admin', 'super_admin') OR email = ? LIMIT 1",
-            ("admin@dms.com",),
+        result = await session.execute(
+            text("SELECT id, email, role FROM users WHERE role IN ('super_admin', 'super_admin') OR email = :email LIMIT 1"),
+            {"email": "admin@dms.com"},
         )
-        existing_admin = await cursor.fetchone()
+        existing_admin = result.mappings().first()
         if existing_admin:
             # Normalize legacy elevated role values from previous deployments.
             if (
-                existing_admin.get("email") == "admin@dms.com"
-                and existing_admin.get("role") != "super_admin"
+                existing_admin["email"] == "admin@dms.com"
+                and existing_admin["role"] != "super_admin"
             ):
-                now = datetime.now().replace(tzinfo=None).isoformat()
-                await db.execute(
-                    """UPDATE users
-                    SET role = ?, force_email_change = 1, force_password_change = 1, updated_at = ?
-                    WHERE id = ?""",
-                    ("super_admin", now, existing_admin.get("id")),
+                now = datetime.now().replace(tzinfo=None)
+                await session.execute(
+                    text("""UPDATE users
+                    SET role = :role, force_email_change = 1, force_password_change = 1, phone = :phone, updated_at = :now
+                    WHERE id = :id"""),
+                    {"role": "super_admin", "phone": "1111111111", "now": now, "id": existing_admin["id"]},
                 )
-                await db.commit()
+                await session.commit()
                 print("Existing seeded account normalized to super_admin")
             else:
                 print("Super admin seed skipped (account already exists)")
@@ -62,41 +63,35 @@ async def seed_initial_data():
         print("Creating default super admin account...")
         admin_password = os.getenv("ADMIN_INITIAL_PASSWORD") or "Admin@123"
         
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
         
-        insert_cursor = await db.execute(
-            """INSERT OR IGNORE INTO users (email, password_hash, name, role, force_email_change, force_password_change, phone, department, location,
-                status, permissions, theme, compact_mode, email_notifications,
-                push_notifications, is_verified, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "admin@dms.com",
-                get_password_hash(admin_password),
-                "System Super Admin",
-                "super_admin",
-                1,
-                1,
-                "",
-                "IT",
-                "Head Office",
-                "active",
-                "{}",
-                "light",
-                0,
-                1,
-                1,
-                1,
-                now,
-                now
-            )
+        result = await session.execute(
+            text("""INSERT INTO users (email, password_hash, name, role, status, force_email_change, force_password_change, phone,
+                location, is_verified, created_at, updated_at)
+            VALUES (:email, :password_hash, :name, :role, :status, :force_email_change, :force_password_change, :phone,
+                :location, :is_verified, :created_at, :updated_at)"""),
+            {
+                "email": "admin@dms.com",
+                "password_hash": get_password_hash(admin_password),
+                "name": "System Super Admin",
+                "role": "super_admin",
+                "status": "active",
+                "force_email_change": 1,
+                "force_password_change": 1,
+                "phone": "1111111111",
+                "location": "Head Office",
+                "is_verified": 1,
+                "created_at": now,
+                "updated_at": now
+            }
         )
 
-        if insert_cursor.rowcount == 0:
+        if result.rowcount == 0:
             print("Super admin seed skipped (record already present)")
-            await db.rollback()
+            await session.rollback()
             return
 
-        await db.commit()
+        await session.commit()
         
         print("Default super admin account created")
         if settings.ENVIRONMENT == "development":
@@ -115,8 +110,8 @@ async def seed_initial_data():
 
 async def reset_and_seed():
     """Drop all tables and re-seed default super admin account"""
-    async with get_db() as db:
-        print("🗑️  Clearing all database tables...")
+    async with async_session_factory() as session:
+        print("Clearing all database tables...")
         
         tables = [
             "inventory_stock_movements",
@@ -138,11 +133,11 @@ async def reset_and_seed():
         ]
         
         for table in tables:
-            await db.execute(f"DELETE FROM {table}")
+            await session.execute(text(f"DELETE FROM {table}"))
             print(f"   Cleared: {table}")
         
-        await db.commit()
-        print("✅ All tables cleared")
+        await session.commit()
+        print("All tables cleared")
     
     # Re-seed super admin
     await seed_initial_data()

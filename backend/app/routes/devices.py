@@ -10,7 +10,8 @@ from app.services import device_service, notification_service, defect_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager,require_management
 from app.core.activity_logger import build_field_change_summary, log_business_activity
 from app.utils.roles import normalize_role
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 
 router = APIRouter()
 
@@ -54,18 +55,19 @@ def _build_bulk_device_id(device_type: str) -> str:
     return f"{prefix}-{datetime.now().year}-{uuid.uuid4().hex[:10].upper()}"
 
 
-async def _fetch_existing_values(db, column: str, values: List[str]) -> set:
+async def _fetch_existing_values(session, column: str, values: List[str]) -> set:
     if not values:
         return set()
 
     existing = set()
     for batch in _chunks(values, 500):
-        placeholders = ",".join(["?"] * len(batch))
-        cursor = await db.execute(
-            f"SELECT {column} FROM devices WHERE {column} IN ({placeholders})",
-            batch,
+        placeholders = ",".join([f":val{i}" for i in range(len(batch))])
+        params = {f"val{i}": v for i, v in enumerate(batch)}
+        result = await session.execute(
+            text(f"SELECT {column} FROM devices WHERE {column} IN ({placeholders})"),
+            params,
         )
-        rows = await cursor.fetchall()
+        rows = result.mappings().all()
         for row in rows:
             value = row.get(column)
             if value:
@@ -116,12 +118,12 @@ async def _get_cluster_ids_for_sub_distributor(sub_distributor_id: str) -> List[
     if not normalized_id or not normalized_id.isdigit():
         return []
 
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE parent_id = ? AND role = 'cluster'",
-            (int(normalized_id),),
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text("SELECT id FROM users WHERE parent_id = :parent_id AND role = 'cluster'"),
+            {"parent_id": int(normalized_id)},
         )
-        rows = await cursor.fetchall()
+        rows = result.mappings().all()
         return [str(row.get("id")) for row in rows if row.get("id") is not None]
 
 
@@ -205,12 +207,17 @@ async def get_devices(
         )
 
 
-@router.get("/for-replacement", summary="Get all devices available as replacements (status=available or returned).")
+@router.get("/for-replacement", summary="Get devices available as replacements with pagination and search.")
 async def get_devices_for_replacement(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1),
     exclude_device_id: Optional[str] = None,
+    device_type: Optional[str] = None,
+    search: Optional[str] = None,
+    search_by: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
-    """Get all devices available as replacements (status=available or returned).
+    """Get devices available as replacements (status=available or returned) with pagination and search.
     Management only - returns full stock regardless of holder. Used in the Replace Device modal."""
     if current_user["role"] not in ["super_admin", "manager", "pdic_staff"]:
         raise HTTPException(
@@ -218,13 +225,19 @@ async def get_devices_for_replacement(
             detail="Only management can access replacement device pool"
         )
     try:
-        devices = await device_service.get_devices_for_replacement(
-            exclude_device_id=exclude_device_id
+        result = await device_service.get_devices_for_replacement(
+            exclude_device_id=exclude_device_id,
+            page=page,
+            page_size=page_size,
+            device_type=device_type,
+            search=search,
+            search_by=search_by,
         )
         return {
             "success": True,
             "message": "Replacement-eligible devices retrieved successfully",
-            "data": devices
+            "data": result["data"],
+            "pagination": result["pagination"]
         }
     except HTTPException:
         raise
@@ -567,32 +580,31 @@ async def request_device_edit(
         if not proposed_changes:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid device edit fields provided")
 
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
         request_id = f"CR-{uuid.uuid4().hex[:8].upper()}"
 
-        from app.database import get_db
-        async with get_db() as db:
-            await db.execute(
-                """INSERT INTO change_requests
+        async with async_session_factory() as session:
+            await session.execute(
+                text("""INSERT INTO change_requests
                    (request_id, requested_by, requested_by_name, requested_by_role,
                     request_type, device_id, reason, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'device_edit_change', ?, ?, 'pending', ?, ?)""",
-                (
-                    request_id,
-                    int(current_user["id"]),
-                    current_user.get("name") or current_user.get("email") or "PDIC Staff",
-                    current_user.get("role"),
-                    str(device_id),
-                    json.dumps({"changes": proposed_changes}),
-                    now,
-                    now,
-                )
+                   VALUES (:request_id, :requested_by, :requested_by_name, :requested_by_role, 'device_edit_change', :device_id, :reason, 'pending', :created_at, :updated_at)"""),
+                {
+                    "request_id": request_id,
+                    "requested_by": int(current_user["id"]),
+                    "requested_by_name": current_user.get("name") or current_user.get("email") or "PDIC Staff",
+                    "requested_by_role": current_user.get("role"),
+                    "device_id": str(device_id),
+                    "reason": json.dumps({"changes": proposed_changes}),
+                    "created_at": now,
+                    "updated_at": now,
+                }
             )
 
-            cursor = await db.execute("SELECT id FROM users WHERE role IN ('super_admin', 'manager') AND status = 'active'")
-            reviewer_rows = await cursor.fetchall()
+            result = await session.execute(text("SELECT id FROM users WHERE role IN ('super_admin', 'manager') AND status = 'active'"))
+            reviewer_rows = result.mappings().all()
             reviewer_ids = [str(row[0]) for row in reviewer_rows]
-            await db.commit()
+            await session.commit()
 
         proposer_name = current_user.get("name") or current_user.get("email", "pdic_staff")
         changes_summary = ", ".join(
@@ -977,14 +989,14 @@ async def bulk_upload_devices(
                 }
             }
 
-        async with get_db() as db:
+        async with async_session_factory() as session:
             serials = [item["serial_number"] for item in prepared_rows if item["serial_number"]]
             macs = [item["mac_address"] for item in prepared_rows if item["mac_address"]]
             nuids = [item["nuid"] for item in prepared_rows if item["nuid"]]
 
-            existing_serials = await _fetch_existing_values(db, "serial_number", serials)
-            existing_macs = await _fetch_existing_values(db, "mac_address", macs)
-            existing_nuids = await _fetch_existing_values(db, "nuid", nuids)
+            existing_serials = await _fetch_existing_values(session, "serial_number", serials)
+            existing_macs = await _fetch_existing_values(session, "mac_address", macs)
+            existing_nuids = await _fetch_existing_values(session, "nuid", nuids)
 
             insertable_rows = []
             for item in prepared_rows:
@@ -1020,7 +1032,7 @@ async def bulk_upload_devices(
                     }
                 }
 
-            now = datetime.now().replace(tzinfo=None).isoformat()
+            now = datetime.now().replace(tzinfo=None)
             created_by_name = current_user.get("name") or current_user.get("email") or "PDIC Staff"
             insert_sql = """INSERT INTO devices (
                 device_id, device_type, model, serial_number, mac_address,
@@ -1028,12 +1040,12 @@ async def bulk_upload_devices(
                 current_holder_id, current_holder_name, current_holder_type,
                 registered_by_name, purchase_date, warranty_expiry, metadata,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            ) VALUES (:device_id, :device_type, :model, :serial_number, :mac_address, :manufacturer, :band_type, :nuid, :status, :current_location, :current_holder_id, :current_holder_name, :current_holder_type, :registered_by_name, :purchase_date, :warranty_expiry, :metadata, :created_at, :updated_at)"""
 
             history_sql = """INSERT INTO device_history (
                 device_id, action, from_user_id, from_user_name, to_user_id, to_user_name,
                 status_before, status_after, location, notes, performed_by, performed_by_name, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            ) VALUES (:device_id, :action, :from_user_id, :from_user_name, :to_user_id, :to_user_name, :status_before, :status_after, :location, :notes, :performed_by, :performed_by_name, :timestamp)"""
 
             should_commit = True
             for batch in _chunks(insertable_rows, 500):
@@ -1042,37 +1054,38 @@ async def bulk_upload_devices(
                 for item in batch:
                     generated_id = _build_bulk_device_id(item["device_type"])
                     batch_device_ids.append(generated_id)
-                    batch_payload.append((
-                        generated_id,
-                        item["device_type"],
-                        item["model"],
-                        item["serial_number"],
-                        item["mac_address"],
-                        item["manufacturer"],
-                        item["band_type"],
-                        item["nuid"],
-                        "available",
-                        "PDIC",
-                        None,
-                        "PDIC (Distribution)",
-                        "noc",
-                        created_by_name,
-                        None,
-                        None,
-                        json.dumps(item["metadata"]) if item["metadata"] else None,
-                        now,
-                        now,
-                    ))
+                    batch_payload.append({
+                        "device_id": generated_id,
+                        "device_type": item["device_type"],
+                        "model": item["model"],
+                        "serial_number": item["serial_number"],
+                        "mac_address": item["mac_address"],
+                        "manufacturer": item["manufacturer"],
+                        "band_type": item["band_type"],
+                        "nuid": item["nuid"],
+                        "status": "available",
+                        "current_location": "PDIC",
+                        "current_holder_id": None,
+                        "current_holder_name": "PDIC (Distribution)",
+                        "current_holder_type": "noc",
+                        "registered_by_name": created_by_name,
+                        "purchase_date": None,
+                        "warranty_expiry": None,
+                        "metadata": json.dumps(item["metadata"]) if item["metadata"] else None,
+                        "created_at": now,
+                        "updated_at": now,
+                    })
 
                 try:
-                    await db.executemany(insert_sql, batch_payload)
+                    await session.execute(text(insert_sql), batch_payload)
 
-                    placeholders = ",".join(["?"] * len(batch_device_ids))
-                    cursor = await db.execute(
-                        f"SELECT id, device_id FROM devices WHERE device_id IN ({placeholders})",
-                        batch_device_ids,
+                    placeholders = ",".join([f":id{i}" for i in range(len(batch_device_ids))])
+                    id_params = {f"id{i}": bid for i, bid in enumerate(batch_device_ids)}
+                    result = await session.execute(
+                        text(f"SELECT id, device_id FROM devices WHERE device_id IN ({placeholders})"),
+                        id_params,
                     )
-                    inserted_rows = await cursor.fetchall()
+                    inserted_rows = result.mappings().all()
                     id_map = {str(row.get("device_id")): str(row.get("id")) for row in inserted_rows}
 
                     history_payload = []
@@ -1080,24 +1093,24 @@ async def bulk_upload_devices(
                         numeric_id = id_map.get(generated_id)
                         if not numeric_id:
                             continue
-                        history_payload.append((
-                            numeric_id,
-                            "bulk_registered",
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                            "available",
-                            "PDIC",
-                            "Device registered in system",
-                            str(current_user["id"]),
-                            created_by_name,
-                            now,
-                        ))
+                        history_payload.append({
+                            "device_id": numeric_id,
+                            "action": "bulk_registered",
+                            "from_user_id": None,
+                            "from_user_name": None,
+                            "to_user_id": None,
+                            "to_user_name": None,
+                            "status_before": None,
+                            "status_after": "available",
+                            "location": "PDIC",
+                            "notes": "Device registered in system",
+                            "performed_by": str(current_user["id"]),
+                            "performed_by_name": created_by_name,
+                            "timestamp": now,
+                        })
 
                     if history_payload:
-                        await db.executemany(history_sql, history_payload)
+                        await session.execute(text(history_sql), history_payload)
                     created.extend(batch_device_ids)
                 except Exception as batch_error:
                     # Continue safely row-by-row in the same transaction so one bad row does not fail all rows.
@@ -1107,25 +1120,25 @@ async def bulk_upload_devices(
                         generated_id = batch_device_ids[idx]
                         row_idx = item["row"]
                         try:
-                            cursor = await db.execute(insert_sql, batch_payload[idx])
-                            new_numeric_id = str(cursor.lastrowid)
-                            await db.execute(
-                                history_sql,
-                                (
-                                    new_numeric_id,
-                                    "bulk_registered",
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    "available",
-                                    "PDIC",
-                                    "Device registered in system",
-                                    str(current_user["id"]),
-                                    created_by_name,
-                                    now,
-                                ),
+                            result = await session.execute(text(insert_sql), batch_payload[idx])
+                            new_numeric_id = str(result.inserted_primary_key[0])
+                            await session.execute(
+                                text(history_sql),
+                                {
+                                    "device_id": new_numeric_id,
+                                    "action": "bulk_registered",
+                                    "from_user_id": None,
+                                    "from_user_name": None,
+                                    "to_user_id": None,
+                                    "to_user_name": None,
+                                    "status_before": None,
+                                    "status_after": "available",
+                                    "location": "PDIC",
+                                    "notes": "Device registered in system",
+                                    "performed_by": str(current_user["id"]),
+                                    "performed_by_name": created_by_name,
+                                    "timestamp": now,
+                                },
                             )
                             created.append(generated_id)
                         except Exception as single_error:
@@ -1154,9 +1167,9 @@ async def bulk_upload_devices(
                 await asyncio.sleep(0)
 
             if should_commit:
-                await db.commit()
+                await session.commit()
             else:
-                await db.rollback()
+                await session.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."

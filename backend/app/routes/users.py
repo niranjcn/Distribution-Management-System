@@ -2,8 +2,9 @@ import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, File, UploadFile
 from typing import Optional
 
-from app.database import get_db
-from app.models.user import UserCreate, UserUpdate, StatusUpdateRequest, AdminCredentialUpdate
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
+from app.models.user import UserCreate, UserUpdate, AdminCredentialUpdate, StatusUpdateRequest
 from app.services import user_service, reassignment_request_service, notification_service, bulk_upload_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager_or_md
 from app.core.audit import audit_logger
@@ -36,11 +37,11 @@ ALLOWED_CREATE_BY_ROLE = {
 }
 
 
-async def _branch_contains_user(root_user_id: str, target_user_id: str, db=None) -> bool:
+async def _branch_contains_user(root_user_id: str, target_user_id: str, session=None) -> bool:
     if str(root_user_id) == str(target_user_id):
         return True
 
-    async def _search(conn):
+    async def _search(session):
         pending = [int(root_user_id)]
         visited = set()
         while pending:
@@ -48,8 +49,8 @@ async def _branch_contains_user(root_user_id: str, target_user_id: str, db=None)
             if parent_id in visited:
                 continue
             visited.add(parent_id)
-            cursor = await conn.execute("SELECT id FROM users WHERE parent_id = ?", (parent_id,))
-            children = await cursor.fetchall()
+            result = await session.execute(text("SELECT id FROM users WHERE parent_id = :parent_id"), {"parent_id": parent_id})
+            children = result.mappings().all()
             for child in children:
                 child_id = int(child["id"])
                 if str(child_id) == str(target_user_id):
@@ -57,21 +58,21 @@ async def _branch_contains_user(root_user_id: str, target_user_id: str, db=None)
                 pending.append(child_id)
         return False
 
-    if db is not None:
-        return await _search(db)
-    async with get_db() as conn:
-        return await _search(conn)
+    if session is not None:
+        return await _search(session)
+    async with async_session_factory() as session:
+        return await _search(session)
 
 
 async def _get_descendant_ids(root_user_id: str) -> set:
     """Get all descendant user IDs under root_user_id (inclusive)."""
-    async with get_db() as db:
+    async with async_session_factory() as session:
         pending = [int(root_user_id)]
         descendants = {str(root_user_id)}
         while pending:
             parent_id = pending.pop()
-            cursor = await db.execute("SELECT id FROM users WHERE parent_id = ?", (parent_id,))
-            for child in await cursor.fetchall():
+            result = await session.execute(text("SELECT id FROM users WHERE parent_id = :parent_id"), {"parent_id": parent_id})
+            for child in result.mappings().all():
                 child_id = str(child["id"])
                 if child_id not in descendants:
                     descendants.add(child_id)
@@ -141,7 +142,6 @@ async def get_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1),
     role: Optional[str] = None,
-    status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
     parent_id: Optional[str] = None,
@@ -157,8 +157,6 @@ async def get_users(
     if actor_role in {SUPER_ADMIN, MD_DIRECTOR, MANAGER}:
         parent_id_filter = parent_id
     elif actor_role == PDIC_STAFF:
-        # Staff needs role-filtered lookup for distribution recipient selectors.
-        # Keep legacy self-only response for generic, non-role-filtered listing.
         if normalized_role_filter in {SUB_DISTRIBUTOR, CLUSTER, OPERATOR}:
             parent_id_filter = parent_id
         else:
@@ -204,7 +202,6 @@ async def get_users(
                 parent_ids_in_filter = operator_parent_scope
                 parent_id_filter = None
             else:
-                # Read-only default: sub distribution managers see only clusters/operators in their sub-distribution branch.
                 roles_in_filter = [CLUSTER, OPERATOR]
                 parent_ids_in_filter = operator_parent_scope
                 parent_id_filter = None
@@ -231,7 +228,6 @@ async def get_users(
             page_size=page_size,
             role=normalized_role_filter,
             roles_in=roles_in_filter,
-            status=status_filter,
             search=search,
             search_by=search_by,
             parent_id=parent_id_filter,
@@ -283,14 +279,6 @@ async def get_user(user_id: str, current_user: dict = Depends(get_current_user))
 async def create_user(user_data: UserCreate, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
     target_role = normalize_role(user_data.role.value)
-
-    if target_role != SUB_DISTRIBUTOR:
-        user_data = user_data.model_copy(update={"digital_id": None, "broadband_id": None})
-
-    if target_role != CLUSTER:
-        user_data = user_data.model_copy(update={"cluster_id": None})
-    if target_role != OPERATOR:
-        user_data = user_data.model_copy(update={"operator_id": None})
 
     if actor_role not in ALLOWED_CREATE_BY_ROLE:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to create users")
@@ -397,9 +385,6 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
         if actor_role in {MD_DIRECTOR, PDIC_STAFF} and str(current_user.get("id")) != str(user_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-        if actor_role in {MD_DIRECTOR, PDIC_STAFF} and user_data.status is not None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot change account status")
-
         user = await user_service.update_user(user_id, user_data)
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         edited_fields = list(user_data.model_dump(exclude_unset=True).keys())
@@ -428,27 +413,55 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
+@router.patch("/{user_id}/status", summary="Update user status")
+async def update_user_status(user_id: str, body: StatusUpdateRequest, current_user: dict = Depends(get_current_user)):
+    actor_role = normalize_role(current_user.get("role"))
+    if actor_role != SUPER_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super admins can update user status")
+    try:
+        target = await user_service.get_user_by_id(user_id)
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        updated = await user_service.update_user(user_id, body)
+        if not updated:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/users/update-status",
+            description=(
+                f"{actor_name} updated status of "
+                f"{updated.get('name') or updated.get('email') or user_id} "
+                f"to {body.status.value}"
+            ),
+        )
+        return {"success": True, "message": "User status updated", "data": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
+
+
 async def _get_children_to_reassign(target_user: dict) -> list:
-    """Get direct children that would be orphaned by deleting this user.
-    Only returns immediate children — grandchildren (operators under clusters)
-    stay connected to their parent automatically and don't need reassignment."""
+    """Get direct children that would be orphaned by deleting this user."""
     target_role = normalize_role(target_user.get("role"))
     children = []
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         if target_role == SUB_DISTRIBUTOR:
-            cursor = await db.execute(
-                "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role IN (?, ?, ?)",
-                (int(target_user["id"]), SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR)
+            result = await session.execute(
+                text("SELECT id, name, email, role, parent_id FROM users WHERE parent_id = :pid AND role IN (:r1, :r2, :r3)"),
+                {"pid": int(target_user["id"]), "r1": SUB_DISTRIBUTION_MANAGER, "r2": CLUSTER, "r3": OPERATOR}
             )
-            for child in await cursor.fetchall():
+            for child in result.mappings().all():
                 children.append(dict(child))
         elif target_role == CLUSTER:
-            cursor = await db.execute(
-                "SELECT id, name, email, role, parent_id FROM users WHERE parent_id = ? AND role = ?",
-                (int(target_user["id"]), OPERATOR)
+            result = await session.execute(
+                text("SELECT id, name, email, role, parent_id FROM users WHERE parent_id = :pid AND role = :role"),
+                {"pid": int(target_user["id"]), "role": OPERATOR}
             )
-            for child in await cursor.fetchall():
+            for child in result.mappings().all():
                 children.append(dict(child))
 
     return children
@@ -518,8 +531,8 @@ async def reassign_user(
             user=current_user,
             path="/activity/users/reassign",
             description=(
-                f"{actor_name} reassigned {target_role} {target_user.get('name')} "
-                f"to {new_parent_role} {new_parent.get('name')}"
+                f"{actor_name} reassigned {target_role} {target_user.get('name') or target_user.get('email')} "
+                f"to {new_parent_role} {new_parent.get('name') or new_parent.get('email')}"
             ),
         )
 
@@ -554,12 +567,10 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
 
     target_role = normalize_role(target_user.get("role"))
 
-    # If deleting a sub_distributor or cluster, create reassignment request instead
     if target_role in {SUB_DISTRIBUTOR, CLUSTER}:
         children = await _get_children_to_reassign(target_user)
 
         if not children:
-            # No children orphaned, proceed with normal deletion
             try:
                 success = await user_service.delete_user(user_id)
                 if not success:
@@ -586,7 +597,6 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
                 logger.exception("Unhandled route exception")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
-        # Create reassignment request
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         req = await reassignment_request_service.create_reassignment_request(
             deleted_user=target_user,
@@ -597,16 +607,15 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
         await log_business_activity(
             user=current_user,
             path="/activity/users/delete",
-            description=f"{actor_name} initiated deletion of {target_role} {target_user.get('name')} — reassignment request {req.get('request_id')} created for {_count_total_children(children)} user(s)",
+            description=f"{actor_name} initiated deletion of {target_role} {target_user.get('name') or target_user.get('email')} — reassignment request {req.get('request_id')} created for {_count_total_children(children)} user(s)",
         )
 
-        # Notify all super admins
         super_admins = await user_service.get_users(role=SUPER_ADMIN, page_size=10000)
         await notification_service.bulk_create_notifications([
             {
                 "user_id": sa["id"],
                 "title": "Reassignment Request",
-                "message": f"A {target_role} ({target_user.get('name')}) was scheduled for deletion. {len(children)} user(s) need reassignment.",
+                "message": f"A {target_role} ({target_user.get('name') or target_user.get('email')}) was scheduled for deletion. {len(children)} user(s) need reassignment.",
                 "notification_type": "warning",
                 "category": "user",
                 "link": "/reassignment-requests",
@@ -621,7 +630,6 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
             "data": {"request": req, "children_count": len(children)},
         }
 
-    # For non-sub_distributor/cluster, proceed with normal deletion
     try:
         success = await user_service.delete_user(user_id)
         if not success:
@@ -651,63 +659,6 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
 
 
-@router.patch("/{user_id}/status", summary="Update user status")
-async def update_user_status(
-    request: Request,
-    user_id: str,
-    status_update: StatusUpdateRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    actor_role = normalize_role(current_user.get("role"))
-    if actor_role not in {SUPER_ADMIN, MANAGER}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-
-    status_value = status_update.status.value
-
-    target_user = await user_service.get_user_by_id(user_id)
-    if not target_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    if not await _can_access_user(current_user, target_user, write=True):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-
-    if actor_role in {MANAGER, SUB_DISTRIBUTION_MANAGER} and normalize_role(target_user.get("role")) == SUPER_ADMIN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot update super admin status")
-
-    try:
-        user = await user_service.update_user_status(user_id, status_value)
-        actor_name = current_user.get("name") or current_user.get("email") or "User"
-        change_summary = build_field_change_summary(
-            before=target_user or {},
-            after=user or {},
-            fields=["status"],
-            exclude_fields={"updated_at"},
-        )
-        await log_business_activity(
-            user=current_user,
-            path="/activity/users/status-update",
-            description=(
-                f"{actor_name} updated user status for "
-                f"{user.get('name') or user.get('email') or user_id}; "
-                f"changes: {change_summary}"
-            ),
-        )
-        audit_logger.info(
-            "USER_STATUS_UPDATE | actor_id=%s | actor_email=%s | target_user_id=%s | status=%s | ip=%s",
-            current_user.get("id"),
-            current_user.get("email"),
-            user_id,
-            status_value,
-            request.client.host if request.client else "unknown",
-        )
-        return {"success": True, "message": "User status updated successfully", "data": user}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Unhandled route exception")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
-
-
 @router.patch("/{user_id}/credentials", summary="Admin update credentials")
 async def admin_update_credentials(
     request: Request,
@@ -724,7 +675,6 @@ async def admin_update_credentials(
     is_self = actor_id == target_id
 
     if actor_role != SUPER_ADMIN:
-        # Non-super-admins can only update their own email, not password
         if not is_self:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         if data.password:
@@ -740,33 +690,38 @@ async def admin_update_credentials(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot update another super admin credentials")
 
     try:
-        async with get_db() as db:
+        async with async_session_factory() as session:
             update_fields = []
-            params = []
+            params = {}
 
             if data.email:
                 normalized_email = data.email.lower().strip()
-                cursor = await db.execute("SELECT id FROM users WHERE email = ? AND id != ?", (normalized_email, target_id))
-                if await cursor.fetchone():
+                result = await session.execute(text("SELECT id FROM users WHERE email = :email AND id != :id"), {"email": normalized_email, "id": target_id})
+                if result.mappings().first():
                     raise HTTPException(status_code=400, detail="Email already in use")
-                update_fields.append("email = ?")
-                params.append(normalized_email)
+                update_fields.append("email = :email")
+                params["email"] = normalized_email
 
             if data.password:
-                update_fields.append("password_hash = ?")
-                params.append(_hash(data.password))
+                update_fields.append("password_hash = :password_hash")
+                params["password_hash"] = _hash(data.password)
 
             if not update_fields:
                 raise HTTPException(status_code=400, detail="No data to update")
 
-            update_fields.append("updated_at = ?")
-            params.append(_dt.now().replace(tzinfo=None).isoformat())
-            params.append(int(user_id))
+            update_fields.append("updated_at = :updated_at")
+            params["updated_at"] = _dt.now().replace(tzinfo=None)
+            params["user_id"] = int(user_id)
 
-            cursor = await db.execute(f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?", params)
-            if cursor.rowcount == 0:
+            result = await session.execute(text(f"UPDATE users SET {', '.join(update_fields)} WHERE id = :user_id"), params)
+            if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="User not found")
-            await db.commit()
+            await session.commit()
+
+        # Recompute user_id_hash if email changed
+        if data.email:
+            from app.services.digital_id_service import recompute_hashes_for_user as _recompute_hashes
+            await _recompute_hashes(user_id, data.email.strip().lower(), target_user.get("phone"))
 
         updated = await user_service.get_user_by_id(user_id)
 
@@ -851,4 +806,3 @@ async def bulk_upload_users(
         raise HTTPException(status_code=400, detail="File is empty or has no data rows")
 
     return await bulk_upload_service.process_bulk_user_upload(rows, current_user)
-

@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
-from app.database import get_db, row_to_dict, rows_to_list
+from sqlalchemy import select, func, or_, and_, update, delete
+
+from app.database_sqlalchemy import async_session_factory
+from app.db_models.operator import Operator
+from app.db_models.device import Device
 from app.models.operator import OperatorCreate, OperatorUpdate, OperatorStatus
 from app.utils.helpers import get_pagination, generate_operator_id
 
@@ -14,76 +18,76 @@ async def get_operators(
     search: Optional[str] = None
 ) -> Dict[str, Any]:
     """Get all operators with pagination and filters"""
-    async with get_db() as db:
-        conditions = ["1=1"]
-        params = []
+    async with async_session_factory() as session:
+        conditions = []
 
         if assigned_to:
-            conditions.append("assigned_to = ?")
-            params.append(assigned_to)
+            conditions.append(Operator.assigned_to == assigned_to)
         if status:
-            conditions.append("status = ?")
-            params.append(status)
+            conditions.append(Operator.status == status)
         if search:
-            conditions.append("(name LIKE ? OR phone LIKE ? OR email LIKE ? OR area LIKE ?)")
             like = f"%{search}%"
-            params.extend([like, like, like, like])
+            conditions.append(
+                or_(
+                    Operator.name.like(like),
+                    Operator.phone.like(like),
+                    Operator.email.like(like),
+                    Operator.area.like(like),
+                )
+            )
 
-        where = " AND ".join(conditions)
+        where = and_(*conditions) if conditions else True
 
-        cursor = await db.execute(f"SELECT COUNT(*) FROM operators WHERE {where}", params)
-        total = (await cursor.fetchone())[0]
+        count_q = select(func.count()).select_from(Operator).where(where)
+        total = (await session.execute(count_q)).scalar()
 
         offset = (page - 1) * page_size
-        cursor = await db.execute(
-            f"SELECT * FROM operators WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [page_size, offset]
+        q = (
+            select(Operator)
+            .where(where)
+            .order_by(Operator.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
         )
-        rows = await cursor.fetchall()
+        rows = (await session.execute(q)).scalars().all()
 
         return {
-            "data": rows_to_list(rows),
-            "pagination": get_pagination(page, page_size, total)
+            "data": [r.to_dict() for r in rows],
+            "pagination": get_pagination(page, page_size, total),
         }
 
 
 async def get_operator_by_id(operator_id: str) -> Optional[Dict[str, Any]]:
     """Get operator by ID"""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM operators WHERE id = ?", (int(operator_id),))
-        row = await cursor.fetchone()
-        return row_to_dict(row) if row else None
+    async with async_session_factory() as session:
+        inst = await session.get(Operator, int(operator_id))
+        return inst.to_dict() if inst else None
 
 
 async def create_operator(operator_data: OperatorCreate, created_by: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new operator"""
-    async with get_db() as db:
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        cursor = await db.execute(
-            """INSERT INTO operators (operator_id, name, phone, email, address, area, city,
-            assigned_to, assigned_to_name, status, device_count, connection_type, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                generate_operator_id(),
-                operator_data.name,
-                operator_data.phone,
-                operator_data.email,
-                operator_data.address,
-                operator_data.area,
-                operator_data.city,
-                str(created_by["_id"]),
-                created_by["name"],
-                OperatorStatus.ACTIVE.value,
-                0,
-                operator_data.connection_type.value if operator_data.connection_type else None,
-                now, now
-            )
+    now = datetime.now().replace(tzinfo=None)
+    async with async_session_factory() as session:
+        op = Operator(
+            operator_id=generate_operator_id(),
+            name=operator_data.name,
+            phone=operator_data.phone,
+            email=operator_data.email,
+            address=operator_data.address,
+            area=operator_data.area,
+            city=operator_data.city,
+            assigned_to=str(created_by["_id"]),
+            assigned_to_name=created_by["name"],
+            status=OperatorStatus.ACTIVE.value,
+            device_count=0,
+            connection_type=operator_data.connection_type.value if operator_data.connection_type else None,
+            created_at=now,
+            updated_at=now,
         )
-        await db.commit()
-
-        cursor = await db.execute("SELECT * FROM operators WHERE id = ?", (cursor.lastrowid,))
-        row = await cursor.fetchone()
-        return row_to_dict(row)
+        session.add(op)
+        await session.flush()
+        await session.commit()
+        return op.to_dict()
 
 
 async def update_operator(operator_id: str, operator_data: OperatorUpdate) -> Optional[Dict[str, Any]]:
@@ -98,69 +102,67 @@ async def update_operator(operator_id: str, operator_data: OperatorUpdate) -> Op
     if "connection_type" in update_dict:
         update_dict["connection_type"] = update_dict["connection_type"].value
 
-    update_dict["updated_at"] = datetime.now().replace(tzinfo=None).isoformat()
+    update_dict["updated_at"] = datetime.now().replace(tzinfo=None)
 
-    async with get_db() as db:
-        set_clause = ", ".join(f"{k} = ?" for k in update_dict)
-        values = list(update_dict.values()) + [int(operator_id)]
+    async with async_session_factory() as session:
+        inst = await session.get(Operator, int(operator_id))
+        if not inst:
+            return None
 
-        cursor = await db.execute(
-            f"UPDATE operators SET {set_clause} WHERE id = ?", values
-        )
-        await db.commit()
+        for k, v in update_dict.items():
+            setattr(inst, k, v)
 
-        if cursor.rowcount > 0:
-            return await get_operator_by_id(operator_id)
-        return None
+        await session.commit()
+        return inst.to_dict()
 
 
 async def delete_operator(operator_id: str) -> bool:
     """Delete operator"""
-    async with get_db() as db:
-        cursor = await db.execute("DELETE FROM operators WHERE id = ?", (int(operator_id),))
-        await db.commit()
-        return cursor.rowcount > 0
+    async with async_session_factory() as session:
+        inst = await session.get(Operator, int(operator_id))
+        if not inst:
+            return False
+        await session.delete(inst)
+        await session.commit()
+        return True
 
 
 async def get_operator_devices(operator_id: str) -> List[Dict[str, Any]]:
     """Get devices assigned to an operator"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM devices WHERE current_holder_id = ?", (operator_id,)
-        )
-        rows = await cursor.fetchall()
-        return rows_to_list(rows)
+    async with async_session_factory() as session:
+        q = select(Device).where(Device.current_holder_id == operator_id)
+        rows = (await session.execute(q)).scalars().all()
+        return [r.to_dict() for r in rows]
 
 
 async def update_operator_device_count(operator_id: str) -> None:
     """Update operator's device count"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM devices WHERE current_holder_id = ?", (operator_id,)
+    now = datetime.now().replace(tzinfo=None)
+    async with async_session_factory() as session:
+        count_q = (
+            select(func.count())
+            .select_from(Device)
+            .where(Device.current_holder_id == operator_id)
         )
-        count = (await cursor.fetchone())[0]
+        count = (await session.execute(count_q)).scalar()
 
-        await db.execute(
-            "UPDATE operators SET device_count = ?, updated_at = ? WHERE id = ?",
-            (count, datetime.now().replace(tzinfo=None).isoformat(), int(operator_id))
-        )
-        await db.commit()
+        inst = await session.get(Operator, int(operator_id))
+        if inst:
+            inst.device_count = count
+            inst.updated_at = now
+            await session.commit()
 
 
 async def get_operator_stats(assigned_to: Optional[str] = None) -> Dict[str, int]:
     """Get operator statistics"""
-    async with get_db() as db:
-        base_condition = "1=1"
-        params = []
+    async with async_session_factory() as session:
+        q = select(Operator.status, func.count().label("total"))
         if assigned_to:
-            base_condition = "assigned_to = ?"
-            params = [assigned_to]
+            q = q.where(Operator.assigned_to == assigned_to)
+        q = q.group_by(Operator.status)
 
-        cursor = await db.execute(
-            f"SELECT status, COUNT(*) AS total FROM operators WHERE {base_condition} GROUP BY status",
-            params
-        )
-        by_status = {str(row[0]): int(row[1]) for row in await cursor.fetchall()}
+        rows = (await session.execute(q)).all()
+        by_status = {str(row.status): int(row.total) for row in rows}
 
         return {
             "total": by_status.get("active", 0) + by_status.get("inactive", 0),

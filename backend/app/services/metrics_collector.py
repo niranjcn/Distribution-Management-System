@@ -1,7 +1,8 @@
 import asyncio
 import logging
 
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +58,9 @@ async def _update_all_metrics():
     global _last_device_distributions, _last_success_logins, _last_failed_logins
 
     try:
-        async with get_db() as db:
-            cursor = await db.execute(_CONSOLIDATED_QUERY)
-            row = await cursor.fetchone()
+        async with async_session_factory() as session:
+            result = await session.execute(text(_CONSOLIDATED_QUERY))
+            row = result.fetchone()
 
             total_users_n = row[0]
             active_users_n = row[1]
@@ -77,10 +78,10 @@ async def _update_all_metrics():
             success_logins_n = row[13]
             failed_logins_n = row[14]
 
-            cursor2 = await db.execute(
-                "SELECT status, COUNT(*) AS total FROM distributions GROUP BY status"
+            result2 = await session.execute(
+                text("SELECT status, COUNT(*) AS total FROM distributions GROUP BY status")
             )
-            by_status = {str(r[0]): int(r[1]) for r in await cursor2.fetchall()}
+            by_status = {str(r[0]): int(r[1]) for r in result2.fetchall()}
 
         # User gauges
         total_users.set(total_users_n)

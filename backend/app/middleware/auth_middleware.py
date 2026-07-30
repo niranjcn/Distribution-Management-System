@@ -50,13 +50,13 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"}
         )
 
+    user["role"] = normalize_role(user.get("role"))
+
     if user.get("status") != "active":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is not active"
+            detail="Account is not active",
         )
-
-    user["role"] = normalize_role(user.get("role"))
 
     requires_forced_update = bool(user.get("force_email_change")) or bool(user.get("force_password_change"))
     if requires_forced_update and request.url.path not in FORCED_UPDATE_ALLOWLIST:

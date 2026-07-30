@@ -2,7 +2,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, status, Depends, Response
 from pydantic import BaseModel
 from app.services import dashboard_service, user_service
-from app.database import get_db, rows_to_list
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 from app.middleware.auth_middleware import get_current_user, require_admin_or_md, require_any_role, require_admin_or_manager_or_md_or_staff
 from app.core.activity_logger import log_business_activity
 
@@ -302,12 +303,12 @@ async def view_as_dashboard(
 ):
     """Get dashboard data as seen by the target user (admin/manager only)."""
     try:
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT id, name, email, role FROM users WHERE id = ?",
-                (int(target_user_id),)
+        async with async_session_factory() as session:
+            result = await session.execute(
+                text("SELECT id, name, email, role FROM users WHERE id = :id"),
+                {"id": int(target_user_id)}
             )
-            row = await cursor.fetchone()
+            row = result.mappings().first()
             if not row:
                 raise HTTPException(status_code=404, detail="User not found")
 

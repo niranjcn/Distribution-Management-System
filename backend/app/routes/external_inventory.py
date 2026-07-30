@@ -17,7 +17,8 @@ from app.models.inventory import (
     ReceiptCreate,
     StockAdjustmentCreate,
 )
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 from app.utils.helpers import generate_inventory_item_id
 from app.services import inventory_service
 
@@ -48,18 +49,20 @@ def _resolve_device_type(device_type: str, custom_device_type: str) -> str:
     return base
 
 
-async def _fetch_existing_values(db, column: str, values: list[str]) -> set:
+async def _fetch_existing_values(session, column: str, values: list[str]) -> set:
     if not values:
         return set()
 
     existing = set()
     for batch in _chunks(values, 500):
-        placeholders = ",".join(["?"] * len(batch))
-        cursor = await db.execute(
-            f"SELECT {column} FROM external_inventory_items WHERE {column} IN ({placeholders})",
-            batch,
+        named_params = {f"val{i}": v for i, v in enumerate(batch)}
+        placeholder_list = [f":val{i}" for i in range(len(batch))]
+        placeholders = ",".join(placeholder_list)
+        result = await session.execute(
+            text(f"SELECT {column} FROM external_inventory_items WHERE {column} IN ({placeholders})"),
+            named_params,
         )
-        rows = await cursor.fetchall()
+        rows = result.mappings().all()
         for row in rows:
             value = row.get(column)
             if value:
@@ -333,12 +336,12 @@ async def bulk_upload_external_inventory_items(
                 },
             }
 
-        async with get_db() as db:
-            existing_item_ids = await _fetch_existing_values(db, "item_id", [row["item_id"] for row in prepared_rows])
-            existing_serials = await _fetch_existing_values(db, "serial_number", [row["serial_number"] for row in prepared_rows])
-            existing_macs = await _fetch_existing_values(db, "mac_id", [row["mac_id"] for row in prepared_rows if row["mac_id"]])
+        async with async_session_factory() as session:
+            existing_item_ids = await _fetch_existing_values(session, "item_id", [row["item_id"] for row in prepared_rows])
+            existing_serials = await _fetch_existing_values(session, "serial_number", [row["serial_number"] for row in prepared_rows])
+            existing_macs = await _fetch_existing_values(session, "mac_id", [row["mac_id"] for row in prepared_rows if row["mac_id"]])
             existing_identifiers = await _fetch_existing_values(
-                db, "identifier", [row["identifier"] for row in prepared_rows if row["identifier"]]
+                session, "identifier", [row["identifier"] for row in prepared_rows if row["identifier"]]
             )
 
             insertable_rows = []
@@ -376,7 +379,7 @@ async def bulk_upload_external_inventory_items(
                     },
                 }
 
-            now = datetime.now().replace(tzinfo=None).isoformat()
+            now = datetime.now().replace(tzinfo=None)
             actor_id = str(current_user.get("id") or current_user.get("_id") or current_user.get("user_id") or current_user.get("sub") or "")
             if not actor_id:
                 raise HTTPException(
@@ -387,7 +390,9 @@ async def bulk_upload_external_inventory_items(
                 inventory_id, item_id, name, serial_number, mac_id, identifier_type, identifier, device_type, price,
                 sku, category, unit, quantity_on_hand, reorder_level, unit_cost, supplier_name, location, status,
                 notes, image_url, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)"""
+            ) VALUES (:inventory_id, :item_id, :name, :serial_number, :mac_id, :identifier_type, :identifier, :device_type, :price,
+                :sku, :category, :unit, :quantity_on_hand, :reorder_level, :unit_cost, :supplier_name, :location, 'active',
+                :notes, :image_url, :created_by, :created_at, :updated_at)"""
 
             for batch in _chunks(insertable_rows, 500):
                 batch_payload = []
@@ -395,39 +400,39 @@ async def bulk_upload_external_inventory_items(
                 for item in batch:
                     inventory_id = generate_inventory_item_id()
                     batch_inventory_ids.append(inventory_id)
-                    batch_payload.append((
-                        inventory_id,
-                        item["item_id"],
-                        item["name"],
-                        item["serial_number"],
-                        item["mac_id"],
-                        item["identifier_type"],
-                        item["identifier"],
-                        item["device_type"],
-                        item["price"],
-                        item["item_id"],
-                        item["device_type"],
-                        item["unit"],
-                        1,
-                        0,
-                        item["price"],
-                        item["supplier_name"],
-                        item["location"],
-                        item["notes"],
-                        None,
-                        actor_id,
-                        now,
-                        now,
-                    ))
+                    batch_payload.append({
+                        "inventory_id": inventory_id,
+                        "item_id": item["item_id"],
+                        "name": item["name"],
+                        "serial_number": item["serial_number"],
+                        "mac_id": item["mac_id"],
+                        "identifier_type": item["identifier_type"],
+                        "identifier": item["identifier"],
+                        "device_type": item["device_type"],
+                        "price": item["price"],
+                        "sku": item["item_id"],
+                        "category": item["device_type"],
+                        "unit": item["unit"],
+                        "quantity_on_hand": 1,
+                        "reorder_level": 0,
+                        "unit_cost": item["price"],
+                        "supplier_name": item["supplier_name"],
+                        "location": item["location"],
+                        "notes": item["notes"],
+                        "image_url": None,
+                        "created_by": actor_id,
+                        "created_at": now,
+                        "updated_at": now,
+                    })
 
                 try:
-                    await db.executemany(insert_sql, batch_payload)
+                    await session.execute(text(insert_sql), batch_payload)
                     created.extend(batch_inventory_ids)
                 except Exception as batch_error:
                     for idx, item in enumerate(batch):
                         inventory_id = batch_inventory_ids[idx]
                         try:
-                            await db.execute(insert_sql, batch_payload[idx])
+                            await session.execute(text(insert_sql), batch_payload[idx])
                             created.append(inventory_id)
                         except Exception as single_error:
                             errors.append({
@@ -437,7 +442,7 @@ async def bulk_upload_external_inventory_items(
                             })
                     logger.warning("External inventory bulk insert fallback triggered: %s", str(batch_error))
 
-            await db.commit()
+            await session.commit()
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         await log_business_activity(

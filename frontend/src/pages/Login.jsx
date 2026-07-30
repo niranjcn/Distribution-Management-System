@@ -141,14 +141,14 @@ const Login = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-600 mb-2">
-                Email Address
+                Email / Phone
               </label>
               <input
-                type="email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition-colors bg-white text-gray-800"
-                placeholder="Enter your email"
+                placeholder="Enter your email or phone"
                 required
               />
             </div>

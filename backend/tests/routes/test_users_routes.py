@@ -9,10 +9,8 @@ class TestListUsers:
     def _fake_user(self, **overrides):
         return {
             "id": "1",
-            "name": "Test User",
             "email": "user@test.com",
             "role": "operator",
-            "status": "active",
             **overrides,
         }
 
@@ -86,17 +84,6 @@ class TestListUsers:
         _, kwargs = mod.user_service.get_users.await_args
         assert kwargs.get("search") == "john"
 
-    def test_list_users_passes_status_filter(self, client, mock_user_services):
-        import app.routes.users as mod
-
-        paginated = self._fake_paginated()
-        mod.user_service.get_users = AsyncMock(return_value=paginated)
-
-        client.get(self.LIST_URL, params={"status": "active"})
-
-        _, kwargs = mod.user_service.get_users.await_args
-        assert kwargs.get("status") == "active"
-
     # ---------- unauthenticated ----------
 
     def test_unauthenticated_returns_401(self, client, test_app):
@@ -127,10 +114,8 @@ class TestGetUser:
     def _fake_user(self, **overrides):
         return {
             "id": "1",
-            "name": "Test User",
             "email": "user@test.com",
             "role": "operator",
-            "status": "active",
             "parent_id": None,
             **overrides,
         }
@@ -202,9 +187,7 @@ class TestCreateUser:
         return {
             "id": "2",
             "email": "newuser@test.com",
-            "name": "New User",
             "role": "operator",
-            "status": "active",
             "parent_id": None,
             **overrides,
         }
@@ -235,11 +218,6 @@ class TestCreateUser:
 
     def test_invalid_email_format_returns_422(self, client, mock_user_services):
         payload = {**self.VALID_PAYLOAD, "email": "not-an-email"}
-        resp = client.post(self.CREATE_URL, json=payload)
-        assert resp.status_code == 422
-
-    def test_missing_name_returns_422(self, client, mock_user_services):
-        payload = {k: v for k, v in self.VALID_PAYLOAD.items() if k != "name"}
         resp = client.post(self.CREATE_URL, json=payload)
         assert resp.status_code == 422
 
@@ -275,15 +253,13 @@ class TestCreateUser:
 
 class TestUpdateUser:
     UPDATE_URL = "/api/users/1"
-    VALID_PAYLOAD = {"name": "Updated Name", "email": "updated@test.com"}
+    VALID_PAYLOAD = {"phone": "1234567890"}
 
     def _fake_user(self, **overrides):
         return {
             "id": "1",
-            "name": "Updated Name",
-            "email": "updated@test.com",
+            "email": "user@test.com",
             "role": "operator",
-            "status": "active",
             **overrides,
         }
 
@@ -302,7 +278,6 @@ class TestUpdateUser:
         body = resp.json()
         assert list(body.keys()) == ["success", "message", "data"]
         assert body["success"] is True
-        assert body["data"]["name"] == "Updated Name"
 
     # ---------- not found ----------
 
@@ -341,16 +316,82 @@ class TestUpdateUser:
         assert "internal error" in resp.json()["detail"].lower()
 
 
+class TestUpdateUserStatus:
+    STATUS_URL = "/api/users/1/status"
+
+    # ---------- success ----------
+
+    def test_update_status_success(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        fake = {"id": "1", "email": "user@test.com", "role": "operator"}
+        mod.user_service.get_user_by_id = AsyncMock(return_value=fake)
+        mod.user_service.update_user = AsyncMock(return_value={**fake, "status": "inactive"})
+
+        resp = client.patch(self.STATUS_URL, json={"status": "inactive"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["status"] == "inactive"
+
+    # ---------- forbidden ----------
+
+    def test_forbidden_for_non_admin(self, client, mock_user_services, set_role):
+        set_role("operator")
+
+        resp = client.patch(self.STATUS_URL, json={"status": "inactive"})
+
+        assert resp.status_code == 403
+
+    # ---------- not found ----------
+
+    def test_not_found_returns_404(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.user_service.get_user_by_id = AsyncMock(return_value=None)
+
+        resp = client.patch(self.STATUS_URL, json={"status": "inactive"})
+
+        assert resp.status_code == 404
+
+    # ---------- invalid status ----------
+
+    def test_invalid_status_returns_422(self, client, mock_user_services):
+        resp = client.patch(self.STATUS_URL, json={"status": "invalid"})
+
+        assert resp.status_code == 422
+
+    # ---------- unauthenticated ----------
+
+    def test_unauthenticated_returns_401(self, client, test_app):
+        from app.middleware.auth_middleware import get_current_user
+
+        test_app.dependency_overrides.pop(get_current_user, None)
+        resp = client.patch(self.STATUS_URL, json={"status": "inactive"})
+        assert resp.status_code == 401
+
+    # ---------- 5xx ----------
+
+    def test_internal_error_returns_500(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.user_service.get_user_by_id = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+
+        resp = client.patch(self.STATUS_URL, json={"status": "inactive"})
+
+        assert resp.status_code == 500
+        assert "internal error" in resp.json()["detail"].lower()
+
+
 class TestDeleteUser:
     DELETE_URL = "/api/users/2"
 
     def _fake_target(self, **overrides):
         return {
             "id": "2",
-            "name": "Target User",
             "email": "target@test.com",
             "role": "operator",
-            "status": "active",
             "parent_id": "1",
             **overrides,
         }
@@ -414,10 +455,8 @@ class TestReassignUser:
     def _fake_target(self, **overrides):
         return {
             "id": "2",
-            "name": "Target User",
             "email": "target@test.com",
             "role": "operator",
-            "status": "active",
             "parent_id": "1",
             **overrides,
         }
@@ -425,10 +464,8 @@ class TestReassignUser:
     def _fake_new_parent(self, **overrides):
         return {
             "id": "3",
-            "name": "New Parent",
             "email": "parent@test.com",
             "role": "cluster",
-            "status": "active",
             **overrides,
         }
 
@@ -472,9 +509,6 @@ class TestReassignUser:
         test_app.dependency_overrides.pop(get_current_user, None)
         resp = client.post(self.REASSIGN_URL, json=self.VALID_PAYLOAD)
         assert resp.status_code == 401
-
-
-class TestUpdateUserStatus:
     STATUS_URL = "/api/users/2/status"
     VALID_PAYLOAD = {"status": "inactive"}
 

@@ -29,7 +29,6 @@ def test_app():
         from app.routes.users import router as users_router
         from app.routes.devices import router as devices_router
         from app.routes.distributions import router as distributions_router
-        from app.routes.approvals import router as approvals_router
         from app.routes.change_requests import router as change_requests_router
         from app.routes.dashboard import router as dashboard_router
         from app.routes.defects import router as defects_router
@@ -44,7 +43,6 @@ def test_app():
     app.include_router(users_router, prefix="/api/users", tags=["Users"])
     app.include_router(devices_router, prefix="/api/devices", tags=["Devices"])
     app.include_router(distributions_router, prefix="/api/distributions", tags=["Distributions"])
-    app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"])
     app.include_router(change_requests_router, prefix="/api/change-requests", tags=["Change Requests"])
     app.include_router(dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
     app.include_router(defects_router, prefix="/api/defects", tags=["Defects"])
@@ -182,18 +180,6 @@ def mock_distribution_services():
     patchers = [
         patch("app.routes.distributions.distribution_service", spec=True),
         patch("app.routes.distributions.log_business_activity", new=AsyncMock()),
-    ]
-    for p in patchers:
-        p.start()
-    yield
-    for p in patchers:
-        p.stop()
-
-
-@pytest.fixture
-def mock_approval_services():
-    patchers = [
-        patch("app.routes.approvals.approval_service", spec=True),
     ]
     for p in patchers:
         p.start()

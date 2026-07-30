@@ -51,7 +51,7 @@ const ALLOWED_ROLES_BY_CREATOR = {
   cluster: ['operator'],
 };
 
-const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', department: '', location: '', parentId: '', digitalId: '', broadbandId: '', clusterId: '', operatorId: '' };
+const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', designation: '', location: '', parentId: '', digitalId: '', broadbandId: '', clusterId: '', operatorId: '' };
 
 // ─── avatar initials helper ────────────────────────────────────────────────────
 const initials = (name) =>
@@ -248,7 +248,14 @@ const UserHierarchy = () => {
         user={u}
         depth={depth}
         defaultOpen={!!query || depth < 1}
-        onSelect={setSelectedUser}
+        onSelect={async (u) => {
+          try {
+            const res = await usersAPI.getUser(u._id || u.id);
+            setSelectedUser(res?.data || u);
+          } catch {
+            setSelectedUser(u);
+          }
+        }}
         children={(childrenOf[String(u.id)] || []).map(child => renderUser(child, depth + 1))}
       />
     );
@@ -315,7 +322,7 @@ const UserHierarchy = () => {
         role: formData.role,
       };
       if (formData.phone) payload.phone = formData.phone;
-      if (formData.department) payload.department = formData.department;
+      if (formData.designation) payload.designation = formData.designation;
       if (formData.location) payload.location = formData.location;
       if (formData.parentId) payload.parent_id = formData.parentId;
       if (formData.role === 'sub_distributor') {
@@ -470,12 +477,24 @@ const UserHierarchy = () => {
             <div className="p-5 space-y-3 text-sm">
               <Row label="Email" value={selectedUser.email} />
               <Row label="Phone" value={selectedUser.phone} />
-              <Row label="Department" value={selectedUser.department} />
+              <Row label="Designation" value={selectedUser.designation} />
               <Row label="Location" value={selectedUser.location} />
               <Row label="Status" value={<StatusBadge status={selectedUser.status} size="sm" />} />
               <Row label="Joined" value={selectedUser.created_at ? new Date(selectedUser.created_at).toLocaleDateString() : '—'} />
-              {selectedUser.digital_id && <Row label="Digital ID" value={selectedUser.digital_id} />}
-              {selectedUser.broadband_id && <Row label="Broadband ID" value={selectedUser.broadband_id} />}
+              {selectedUser.digital_ids && selectedUser.digital_ids.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-gray-500 font-medium">Digital IDs</p>
+                  {selectedUser.digital_ids.map((entry, idx) => (
+                    <div key={entry.id || idx} className="text-xs bg-gray-50 rounded p-1.5">
+                      <div className="text-gray-400 mb-0.5">{new Date(entry.created_at).toLocaleDateString()}</div>
+                      <div className="grid grid-cols-2 gap-1">
+                        <div><span className="text-gray-400">Digital:</span> <span className="font-medium">{entry.digital_id || '---'}</span></div>
+                        <div><span className="text-gray-400">Broadband:</span> <span className="font-medium">{entry.broadband_id || '---'}</span></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {selectedUser.cluster_id && <Row label="Cluster ID" value={selectedUser.cluster_id} />}
               {selectedUser.operator_id && <Row label="Operator ID" value={selectedUser.operator_id} />}
               {selectedUser.parent_id && (
@@ -590,11 +609,11 @@ const UserHierarchy = () => {
                 placeholder="+880…"
               />
             </Field>
-            <Field label="Department">
+            <Field label="Designation">
               <input
                 type="text"
-                value={formData.department}
-                onChange={e => setFormData(p => ({ ...p, department: e.target.value }))}
+                value={formData.designation}
+                onChange={e => setFormData(p => ({ ...p, designation: e.target.value }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="e.g. IT"
               />

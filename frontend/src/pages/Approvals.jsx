@@ -7,8 +7,6 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { useQueryClient } from '@tanstack/react-query';
-import { approvalKeys } from '../hooks';
 import { distributionsAPI, returnsAPI, defectsAPI } from '../services/api';
 import {
   Check,
@@ -140,10 +138,8 @@ const Approvals = () => {
     }
   }, [user?.role]);
 
-  const queryClient = useQueryClient();
   useEffect(() => {
     const handler = () => {
-      queryClient.invalidateQueries({ queryKey: approvalKeys.all });
       fetchPendingItems();
     };
     window.addEventListener('appDataMutation', handler);

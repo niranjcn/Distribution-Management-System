@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import hashlib
-import json
 from jose import JWTError, jwt
 from fastapi import HTTPException, status
 
-from app.database import get_db, row_to_dict
+from sqlalchemy import select, and_, or_, delete
+
+from app.database_sqlalchemy import async_session_factory
+from app.db_models.auth import User, TokenBlacklist
 from app.models.auth import TokenData
 from app.utils.security import (
     verify_password,
@@ -33,19 +35,23 @@ def _parse_datetime(value: str) -> Optional[datetime]:
         return None
 
 
-async def authenticate_user(email: str, password: str) -> Optional[dict]:
-    """Authenticate user with email and password"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM users WHERE email = ?",
-            (email.lower(),)
+def _strip_user(user_dict: dict) -> dict:
+    user_dict["role"] = normalize_role(user_dict.get("role"))
+    return user_dict
+
+
+async def authenticate_user(login: str, password: str) -> Optional[dict]:
+    """Authenticate user with email or phone and password"""
+    async with async_session_factory() as session:
+        q = select(User).where(
+            or_(User.email == login.lower(), User.phone == login)
         )
-        row = await cursor.fetchone()
-        
-        if not row:
+        inst = (await session.execute(q)).scalar_one_or_none()
+
+        if not inst:
             return None
-        
-        user = row_to_dict(row)
+
+        user = inst.to_dict()
         user["role"] = normalize_role(user.get("role"))
 
         locked_until_raw = user.get("locked_until")
@@ -56,33 +62,22 @@ async def authenticate_user(email: str, password: str) -> Optional[dict]:
                     status_code=status.HTTP_423_LOCKED,
                     detail="Account temporarily locked. Try again later."
                 )
-        
+
         if not verify_password(password, user["password_hash"]):
             attempts = int(user.get("failed_login_attempts") or 0) + 1
             lock_time = None
             if attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
-                lock_time = (datetime.now().replace(tzinfo=None) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)).isoformat()
+                lock_time = (datetime.now().replace(tzinfo=None) + timedelta(minutes=LOCKOUT_DURATION_MINUTES))
 
-            await db.execute(
-                "UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?",
-                (attempts, lock_time, int(user["id"]))
-            )
-            await db.commit()
+            inst.failed_login_attempts = attempts
+            inst.locked_until = lock_time
+            await session.commit()
             return None
 
-        await db.execute(
-            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
-            (int(user["id"]),)
-        )
-        
-        # Update last login
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        await db.execute(
-            "UPDATE users SET last_login = ? WHERE id = ?",
-            (now, int(user["id"]))
-        )
-        await db.commit()
-        
+        inst.failed_login_attempts = 0
+        inst.locked_until = None
+        inst.last_login = datetime.now().replace(tzinfo=None)
+        await session.commit()
         return user
 
 
@@ -93,15 +88,15 @@ async def create_user_token(user: dict) -> dict:
         "sub": str(user["id"]),
         "email": user["email"],
         "role": role,
-        "name": user["name"]
+        "name": user.get("name", ""),
     }
-    
+
     access_token = create_access_token(
         data=token_data,
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     refresh_token = create_refresh_token(data=token_data)
-    
+
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -111,11 +106,11 @@ async def create_user_token(user: dict) -> dict:
         "user": {
             "id": str(user["id"]),
             "email": user["email"],
-            "name": user["name"],
+            "name": user.get("name", ""),
             "role": role,
             "force_email_change": bool(user.get("force_email_change")),
             "force_password_change": bool(user.get("force_password_change")),
-        }
+        },
     }
 
 
@@ -136,26 +131,18 @@ async def refresh_access_token(refresh_token: str) -> Optional[dict]:
     if user_id is None:
         return None
 
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM users WHERE id = ?",
-            (int(user_id),)
-        )
-        row = await cursor.fetchone()
-
-        if not row:
+    async with async_session_factory() as session:
+        inst = await session.get(User, int(user_id))
+        if not inst:
             return None
 
-        user = row_to_dict(row)
-        user["role"] = normalize_role(user.get("role"))
-        if user.get("status") != "active":
-            return None
+        user = _strip_user(inst.to_dict())
 
     token_data = {
         "sub": str(user["id"]),
         "email": user["email"],
         "role": user["role"],
-        "name": user["name"],
+        "name": user.get("name", ""),
     }
 
     access_token = create_access_token(
@@ -179,46 +166,43 @@ async def blacklist_token(token: str) -> None:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         exp = payload.get("exp")
         if exp is not None:
-            # jose can return exp as epoch seconds; support datetime-like values defensively.
             if isinstance(exp, (int, float)):
                 expires_at = datetime.fromtimestamp(exp)
             elif isinstance(exp, str):
                 expires_at = datetime.fromisoformat(exp.replace("Z", "+00:00")).replace(tzinfo=None)
     except (JWTError, ValueError, TypeError):
-        # If token decode fails during logout, keep conservative TTL fallback.
         pass
 
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    async with get_db() as db:
-        await db.execute(
-            """INSERT OR IGNORE INTO token_blacklist (token_hash, expires_at, created_at)
-               VALUES (?, ?, ?)""",
-            (token_hash, expires_at.isoformat(), now.isoformat())
+    async with async_session_factory() as session:
+        stmt = select(TokenBlacklist).where(TokenBlacklist.token_hash == token_hash)
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        if not existing:
+            session.add(TokenBlacklist(
+                token_hash=token_hash,
+                expires_at=expires_at,
+                created_at=now,
+            ))
+
+        await session.execute(
+            delete(TokenBlacklist).where(TokenBlacklist.expires_at <= now)
         )
-        await db.execute(
-            "DELETE FROM token_blacklist WHERE expires_at <= ?",
-            (now.isoformat(),)
-        )
-        await db.commit()
+        await session.commit()
 
 
 async def is_token_blacklisted(token: str) -> bool:
     """Check if a token hash exists in blacklist and is still active."""
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    now_iso = datetime.now().replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None)
 
-    async with get_db() as db:
-        await db.execute(
-            "DELETE FROM token_blacklist WHERE expires_at <= ?",
-            (now_iso,)
+    async with async_session_factory() as session:
+        await session.execute(
+            delete(TokenBlacklist).where(TokenBlacklist.expires_at <= now)
         )
-        cursor = await db.execute(
-            "SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1",
-            (token_hash,)
-        )
-        row = await cursor.fetchone()
-        await db.commit()
+        stmt = select(TokenBlacklist.token_hash).where(TokenBlacklist.token_hash == token_hash).limit(1)
+        row = (await session.execute(stmt)).scalar_one_or_none()
+        await session.commit()
         return row is not None
 
 
@@ -228,38 +212,21 @@ async def get_current_user_from_token(token: str) -> Optional[dict]:
         return None
 
     token_data = decode_token(token)
-    
+
     if token_data is None or token_data.user_id is None:
         return None
-    
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM users WHERE id = ?",
-            (int(token_data.user_id),)
-        )
-        row = await cursor.fetchone()
-        
-        if row is None:
+
+    async with async_session_factory() as session:
+        inst = await session.get(User, int(token_data.user_id))
+        if inst is None:
             return None
-        
-        user = row_to_dict(row)
-        user["role"] = normalize_role(user.get("role"))
+
+        user = _strip_user(inst.to_dict())
 
         if token_data.role and user.get("role") != token_data.role:
             return None
-        
-        # Parse permissions JSON
-        if user.get("permissions"):
-            try:
-                user["permissions"] = json.loads(user["permissions"])
-            except (json.JSONDecodeError, TypeError):
-                user["permissions"] = {}
-        else:
-            user["permissions"] = {}
-        
-        # Don't return password hash
+
         user.pop("password_hash", None)
-        
         return user
 
 
@@ -267,19 +234,16 @@ async def complete_forced_credential_update(
     user_id: str,
     current_password: str,
     new_email: str,
+    new_phone: str,
     new_password: str,
 ) -> Optional[dict]:
-    """Atomically update email and password for a force-change user."""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM users WHERE id = ?",
-            (int(user_id),),
-        )
-        row = await cursor.fetchone()
-        if not row:
+    """Atomically update email, phone, and password for a force-change user."""
+    async with async_session_factory() as session:
+        inst = await session.get(User, int(user_id))
+        if not inst:
             return None
 
-        user = row_to_dict(row)
+        user = inst.to_dict()
         if not verify_password(current_password, user["password_hash"]):
             return None
 
@@ -290,11 +254,8 @@ async def complete_forced_credential_update(
                 detail="Email must be changed from the seeded default",
             )
 
-        email_cursor = await db.execute(
-            "SELECT id FROM users WHERE email = ? AND id != ?",
-            (normalized_email, int(user_id)),
-        )
-        existing = await email_cursor.fetchone()
+        existing_q = select(User.id).where(and_(User.email == normalized_email, User.id != int(user_id)))
+        existing = (await session.execute(existing_q)).scalar_one_or_none()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -307,50 +268,42 @@ async def complete_forced_credential_update(
                 detail="New password must be different from current password",
             )
 
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        await db.execute(
-            """UPDATE users
-            SET email = ?, password_hash = ?, force_email_change = 0, force_password_change = 0, updated_at = ?
-            WHERE id = ?""",
-            (normalized_email, get_password_hash(new_password), now, int(user_id)),
-        )
-        await db.commit()
+        now = datetime.now().replace(tzinfo=None)
+        old_email = user.get("email", "")
+        old_phone = user.get("phone", "")
+        inst.email = normalized_email
+        inst.phone = new_phone
+        inst.password_hash = get_password_hash(new_password)
+        inst.force_email_change = 0
+        inst.force_password_change = 0
+        inst.updated_at = now
+        await session.commit()
 
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM users WHERE id = ?", (int(user_id),))
-        updated_row = await cursor.fetchone()
-        if not updated_row:
+        if normalized_email != old_email.lower().strip() or new_phone != old_phone:
+            from app.services.digital_id_service import recompute_hashes_for_user
+            await recompute_hashes_for_user(user_id, normalized_email, new_phone)
+
+    async with async_session_factory() as session:
+        inst = await session.get(User, int(user_id))
+        if not inst:
             return None
-        updated_user = row_to_dict(updated_row)
-        updated_user["role"] = normalize_role(updated_user.get("role"))
+        updated_user = _strip_user(inst.to_dict())
         updated_user.pop("password_hash", None)
         return updated_user
 
 
 async def change_user_password(user_id: str, current_password: str, new_password: str) -> bool:
     """Change user password"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM users WHERE id = ?",
-            (int(user_id),)
-        )
-        row = await cursor.fetchone()
-        
-        if not row:
+    async with async_session_factory() as session:
+        inst = await session.get(User, int(user_id))
+        if not inst:
             return False
-        
-        user = row_to_dict(row)
-        
+
+        user = inst.to_dict()
         if not verify_password(current_password, user["password_hash"]):
             return False
-        
-        new_hash = get_password_hash(new_password)
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        
-        await db.execute(
-            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (new_hash, now, int(user_id))
-        )
-        await db.commit()
-        
+
+        inst.password_hash = get_password_hash(new_password)
+        inst.updated_at = datetime.now().replace(tzinfo=None)
+        await session.commit()
         return True

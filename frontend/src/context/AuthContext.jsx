@@ -151,8 +151,8 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const completeForcedCredentialUpdate = async (currentPassword, newEmail, newPassword) => {
-    const response = await authAPI.completeForcedUpdate(currentPassword, newEmail, newPassword);
+  const completeForcedCredentialUpdate = async (currentPassword, newEmail, newPhone, newPassword) => {
+    const response = await authAPI.completeForcedUpdate(currentPassword, newEmail, newPhone, newPassword);
     if (!response.success) {
       return { success: false, error: 'Forced credential update failed' };
     }

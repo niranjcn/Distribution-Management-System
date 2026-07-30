@@ -116,9 +116,10 @@ export const devicesAPI = {
     return data;
   },
 
-  getDevicesForReplacement: async (excludeDeviceId = null) => {
-    const params = excludeDeviceId ? `?exclude_device_id=${excludeDeviceId}` : '';
-    const response = await apiRequest(`/devices/for-replacement${params}`);
+  getDevicesForReplacement: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const endpoint = queryString ? `/devices/for-replacement?${queryString}` : '/devices/for-replacement';
+    const response = await apiRequest(endpoint);
     return response;
   },
 

@@ -6,13 +6,13 @@ import csv
 from pathlib import Path
 
 from openpyxl import Workbook
+from sqlalchemy import text
 
-from app.database import get_db, row_to_dict, rows_to_list
+from app.database_sqlalchemy import async_session_factory
 from app.models.distribution import DistributionCreate, DistributionStatus
 from app.models.device import DeviceStatus
-from app.services import approval_service, device_service, notification_service
+from app.services import device_service, notification_service
 from app.utils.helpers import get_pagination, generate_distribution_id
-from app.utils.hierarchy import get_descendant_user_ids as _get_descendant_user_ids
 
 
 def _distribution_manifest_dir() -> Path:
@@ -171,70 +171,75 @@ async def _bulk_update_device_holders(
     if not normalized_ids:
         return []
 
-    async with get_db() as db:
-        placeholders = ",".join(["?"] * len(normalized_ids))
-        cursor = await db.execute(
-            f"SELECT id, status FROM devices WHERE id IN ({placeholders})",
-            normalized_ids,
-        )
-        rows = await cursor.fetchall()
-        status_map = {str(row.get("id")): row.get("status") for row in rows if row.get("id") is not None}
+    async with async_session_factory() as session:
+        ph = ",".join([f":d_{i}" for i in range(len(normalized_ids))])
+        params = {f"d_{i}": did for i, did in enumerate(normalized_ids)}
+        rows = (await session.execute(
+            text(f"SELECT id, status FROM devices WHERE id IN ({ph})"),
+            params
+        )).mappings().all()
+        status_map = {str(r["id"]): r["status"] for r in rows if r["id"] is not None}
         if not status_map:
             return []
 
         existing_ids = [int(dev_id) for dev_id in status_map.keys()]
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
 
-        update_placeholders = ",".join(["?"] * len(existing_ids))
-        await db.execute(
-            f"""UPDATE devices
-                SET current_holder_id = ?, current_holder_name = ?, current_holder_type = ?,
-                    current_location = ?, status = ?, updated_at = ?
-                WHERE id IN ({update_placeholders})""",
-            [
-                holder_id,
-                holder_name,
-                holder_type,
-                location,
-                status,
-                now,
-                *existing_ids,
-            ],
+        uph = ",".join([f":e_{i}" for i in range(len(existing_ids))])
+        update_params: Dict[str, Any] = {
+            "holder_id": holder_id,
+            "holder_name": holder_name,
+            "holder_type": holder_type,
+            "location": location,
+            "status": status,
+            "now": now,
+        }
+        for i, eid in enumerate(existing_ids):
+            update_params[f"e_{i}"] = eid
+
+        await session.execute(
+            text(f"""UPDATE devices
+                SET current_holder_id = :holder_id, current_holder_name = :holder_name, current_holder_type = :holder_type,
+                    current_location = :location, status = :status, updated_at = :now
+                WHERE id IN ({uph})"""),
+            update_params
         )
 
-        history_sql = """INSERT INTO device_history (
-                device_id, action, from_user_id, from_user_name,
-                to_user_id, to_user_name, status_before, status_after,
-                location, notes, performed_by, performed_by_name, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        history_rows = []
+        for dev_id in existing_ids:
+            history_rows.append({
+                "device_id": dev_id,
+                "action": "distributed",
+                "from_user_id": from_user_id,
+                "from_user_name": from_user_name,
+                "to_user_id": holder_id,
+                "to_user_name": holder_name,
+                "status_before": status_map.get(str(dev_id)),
+                "status_after": status,
+                "location": location,
+                "notes": notes,
+                "performed_by": performed_by,
+                "performed_by_name": performed_by_name,
+                "ts": now,
+            })
 
-        history_payload = [
-            (
-                dev_id,
-                "distributed",
-                from_user_id,
-                from_user_name,
-                holder_id,
-                holder_name,
-                status_map.get(str(dev_id)),
-                status,
-                location,
-                notes,
-                performed_by,
-                performed_by_name,
-                now,
+        if history_rows:
+            await session.execute(
+                text("""INSERT INTO device_history (
+                    device_id, action, from_user_id, from_user_name,
+                    to_user_id, to_user_name, status_before, status_after,
+                    location, notes, performed_by, performed_by_name, timestamp
+                ) VALUES (:device_id, :action, :from_user_id, :from_user_name,
+                    :to_user_id, :to_user_name, :status_before, :status_after,
+                    :location, :notes, :performed_by, :performed_by_name, :ts)"""),
+                history_rows
             )
-            for dev_id in existing_ids
-        ]
 
-        if history_payload:
-            await db.executemany(history_sql, history_payload)
-
-        await db.commit()
+        await session.commit()
         return [str(dev_id) for dev_id in existing_ids]
 
 
-async def _get_distribution_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:
+async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Optional[Set[str]]:
     role = str(user.get("role") or "")
     user_id = str(user.get("id") or user.get("_id") or "")
     parent_id = str(user.get("parent_id") or "")
@@ -244,7 +249,20 @@ async def _get_distribution_scope_user_ids(db, user: Dict[str, Any]) -> Optional
 
     scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
     scoped_ids: Set[str] = {scope_root}
-    scoped_ids.update(await _get_descendant_user_ids(db, scope_root))
+    if str(scope_root).isdigit():
+        desc_rows = (await session.execute(
+            text("""
+                WITH RECURSIVE descendants AS (
+                    SELECT id FROM users WHERE parent_id = :root
+                    UNION ALL
+                    SELECT u.id FROM users u
+                    INNER JOIN descendants d ON u.parent_id = d.id
+                )
+                SELECT id FROM descendants
+            """),
+            {"root": int(scope_root)}
+        )).scalars().all()
+        scoped_ids.update(str(did) for did in desc_rows if did)
     return scoped_ids
 
 
@@ -261,39 +279,41 @@ async def get_distributions(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Get all distributions with pagination and filters"""
-    async with get_db() as db:
+    async with async_session_factory() as session:
         conditions = []
-        params = []
-        
-        if status:
-            conditions.append("status = ?")
-            params.append(status)
-        if from_user_id:
-            conditions.append("from_user_id = ?")
-            params.append(from_user_id)
-        if to_user_id:
-            conditions.append("to_user_id = ?")
-            params.append(to_user_id)
+        params: Dict[str, Any] = {}
 
-        scope_ids = await _get_distribution_scope_user_ids(db, current_user) if current_user else None
+        if status:
+            conditions.append("status = :status")
+            params["status"] = status
+        if from_user_id:
+            conditions.append("from_user_id = :from_user_id")
+            params["from_user_id"] = from_user_id
+        if to_user_id:
+            conditions.append("to_user_id = :to_user_id")
+            params["to_user_id"] = to_user_id
+
+        scope_ids = await _get_distribution_scope_user_ids(session, current_user) if current_user else None
         if scope_ids is not None:
             if not scope_ids:
                 return {"data": [], "pagination": get_pagination(page, page_size, 0)}
             scope_list = sorted(scope_ids)
-            placeholders = ",".join(["?"] * len(scope_list))
-            conditions.append(f"(from_user_id IN ({placeholders}) OR to_user_id IN ({placeholders}))")
-            params.extend(scope_list)
-            params.extend(scope_list)
+            ph1 = ",".join([f":sf_{i}" for i in range(len(scope_list))])
+            ph2 = ",".join([f":st_{i}" for i in range(len(scope_list))])
+            conditions.append(f"(from_user_id IN ({ph1}) OR to_user_id IN ({ph2}))")
+            for i, sid in enumerate(scope_list):
+                params[f"sf_{i}"] = sid
+                params[f"st_{i}"] = sid
         elif user_id:
-            conditions.append("(from_user_id = ? OR to_user_id = ?)")
-            params.extend([user_id, user_id])
+            conditions.append("(from_user_id = :uid1 OR to_user_id = :uid2)")
+            params["uid1"] = user_id
+            params["uid2"] = user_id
         if start_date:
-            conditions.append("created_at >= ?")
-            params.append(start_date)
+            conditions.append("created_at >= :start_date")
+            params["start_date"] = start_date
         if end_date:
-            conditions.append("created_at <= ?")
-            params.append(end_date)
+            conditions.append("created_at <= :end_date")
+            params["end_date"] = end_date
         if search:
             like = f"%{search}%"
             search_field_map = {
@@ -305,72 +325,67 @@ async def get_distributions(
             }
             normalized_search_by = str(search_by or "all").strip().lower()
             if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
-                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
-                params.append(like)
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE :search_like")
+                params["search_like"] = like
             else:
-                conditions.append("(distribution_id LIKE ? OR from_user_name LIKE ? OR to_user_name LIKE ? OR status LIKE ? OR approved_by_name LIKE ?)")
-                params.extend([like, like, like, like, like])
-        
+                conditions.append("(distribution_id LIKE :sl1 OR from_user_name LIKE :sl2 OR to_user_name LIKE :sl3 OR status LIKE :sl4 OR approved_by_name LIKE :sl5)")
+                for i in range(5):
+                    params[f"sl{i+1}"] = like
+
         where_clause = " AND ".join(conditions) if conditions else "1=1"
-        
-        cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {where_clause}", params)
-        total = (await cursor.fetchone())[0]
-        
+
+        total = (await session.execute(
+            text(f"SELECT COUNT(*) FROM distributions WHERE {where_clause}"), params
+        )).scalar() or 0
+
         offset = (page - 1) * page_size
-        cursor = await db.execute(
-            f"SELECT * FROM distributions WHERE {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [page_size, offset]
-        )
-        rows = await cursor.fetchall()
-        
+        params["_limit"] = page_size
+        params["_offset"] = offset
+        rows = (await session.execute(
+            text(f"SELECT * FROM distributions WHERE {where_clause} ORDER BY created_at DESC LIMIT :_limit OFFSET :_offset"),
+            params
+        )).mappings().all()
+
         result = []
-        for r in rows_to_list(rows):
-            if r.get("device_ids"):
+        for r in rows:
+            d = dict(r)
+            if d.get("device_ids"):
                 try:
-                    r["device_ids"] = json.loads(r["device_ids"])
+                    d["device_ids"] = json.loads(d["device_ids"])
                 except (json.JSONDecodeError, TypeError):
-                    r["device_ids"] = []
-            result.append(r)
-        
+                    d["device_ids"] = []
+            result.append(d)
+
         return {
             "data": result,
             "pagination": get_pagination(page, page_size, total)
         }
 
 
+def _parse_device_ids(d: Dict[str, Any]) -> Dict[str, Any]:
+    if d.get("device_ids"):
+        try:
+            d["device_ids"] = json.loads(d["device_ids"])
+        except (json.JSONDecodeError, TypeError):
+            d["device_ids"] = []
+    return d
+
+
 async def get_distribution_by_id(distribution_id: str) -> Optional[Dict[str, Any]]:
-    """Get distribution by ID"""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM distributions WHERE id = ?", (int(distribution_id),))
-        row = await cursor.fetchone()
-        if row:
-            d = row_to_dict(row)
-            if d.get("device_ids"):
-                try:
-                    d["device_ids"] = json.loads(d["device_ids"])
-                except (json.JSONDecodeError, TypeError):
-                    d["device_ids"] = []
-            return d
-        return None
+    async with async_session_factory() as session:
+        row = (await session.execute(
+            text("SELECT * FROM distributions WHERE id = :id"), {"id": int(distribution_id)}
+        )).mappings().first()
+        return _parse_device_ids(dict(row)) if row else None
 
 
 async def get_distribution_by_code(distribution_code: str) -> Optional[Dict[str, Any]]:
-    """Get distribution by its public distribution_id code."""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM distributions WHERE distribution_id = ?",
-            (str(distribution_code),),
-        )
-        row = await cursor.fetchone()
-        if row:
-            d = row_to_dict(row)
-            if d.get("device_ids"):
-                try:
-                    d["device_ids"] = json.loads(d["device_ids"])
-                except (json.JSONDecodeError, TypeError):
-                    d["device_ids"] = []
-            return d
-        return None
+    async with async_session_factory() as session:
+        row = (await session.execute(
+            text("SELECT * FROM distributions WHERE distribution_id = :code"),
+            {"code": str(distribution_code)}
+        )).mappings().first()
+        return _parse_device_ids(dict(row)) if row else None
 
 
 async def create_distribution_from_identifiers(
@@ -420,7 +435,7 @@ async def create_distribution_from_identifiers(
             "nuid": nuid,
         })
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         mac_map: Dict[str, Any] = {}
         serial_map: Dict[str, Any] = {}
         nuid_map: Dict[str, Any] = {}
@@ -430,34 +445,34 @@ async def create_distribution_from_identifiers(
         all_nuids = list(set(all_nuids))
 
         if all_macs:
-            placeholders = ",".join("?" * len(all_macs))
-            cursor = await db.execute(
-                f"SELECT * FROM devices WHERE lower(trim(mac_address)) IN ({placeholders})",
-                all_macs,
-            )
-            for device_row in await cursor.fetchall():
-                dev = row_to_dict(device_row)
-                mac_map[dev["mac_address"].strip().lower()] = dev
+            ph = ",".join([f":mac_{i}" for i in range(len(all_macs))])
+            params = {f"mac_{i}": m for i, m in enumerate(all_macs)}
+            rows = (await session.execute(
+                text(f"SELECT * FROM devices WHERE lower(trim(mac_address)) IN ({ph})"),
+                params
+            )).mappings().all()
+            for dev in rows:
+                mac_map[dev["mac_address"].strip().lower()] = dict(dev)
 
         if all_serials:
-            placeholders = ",".join("?" * len(all_serials))
-            cursor = await db.execute(
-                f"SELECT * FROM devices WHERE lower(trim(serial_number)) IN ({placeholders})",
-                all_serials,
-            )
-            for device_row in await cursor.fetchall():
-                dev = row_to_dict(device_row)
-                serial_map[dev["serial_number"].strip().lower()] = dev
+            ph = ",".join([f":ser_{i}" for i in range(len(all_serials))])
+            params = {f"ser_{i}": s for i, s in enumerate(all_serials)}
+            rows = (await session.execute(
+                text(f"SELECT * FROM devices WHERE lower(trim(serial_number)) IN ({ph})"),
+                params
+            )).mappings().all()
+            for dev in rows:
+                serial_map[dev["serial_number"].strip().lower()] = dict(dev)
 
         if all_nuids:
-            placeholders = ",".join("?" * len(all_nuids))
-            cursor = await db.execute(
-                f"SELECT * FROM devices WHERE lower(trim(nuid)) IN ({placeholders})",
-                all_nuids,
-            )
-            for device_row in await cursor.fetchall():
-                dev = row_to_dict(device_row)
-                nuid_map[dev["nuid"].strip().lower()] = dev
+            ph = ",".join([f":nuid_{i}" for i in range(len(all_nuids))])
+            params = {f"nuid_{i}": n for i, n in enumerate(all_nuids)}
+            rows = (await session.execute(
+                text(f"SELECT * FROM devices WHERE lower(trim(nuid)) IN ({ph})"),
+                params
+            )).mappings().all()
+            for dev in rows:
+                nuid_map[dev["nuid"].strip().lower()] = dict(dev)
 
         for item in row_lookup:
             row_number = item["row"]
@@ -556,14 +571,13 @@ async def create_distribution_from_identifiers(
 
 
 async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a new distribution request"""
-    async with get_db() as db:
-        # Get recipient user
-        cursor = await db.execute("SELECT * FROM users WHERE id = ?", (int(dist_data.to_user_id),))
-        to_user = await cursor.fetchone()
+    async with async_session_factory() as session:
+        to_user = (await session.execute(
+            text("SELECT * FROM users WHERE id = :id"), {"id": int(dist_data.to_user_id)}
+        )).mappings().first()
         if not to_user:
             raise ValueError("Recipient user not found")
-        to_user = row_to_dict(to_user)
+        to_user = dict(to_user)
 
         from_role = from_user["role"]
         to_role = to_user["role"]
@@ -571,24 +585,19 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 
         if from_role in {"super_admin", "manager", "pdic_staff"}:
             if to_role not in {"sub_distributor", "cluster", "operator"}:
-                raise ValueError(
-                    "Management can only distribute to sub-distributors, clusters, or operators"
-                )
+                raise ValueError("Management can only distribute to sub-distributors, clusters, or operators")
 
-        # ── Hierarchy validation for sub-level roles ──────────────────────────
         if from_role == "sub_distribution_manager":
             if to_role == "cluster":
                 if str(to_user.get("parent_id", "")) != from_user_id:
                     raise ValueError("You can only distribute to clusters directly under your account")
             elif to_role == "operator":
-                cursor = await db.execute(
-                    "SELECT * FROM users WHERE id = ?",
-                    (int(to_user.get("parent_id") or 0),)
-                )
-                parent_cluster = await cursor.fetchone()
+                parent_cluster = (await session.execute(
+                    text("SELECT * FROM users WHERE id = :id"), {"id": int(to_user.get("parent_id") or 0)}
+                )).mappings().first()
                 if not parent_cluster:
                     raise ValueError("Operator's cluster not found")
-                parent_cluster = row_to_dict(parent_cluster)
+                parent_cluster = dict(parent_cluster)
                 if str(parent_cluster.get("parent_id", "")) != from_user_id:
                     raise ValueError("You can only distribute to operators within your sub-distribution manager chain")
             else:
@@ -599,14 +608,12 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 if str(to_user.get("parent_id", "")) != from_user_id:
                     raise ValueError("You can only distribute to clusters directly under your account")
             elif to_role == "operator":
-                # Operator lives under a cluster that belongs to this sub_distributor
-                cursor = await db.execute(
-                    "SELECT * FROM users WHERE id = ?", (int(to_user.get("parent_id") or 0),)
-                )
-                parent_cluster = await cursor.fetchone()
+                parent_cluster = (await session.execute(
+                    text("SELECT * FROM users WHERE id = :id"), {"id": int(to_user.get("parent_id") or 0)}
+                )).mappings().first()
                 if not parent_cluster:
                     raise ValueError("Operator's cluster not found")
-                parent_cluster = row_to_dict(parent_cluster)
+                parent_cluster = dict(parent_cluster)
                 if str(parent_cluster.get("parent_id", "")) != from_user_id:
                     raise ValueError("You can only distribute to operators within your sub-distribution")
             else:
@@ -627,56 +634,54 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                     raise ValueError("You can only distribute to operators in the same cluster")
             else:
                 raise ValueError("Operators can only distribute to other operators in the same cluster")
-        # ─── End hierarchy validation ─────────────────────────────────────────
 
-        # Validate devices (batch fetch + in-memory validation)
         validated_devices: List[Dict[str, Any]] = []
-
-        # Batch fetch all distributions with open locks
         open_lock_device_ids: Set[str] = set()
         pending_blocked: set = set()
+
         if from_role not in ["super_admin", "manager", "pdic_staff"]:
-            cursor_blocked = await db.execute(
-                """SELECT dd.device_id
+            blocked_rows = (await session.execute(
+                text("""SELECT dd.device_id
                    FROM distribution_devices dd
                    INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
-                   WHERE d.to_user_id = ? AND d.status = ?""",
-                (from_user_id, DistributionStatus.PENDING_RECEIPT.value),
-            )
-            for row in await cursor_blocked.fetchall():
-                pending_blocked.add(str(row[0]))
+                   WHERE d.to_user_id = :uid AND d.status = :status"""),
+                {"uid": from_user_id, "status": DistributionStatus.PENDING_RECEIPT.value}
+            )).mappings().all()
+            for r in blocked_rows:
+                pending_blocked.add(str(r["device_id"]))
 
-        lock_device_ids_int = [int(x) for x in dist_data.device_ids]
-        lock_device_placeholders = ",".join("?" * len(lock_device_ids_int))
-        cursor_lock = await db.execute(
-            f"""SELECT dd.device_id
+        lock_ids_int = [int(x) for x in dist_data.device_ids]
+        lph = ",".join([f":l_{i}" for i in range(len(lock_ids_int))])
+        lparams = {f"l_{i}": did for i, did in enumerate(lock_ids_int)}
+        lparams["s1"] = DistributionStatus.PENDING_RECEIPT.value
+        lparams["s2"] = DistributionStatus.DISPUTED.value
+        lock_rows = (await session.execute(
+            text(f"""SELECT dd.device_id
                 FROM distribution_devices dd
                 INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
-                WHERE d.status IN (?, ?)
-                  AND dd.device_id IN ({lock_device_placeholders})""",
-            (DistributionStatus.PENDING_RECEIPT.value, DistributionStatus.DISPUTED.value, *lock_device_ids_int),
-        )
-        for lock_row in await cursor_lock.fetchall():
-            open_lock_device_ids.add(str(lock_row[0]))
+                WHERE d.status IN (:s1, :s2)
+                  AND dd.device_id IN ({lph})"""),
+            lparams
+        )).mappings().all()
+        for lr in lock_rows:
+            open_lock_device_ids.add(str(lr["device_id"]))
 
-        # Batch device fetch
         device_ids_int = [int(x) for x in dist_data.device_ids]
-        placeholders = ",".join("?" * len(device_ids_int))
-        cursor = await db.execute(f"SELECT * FROM devices WHERE id IN ({placeholders})", device_ids_int)
-        device_rows = {str(row[0]): row_to_dict(row) for row in await cursor.fetchall()}
+        dph = ",".join([f":d_{i}" for i in range(len(device_ids_int))])
+        dparams = {f"d_{i}": did for i, did in enumerate(device_ids_int)}
+        dev_rows = (await session.execute(
+            text(f"SELECT * FROM devices WHERE id IN ({dph})"), dparams
+        )).mappings().all()
+        device_rows = {str(r["id"]): dict(r) for r in dev_rows}
 
         for dev_id in dist_data.device_ids:
             device = device_rows.get(str(dev_id))
             if not device:
                 raise ValueError(f"Device {dev_id} not found")
             if device.get("status") == DeviceStatus.DEFECTIVE.value:
-                raise ValueError(
-                    f"Device {device['device_id']} is marked defective and cannot be transferred"
-                )
+                raise ValueError(f"Device {device['device_id']} is marked defective and cannot be transferred")
             if str(dev_id) in open_lock_device_ids:
-                raise ValueError(
-                    f"Device {device['device_id']} is already in an unconfirmed or disputed distribution"
-                )
+                raise ValueError(f"Device {device['device_id']} is already in an unconfirmed or disputed distribution")
             if from_role in ["super_admin", "manager", "pdic_staff"]:
                 if device["status"] != DeviceStatus.AVAILABLE.value:
                     raise ValueError(f"Device {device['device_id']} is not available")
@@ -689,41 +694,56 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                         f"Please confirm receipt of the incoming transfer before redistributing."
                     )
             validated_devices.append(device)
-        
+
         role_to_type = {
             "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
             "sub_distribution_manager": "sub_distribution_manager",
             "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
         }
-        
+
         now_dt = datetime.now().replace(tzinfo=None)
-        now = now_dt.isoformat()
-        distribution_date = dist_data.date_of_distribution.isoformat() if dist_data.date_of_distribution else now_dt.date().isoformat()
+        now = now_dt
+        distribution_date = dist_data.date_of_distribution if dist_data.date_of_distribution else now_dt.date()
         dist_id = generate_distribution_id()
-        
-        cursor = await db.execute(
-            """INSERT INTO distributions (distribution_id, device_ids, device_count,
+
+        result = await session.execute(
+            text("""INSERT INTO distributions (distribution_id, device_ids, device_count,
                 from_user_id, from_user_name, from_user_type, to_user_id, to_user_name, to_user_type,
                 status, request_date, date_of_distribution, approval_date, approved_by, approved_by_name,
                 notes, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                dist_id, json.dumps(dist_data.device_ids),
-                len(dist_data.device_ids), from_user_id, from_user["name"],
-                role_to_type.get(from_user["role"], "noc"),
-                str(to_user["id"]), to_user["name"],
-                role_to_type.get(to_user["role"], "pdic_staff"),
-                DistributionStatus.PENDING_RECEIPT.value, now, distribution_date, now,
-                from_user_id, from_user["name"],
-                dist_data.notes, from_user_id, now, now
-            )
+            VALUES (:dist_id, :device_ids, :device_count, :from_user_id, :from_user_name, :from_user_type,
+                :to_user_id, :to_user_name, :to_user_type, :status, :request_date, :date_of_distribution,
+                :approval_date, :approved_by, :approved_by_name, :notes, :created_by, :created_at, :updated_at)"""),
+            {
+                "dist_id": dist_id,
+                "device_ids": json.dumps(dist_data.device_ids),
+                "device_count": len(dist_data.device_ids),
+                "from_user_id": from_user_id,
+                "from_user_name": from_user["name"],
+                "from_user_type": role_to_type.get(from_user["role"], "noc"),
+                "to_user_id": str(to_user["id"]),
+                "to_user_name": to_user["name"],
+                "to_user_type": role_to_type.get(to_user["role"], "pdic_staff"),
+                "status": DistributionStatus.PENDING_RECEIPT.value,
+                "request_date": now,
+                "date_of_distribution": distribution_date,
+                "approval_date": now,
+                "approved_by": from_user_id,
+                "approved_by_name": from_user["name"],
+                "notes": dist_data.notes,
+                "created_by": from_user_id,
+                "created_at": now,
+                "updated_at": now,
+            }
         )
-        new_id = str(cursor.lastrowid)
+        new_id = str(result.lastrowid)
 
-        await db.executemany(
-            """INSERT INTO distribution_devices (distribution_id, device_id, created_at) VALUES (?, ?, ?)""",
-            [(dist_id, int(dev_id), now) for dev_id in dist_data.device_ids],
-        )
+        dd_rows = [{"dist_id": dist_id, "device_id": int(dev_id), "now": now} for dev_id in dist_data.device_ids]
+        if dd_rows:
+            await session.execute(
+                text("INSERT INTO distribution_devices (distribution_id, device_id, created_at) VALUES (:dist_id, :device_id, :now)"),
+                dd_rows
+            )
 
         manifest_file = None
         try:
@@ -734,32 +754,26 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 to_user_name=to_user.get("name", "Unknown"),
                 created_at_iso=now,
             )
-            await db.execute(
-                "UPDATE distributions SET manifest_file = ? WHERE id = ?",
-                (manifest_file, int(new_id))
+            await session.execute(
+                text("UPDATE distributions SET manifest_file = :mf WHERE id = :id"),
+                {"mf": manifest_file, "id": int(new_id)}
             )
         except Exception:
-            # Distribution should still succeed even if manifest generation fails.
             manifest_file = None
 
-        await db.commit()
-    
-    # NOTE: Device holders are NOT moved here. They move only when the recipient
-    # confirms receipt (confirm_receipt with received=True). This ensures devices
-    # do not appear in the recipient's account before they acknowledge them.
-    
-    # Notify recipient — ask them to confirm receipt
+        await session.commit()
+
     sender_label = _sender_display_name(from_user)
     await notification_service.create_notification(
         user_id=str(to_user["id"]),
         title="Action Required: Confirm Device Receipt",
         message=f"{len(dist_data.device_ids)} device(s) have been sent to you by {sender_label}. "
             f"An Excel manifest is available in Delivery Confirmations. "
-                f"Please confirm receipt on your Delivery Confirmations page (Distribution ID: {dist_id}).",
+            f"Please confirm receipt on your Delivery Confirmations page (Distribution ID: {dist_id}).",
         notification_type="warning", category="distribution",
         link="/delivery-confirmations"
     )
-    
+
     distribution = await get_distribution_by_id(new_id)
     if not distribution:
         distribution = await get_distribution_by_code(dist_id)
@@ -769,61 +783,36 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 async def update_distribution_status(
     distribution_id: str, status: str, user: Dict[str, Any], notes: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
-    """Update distribution status"""
     dist = await get_distribution_by_id(distribution_id)
     if not dist:
         return None
-    
-    now = datetime.now().replace(tzinfo=None).isoformat()
+
+    now = datetime.now().replace(tzinfo=None)
     user_id = str(user.get("id", user.get("_id", "")))
     user_role = str(user.get("role", "")).lower()
 
-    if status in {DistributionStatus.APPROVED.value, DistributionStatus.REJECTED.value} and user_role in {"super_admin", "manager", "pdic_staff"}:
-        allowed = await approval_service.is_role_allowed_for_approval_type(user_role, "distribution")
-        if not allowed:
-            raise PermissionError(f"{user_role.capitalize()} role is not allowed to process distribution approvals")
-    
-    async with get_db() as db:
-        update_fields = ["status = ?", "updated_at = ?"]
-        params = [status, now]
-        
+    async with async_session_factory() as session:
+        update_parts = ["status = :status", "updated_at = :now"]
+        params: Dict[str, Any] = {"status": status, "now": now, "id": int(distribution_id)}
+
         if status == DistributionStatus.APPROVED.value:
-            update_fields.extend(["approval_date = ?", "approved_by = ?", "approved_by_name = ?"])
-            params.extend([now, user_id, user["name"]])
-            
-            await db.execute(
-                """UPDATE approvals SET status = 'approved', approved_by = ?, approved_by_name = ?,
-                    approval_date = ?, updated_at = ? WHERE entity_id = ? AND approval_type = 'distribution'""",
-                (user_id, user["name"], now, now, distribution_id)
-            )
-        
+            update_parts.extend(["approval_date = :now2", "approved_by = :uid", "approved_by_name = :uname"])
+            params["now2"] = now
+            params["uid"] = user_id
+            params["uname"] = user["name"]
+
         elif status == DistributionStatus.DELIVERED.value:
-            update_fields.append("delivery_date = ?")
-            params.append(now)
-        
-        elif status == DistributionStatus.REJECTED.value:
-            await db.execute(
-                """UPDATE approvals SET status = 'rejected', approved_by = ?, approved_by_name = ?,
-                    approval_date = ?, rejection_reason = ?, updated_at = ?
-                    WHERE entity_id = ? AND approval_type = 'distribution'""",
-                (user_id, user["name"], now, notes, now, distribution_id)
-            )
-            # Devices were never moved (holder update is deferred until recipient confirms receipt),
-            # so no device reset is needed on rejection.
-        
+            update_parts.append("delivery_date = :now2")
+            params["now2"] = now
+
         if notes:
-            update_fields.append("notes = ?")
-            params.append(notes)
-        
-        params.append(int(distribution_id))
-        await db.execute(f"UPDATE distributions SET {', '.join(update_fields)} WHERE id = ?", params)
-        await db.commit()
-    
-    # NOTE: Device holders are moved immediately when a distribution is CREATED.
-    # Re-updating holders here on APPROVED would corrupt the chain if devices
-    # have already been redistributed onward. Only REJECTED reverts holders.
-    
-    # Notification
+            update_parts.append("notes = :notes")
+            params["notes"] = notes
+
+        set_clause = ", ".join(update_parts)
+        await session.execute(text(f"UPDATE distributions SET {set_clause} WHERE id = :id"), params)
+        await session.commit()
+
     await notification_service.create_notification(
         user_id=dist["from_user_id"],
         title=f"Distribution {status.capitalize()}",
@@ -831,7 +820,7 @@ async def update_distribution_status(
         notification_type="success" if status in ["approved", "delivered"] else "warning",
         category="distribution", link=f"/distributions?distributionId={distribution_id}"
     )
-    
+
     return await get_distribution_by_id(distribution_id)
 
 
@@ -862,7 +851,7 @@ async def confirm_receipt(
         except (json.JSONDecodeError, TypeError):
             device_ids = []
 
-    now = datetime.now().replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None)
 
     role_to_type = {
         "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
@@ -871,16 +860,12 @@ async def confirm_receipt(
     }
 
     if received:
-        # Look up to_user role so we can set the correct device status
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT role FROM users WHERE id = ?", (int(dist["to_user_id"]),)
-            )
-            to_user_row = await cursor.fetchone()
-            to_user_role = dict(to_user_row)["role"] if to_user_row else "operator"
+        async with async_session_factory() as session:
+            to_user_row = (await session.execute(
+                text("SELECT role FROM users WHERE id = :id"), {"id": int(dist["to_user_id"])}
+            )).mappings().first()
+            to_user_role = to_user_row["role"] if to_user_row else "operator"
 
-        # Move devices FIRST — before marking the distribution as approved.
-        # If this fails, the distribution stays PENDING_RECEIPT and the user can retry.
         device_status_for_recipient = (
             DeviceStatus.IN_USE.value if to_user_role == "operator" else DeviceStatus.DISTRIBUTED.value
         )
@@ -899,21 +884,24 @@ async def confirm_receipt(
             notes=f"Receipt confirmed for distribution {dist['distribution_id']}",
         )
 
-        # Mark distribution as approved (only after devices are successfully moved)
-        async with get_db() as db:
-            await db.execute(
-                """UPDATE distributions
-                   SET status = ?, approval_date = ?, approved_by = ?, approved_by_name = ?,
-                       notes = COALESCE(?, notes), updated_at = ?
-                   WHERE id = ?""",
-                (
-                    DistributionStatus.APPROVED.value, now, user_id, user["name"],
-                    notes, now, int(distribution_id)
-                )
+        async with async_session_factory() as session:
+            await session.execute(
+                text("""UPDATE distributions
+                   SET status = :status, approval_date = :now, approved_by = :uid, approved_by_name = :uname,
+                       notes = COALESCE(:notes, notes), updated_at = :now2
+                   WHERE id = :id"""),
+                {
+                    "status": DistributionStatus.APPROVED.value,
+                    "now": now,
+                    "uid": user_id,
+                    "uname": user["name"],
+                    "notes": notes,
+                    "now2": now,
+                    "id": int(distribution_id)
+                }
             )
-            await db.commit()
+            await session.commit()
 
-        # Notify sender: receipt confirmed
         await notification_service.create_notification(
             user_id=dist["from_user_id"],
             title="Receipt Confirmed",
@@ -924,18 +912,17 @@ async def confirm_receipt(
         )
 
     else:
-        async with get_db() as db:
-            await db.execute(
-                """UPDATE distributions
-                   SET status = 'disputed', notes = COALESCE(?, notes), updated_at = ?
-                   WHERE id = ?""",
-                (notes, now, int(distribution_id))
+        async with async_session_factory() as session:
+            await session.execute(
+                text("""UPDATE distributions
+                   SET status = 'disputed', notes = COALESCE(:notes, notes), updated_at = :now
+                   WHERE id = :id"""),
+                {"notes": notes, "now": now, "id": int(distribution_id)}
             )
-            cursor = await db.execute(
-                "SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff') AND status = 'active'"
-            )
-            admin_rows = await cursor.fetchall()
-            await db.commit()
+            admin_rows = (await session.execute(
+                text("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff') AND status = 'active'")
+            )).mappings().all()
+            await session.commit()
 
         sender_label = (
             "PDIC" if str(dist.get("from_user_type") or "").lower() in {"noc", "pdic_staff"}
@@ -947,14 +934,14 @@ async def confirm_receipt(
         )
         await notification_service.bulk_create_notifications([
             {
-                "user_id": str(row[0]),
+                "user_id": str(r["id"]),
                 "title": "Device Not Received — Dispute",
                 "message": dispute_msg,
                 "notification_type": "error",
                 "category": "distribution",
                 "link": f"/distributions?distributionId={distribution_id}"
             }
-            for row in admin_rows
+            for r in admin_rows
         ] + [
             {
                 "user_id": dist["from_user_id"],
@@ -1002,16 +989,16 @@ async def confirm_disputed_return(
     )
 
     sender_holder_type = role_to_type.get(sender_role, "pdic_staff")
-    now = datetime.now().replace(tzinfo=None).isoformat()
+    now = datetime.now().replace(tzinfo=None)
 
-    async with get_db() as db:
-        await db.execute(
-            """UPDATE distributions
-               SET status = ?, notes = COALESCE(?, notes), updated_at = ?, delivery_date = ?
-               WHERE id = ?""",
-            (DistributionStatus.REJECTED.value, notes, now, now, int(distribution_id)),
+    async with async_session_factory() as session:
+        await session.execute(
+            text("""UPDATE distributions
+               SET status = :status, notes = COALESCE(:notes, notes), updated_at = :now, delivery_date = :now2
+               WHERE id = :id"""),
+            {"status": DistributionStatus.REJECTED.value, "notes": notes, "now": now, "now2": now, "id": int(distribution_id)}
         )
-        await db.commit()
+        await session.commit()
 
         device_ids = dist.get("device_ids", []) or []
         if device_ids:
@@ -1045,7 +1032,6 @@ async def confirm_disputed_return(
 
 
 async def cancel_distribution(distribution_id: str, user: dict) -> bool:
-    """Cancel a distribution"""
     dist = await get_distribution_by_id(distribution_id)
     if not dist:
         return False
@@ -1056,17 +1042,14 @@ async def cancel_distribution(distribution_id: str, user: dict) -> bool:
         raise ValueError("Distribution is already cancelled")
     if dist["status"] == DistributionStatus.APPROVED.value:
         raise ValueError("Cannot cancel a distribution that has already been confirmed")
-    
-    async with get_db() as db:
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        await db.execute(
-            "UPDATE distributions SET status = ?, updated_at = ? WHERE id = ?",
-            (DistributionStatus.CANCELLED.value, now, int(distribution_id))
+
+    async with async_session_factory() as session:
+        now = datetime.now().replace(tzinfo=None)
+        await session.execute(
+            text("UPDATE distributions SET status = :status, updated_at = :now WHERE id = :id"),
+            {"status": DistributionStatus.CANCELLED.value, "now": now, "id": int(distribution_id)}
         )
-        await db.commit()
-    
-    # Devices were never moved (hold is deferred until receipt confirmation),
-    # so no device holder reset is needed on cancel.
+        await session.commit()
     return True
 
 
@@ -1122,13 +1105,14 @@ async def get_distribution_mac_nuid_export(
 
     devices: List[Dict[str, Any]] = []
     if device_ids:
-        placeholders = ",".join(["?"] * len(device_ids))
-        async with get_db() as db:
-            cursor = await db.execute(
-                f"SELECT id, device_id, device_type, manufacturer, model, serial_number, mac_address, nuid FROM devices WHERE id IN ({placeholders})",
-                tuple(int(device_id) for device_id in device_ids)
-            )
-            devices = rows_to_list(await cursor.fetchall())
+        ph = ",".join([f":d_{i}" for i in range(len(device_ids))])
+        params = {f"d_{i}": int(did) for i, did in enumerate(device_ids)}
+        async with async_session_factory() as session:
+            rows = (await session.execute(
+                text(f"SELECT id, device_id, device_type, manufacturer, model, serial_number, mac_address, nuid FROM devices WHERE id IN ({ph})"),
+                params
+            )).mappings().all()
+            devices = [dict(r) for r in rows]
 
     return _build_distribution_mac_nuid_file(
         distribution=dist,
@@ -1138,44 +1122,45 @@ async def get_distribution_mac_nuid_export(
 
 
 async def get_pending_distributions() -> List[Dict[str, Any]]:
-    """Get all pending distributions"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM distributions WHERE status = ? ORDER BY created_at DESC LIMIT 1000",
-            (DistributionStatus.PENDING.value,)
-        )
-        rows = await cursor.fetchall()
+    async with async_session_factory() as session:
+        rows = (await session.execute(
+            text("SELECT * FROM distributions WHERE status = :status ORDER BY created_at DESC LIMIT 1000"),
+            {"status": DistributionStatus.PENDING.value}
+        )).mappings().all()
         result = []
-        for r in rows_to_list(rows):
-            if r.get("device_ids"):
+        for r in rows:
+            d = dict(r)
+            if d.get("device_ids"):
                 try:
-                    r["device_ids"] = json.loads(r["device_ids"])
+                    d["device_ids"] = json.loads(d["device_ids"])
                 except (json.JSONDecodeError, TypeError):
-                    r["device_ids"] = []
-            result.append(r)
+                    d["device_ids"] = []
+            result.append(d)
         return result
 
 
 async def get_distribution_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, int]:
-    """Get distribution statistics"""
-    async with get_db() as db:
+    async with async_session_factory() as session:
+        params: Dict[str, Any] = {}
         conditions = []
-        params = []
         if start_date:
-            conditions.append("created_at >= ?")
-            params.append(start_date)
+            conditions.append("created_at >= :start_date")
+            params["start_date"] = start_date
         if end_date:
-            conditions.append("created_at <= ?")
-            params.append(end_date)
+            conditions.append("created_at <= :end_date")
+            params["end_date"] = end_date
         where = " AND ".join(conditions) if conditions else "1=1"
 
         by_status = {}
-        cursor = await db.execute(f"SELECT status, COUNT(*) as cnt FROM distributions WHERE {where} GROUP BY status", params)
-        for row in await cursor.fetchall():
-            by_status[row[0]] = row[1]
+        rows = (await session.execute(
+            text(f"SELECT status, COUNT(*) AS cnt FROM distributions WHERE {where} GROUP BY status"),
+            params
+        )).mappings().all()
+        for row in rows:
+            by_status[row["status"]] = row["cnt"]
 
         total = sum(by_status.values())
-        stats = {
+        return {
             "total": total,
             "pending": by_status.get("pending", 0),
             "pending_receipt": by_status.get("pending_receipt", 0),
@@ -1184,16 +1169,15 @@ async def get_distribution_stats(start_date: Optional[str] = None, end_date: Opt
             "rejected": by_status.get("rejected", 0),
             "disputed": by_status.get("disputed", 0),
         }
-        return stats
 
 
 async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
-    """Re-process all approved distributions to sync device holders."""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM distributions WHERE status = ? LIMIT 5000", (DistributionStatus.APPROVED.value,))
-        rows = await cursor.fetchall()
-
-        distributions = rows_to_list(rows)
+    async with async_session_factory() as session:
+        rows = (await session.execute(
+            text("SELECT * FROM distributions WHERE status = :status LIMIT 5000"),
+            {"status": DistributionStatus.APPROVED.value}
+        )).mappings().all()
+        distributions = [dict(r) for r in rows]
         synced_count = 0
         errors = []
         user_id = str(user.get("id", user.get("_id", "system")))

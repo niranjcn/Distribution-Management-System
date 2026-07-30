@@ -12,8 +12,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import settings
-from app.database import get_db
-import pymysql
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 logger = logging.getLogger(__name__)
 
@@ -60,53 +61,59 @@ def _normalize_schedule(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def _ensure_schedule(db) -> Dict[str, Any]:
+async def _ensure_schedule(session) -> Dict[str, Any]:
     try:
-        cursor = await db.execute(
-            "SELECT frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at "
-            "FROM backup_schedules LIMIT 1"
+        result = await session.execute(
+            text("SELECT frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at FROM backup_schedules LIMIT 1")
         )
-        row = await cursor.fetchone()
-    except pymysql.err.ProgrammingError as exc:
-        if exc.args and exc.args[0] == 1146:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS backup_schedules (
-                    id INT PRIMARY KEY,
-                    frequency VARCHAR(16) NOT NULL,
-                    day_of_week INT NULL,
-                    day_of_month INT NULL,
-                    time_of_day VARCHAR(5) NOT NULL,
-                    last_run_at VARCHAR(64),
-                    updated_at VARCHAR(64) NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                """
+        row = result.mappings().first()
+    except ProgrammingError as exc:
+        if exc.orig and exc.orig.args[0] == 1146:
+            await session.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS backup_schedules (
+                        id INT PRIMARY KEY,
+                        frequency VARCHAR(16) NOT NULL,
+                        day_of_week INT NULL,
+                        day_of_month INT NULL,
+                        time_of_day VARCHAR(5) NOT NULL,
+                        last_run_at VARCHAR(64),
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
             )
-            await db.commit()
-            cursor = await db.execute(
-                "SELECT frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at "
-                "FROM backup_schedules LIMIT 1"
+            await session.commit()
+            result = await session.execute(
+                text("SELECT frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at FROM backup_schedules LIMIT 1")
             )
-            row = await cursor.fetchone()
+            row = result.mappings().first()
         else:
             raise
     if row:
         return row
 
-    now = datetime.now().replace(microsecond=0).isoformat()
-    await db.execute(
-        "INSERT IGNORE INTO backup_schedules "
-        "(id, frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at) "
-        "VALUES (1, ?, ?, ?, ?, ?, ?)",
-        ("daily", None, None, settings.DB_BACKUP_TIME, None, now),
+    now = datetime.now().replace(microsecond=0)
+    await session.execute(
+        text("""
+            INSERT IGNORE INTO backup_schedules
+            (id, frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at)
+            VALUES (1, :frequency, :day_of_week, :day_of_month, :time_of_day, :last_run_at, :updated_at)
+        """),
+        {
+            "frequency": "daily",
+            "day_of_week": None,
+            "day_of_month": None,
+            "time_of_day": settings.DB_BACKUP_TIME,
+            "last_run_at": None,
+            "updated_at": now,
+        },
     )
-    await db.commit()
+    await session.commit()
 
-    cursor = await db.execute(
-        "SELECT frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at "
-        "FROM backup_schedules LIMIT 1"
+    result = await session.execute(
+        text("SELECT frequency, day_of_week, day_of_month, time_of_day, last_run_at, updated_at FROM backup_schedules LIMIT 1")
     )
-    row = await cursor.fetchone()
+    row = result.mappings().first()
     return row or {
         "frequency": "daily",
         "day_of_week": None,
@@ -118,8 +125,8 @@ async def _ensure_schedule(db) -> Dict[str, Any]:
 
 
 async def get_db_backup_schedule() -> Dict[str, Any]:
-    async with get_db() as db:
-        row = await _ensure_schedule(db)
+    async with async_session_factory() as session:
+        row = await _ensure_schedule(session)
         return _normalize_schedule(row)
 
 
@@ -132,8 +139,8 @@ async def update_db_backup_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
     day_of_month = payload.get("day_of_month")
     time_of_day = payload.get("time_of_day")
 
-    async with get_db() as db:
-        current = await _ensure_schedule(db)
+    async with async_session_factory() as session:
+        current = await _ensure_schedule(session)
 
     if not time_of_day:
         time_of_day = current.get("time_of_day") or settings.DB_BACKUP_TIME
@@ -158,17 +165,25 @@ async def update_db_backup_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         day_of_week = None
         day_of_month = None
 
-    now = datetime.now().replace(microsecond=0).isoformat()
+    now = datetime.now().replace(microsecond=0)
 
-    async with get_db() as db:
-        await _ensure_schedule(db)
-        await db.execute(
-            "UPDATE backup_schedules "
-            "SET frequency = ?, day_of_week = ?, day_of_month = ?, time_of_day = ?, updated_at = ? "
-            "WHERE id = 1",
-            (frequency, day_of_week, day_of_month, time_of_day, now),
+    async with async_session_factory() as session:
+        await _ensure_schedule(session)
+        await session.execute(
+            text("""
+                UPDATE backup_schedules
+                SET frequency = :frequency, day_of_week = :day_of_week, day_of_month = :day_of_month, time_of_day = :time_of_day, updated_at = :updated_at
+                WHERE id = 1
+            """),
+            {
+                "frequency": frequency,
+                "day_of_week": day_of_week,
+                "day_of_month": day_of_month,
+                "time_of_day": time_of_day,
+                "updated_at": now,
+            },
         )
-        await db.commit()
+        await session.commit()
 
     reschedule_db_backup_job(time_of_day)
 
@@ -314,27 +329,27 @@ async def run_db_backup_once() -> Dict[str, Any]:
 
     return {
         "path": str(target_path),
-        "created_at": now.isoformat(),
+        "created_at": now,
     }
 
 
 async def run_db_backup_if_due() -> Optional[Dict[str, Any]]:
     now = datetime.now().replace(microsecond=0)
 
-    async with get_db() as db:
-        schedule = await _ensure_schedule(db)
+    async with async_session_factory() as session:
+        schedule = await _ensure_schedule(session)
         schedule_dict = _normalize_schedule(schedule)
         if not _is_backup_due(schedule_dict, now):
             return None
 
     result = await run_db_backup_once()
 
-    async with get_db() as db:
-        await db.execute(
-            "UPDATE backup_schedules SET last_run_at = ? WHERE id = 1",
-            (now.isoformat(),),
+    async with async_session_factory() as session:
+        await session.execute(
+            text("UPDATE backup_schedules SET last_run_at = :last_run_at WHERE id = 1"),
+            {"last_run_at": now},
         )
-        await db.commit()
+        await session.commit()
 
     return result
 
@@ -374,8 +389,8 @@ async def start_db_backup_scheduler() -> AsyncIOScheduler:
     if SCHEDULER and SCHEDULER.running:
         return SCHEDULER
 
-    async with get_db() as db:
-        schedule = await _ensure_schedule(db)
+    async with async_session_factory() as session:
+        schedule = await _ensure_schedule(session)
         time_of_day = schedule.get("time_of_day") or settings.DB_BACKUP_TIME
 
     scheduler = AsyncIOScheduler()

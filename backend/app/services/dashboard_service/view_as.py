@@ -4,8 +4,9 @@ from typing import Dict, Any, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
+from sqlalchemy import text
 
-from app.database import get_db, rows_to_list
+from app.database_sqlalchemy import async_session_factory
 from app.services import device_service
 
 from .helpers import _build_date_filter, _resolve_scope_root_for_sub_distribution_manager, _get_descendant_user_ids
@@ -24,49 +25,94 @@ async def get_view_as_dashboard(
     stats = await get_dashboard_stats(target_user, start_date, end_date)
     advanced = await get_advanced_dashboard_metrics(target_user, start_date, end_date)
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         scope_root_id = _resolve_scope_root_for_sub_distribution_manager(target_user, user_id)
 
         if role in ("sub_distributor",):
-            cursor = await db.execute(
-                "SELECT id, name, email, role, status, phone, location FROM users WHERE role = 'operator' AND parent_id IN (SELECT id FROM users WHERE role = 'cluster' AND parent_id IN (SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = ?) UNION SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = ?)",
-                (int(user_id), int(user_id))
-            )
-            target_users = rows_to_list(await cursor.fetchall())
+            rows = (await session.execute(
+                text("""SELECT id, name, email, role, status, phone, location FROM users
+                WHERE role = 'operator' AND parent_id IN (
+                    SELECT id FROM users WHERE role = 'cluster' AND parent_id IN (
+                        SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = :uid
+                    )
+                    UNION
+                    SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = :uid2
+                )"""),
+                {"uid": int(user_id), "uid2": int(user_id)}
+            )).mappings().all()
+            target_users = [dict(r) for r in rows]
         elif role == "cluster":
-            cursor = await db.execute(
-                "SELECT id, name, email, role, status FROM users WHERE role = 'operator' AND parent_id = ?",
-                (int(user_id),)
-            )
-            target_users = rows_to_list(await cursor.fetchall())
+            rows = (await session.execute(
+                text("SELECT id, name, email, role, status FROM users WHERE role = 'operator' AND parent_id = :uid"),
+                {"uid": int(user_id)}
+            )).mappings().all()
+            target_users = [dict(r) for r in rows]
         else:
             target_users = []
 
-        scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id)) if role in ("sub_distribution_manager", "sub_distributor") else [user_id]
+        scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id)) if role in ("sub_distribution_manager", "sub_distributor") else [str(user_id)]
 
-        dev_conds = [f"current_holder_id IN ({','.join(['?'] * len(scope_ids))})"] if len(scope_ids) > 0 else ["1=0"]
-        dev_params = list(scope_ids) if len(scope_ids) > 0 else []
-        dc, dp = _build_date_filter(" AND ".join(dev_conds), tuple(dev_params), start_date, end_date)
-        cursor = await db.execute(f"SELECT * FROM devices WHERE {dc}", dp)
-        target_devices = rows_to_list(await cursor.fetchall())
+        dev_ph = ",".join([f":d_{i}" for i in range(len(scope_ids))]) if scope_ids else "''"
+        dev_params: Dict[str, Any] = {f"d_{i}": sid for i, sid in enumerate(scope_ids)}
+        dts, dte = (start_date, end_date) if (start_date or end_date) else (None, None)
+        date_conds = []
+        if dts:
+            date_conds.append("created_at >= :ds")
+            dev_params["ds"] = dts
+        if dte:
+            date_conds.append("created_at <= :de")
+            dev_params["de"] = dte
+        date_clause = " AND ".join(date_conds) if date_conds else "1=1"
+        dc = f"current_holder_id IN ({dev_ph})" if scope_ids else "1=0"
+
+        rows = (await session.execute(
+            text(f"SELECT * FROM devices WHERE {dc} AND {date_clause}"), dev_params
+        )).mappings().all()
+        target_devices = [dict(r) for r in rows]
 
         str_scope_ids = [str(s) for s in scope_ids]
-        str_placeholders = ",".join(['?'] * len(str_scope_ids))
-        def_conds = [f"reported_by IN ({str_placeholders})"] if len(str_scope_ids) > 0 else ["1=0"]
-        dfc, dfp = _build_date_filter(" AND ".join(def_conds), tuple(str_scope_ids), start_date, end_date)
-        cursor = await db.execute(f"SELECT * FROM defects WHERE {dfc} LIMIT 1000", dfp)
-        target_defects = rows_to_list(await cursor.fetchall())
+        str_ph = ",".join([f":s_{i}" for i in range(len(str_scope_ids))]) if str_scope_ids else "''"
+        def_params: Dict[str, Any] = {f"s_{i}": sid for i, sid in enumerate(str_scope_ids)}
+        if dts:
+            def_params["ds"] = dts
+        if dte:
+            def_params["de"] = dte
+        def_dc = f"reported_by IN ({str_ph})" if str_scope_ids else "1=0"
 
-        ret_conds = [f"requested_by IN ({str_placeholders})"] if len(str_scope_ids) > 0 else ["1=0"]
-        rc, rp = _build_date_filter(" AND ".join(ret_conds), tuple(str_scope_ids), start_date, end_date)
-        cursor = await db.execute(f"SELECT * FROM returns WHERE {rc} LIMIT 1000", rp)
-        target_returns = rows_to_list(await cursor.fetchall())
+        rows = (await session.execute(
+            text(f"SELECT * FROM defects WHERE {def_dc} AND {date_clause} LIMIT 1000"), def_params
+        )).mappings().all()
+        target_defects = [dict(r) for r in rows]
 
-        dist_conds = [f"(from_user_id IN ({','.join(['?'] * len(scope_ids))}) OR to_user_id IN ({','.join(['?'] * len(scope_ids))}))"] if len(scope_ids) > 0 else ["1=0"]
-        dist_params = list(scope_ids) + list(scope_ids) if len(scope_ids) > 0 else []
-        dic, dip = _build_date_filter(" AND ".join(dist_conds), tuple(dist_params), start_date, end_date)
-        cursor = await db.execute(f"SELECT * FROM distributions WHERE {dic}", dip)
-        target_distributions = rows_to_list(await cursor.fetchall())
+        ret_params: Dict[str, Any] = {f"s_{i}": sid for i, sid in enumerate(str_scope_ids)}
+        if dts:
+            ret_params["ds"] = dts
+        if dte:
+            ret_params["de"] = dte
+        ret_dc = f"requested_by IN ({str_ph})" if str_scope_ids else "1=0"
+
+        rows = (await session.execute(
+            text(f"SELECT * FROM returns WHERE {ret_dc} AND {date_clause} LIMIT 1000"), ret_params
+        )).mappings().all()
+        target_returns = [dict(r) for r in rows]
+
+        dist_ph1 = ",".join([f":df_{i}" for i in range(len(scope_ids))]) if scope_ids else "''"
+        dist_ph2 = ",".join([f":dt_{i}" for i in range(len(scope_ids))]) if scope_ids else "''"
+        dist_params: Dict[str, Any] = {}
+        if scope_ids:
+            for i, sid in enumerate(scope_ids):
+                dist_params[f"df_{i}"] = sid
+                dist_params[f"dt_{i}"] = sid
+        if dts:
+            dist_params["ds"] = dts
+        if dte:
+            dist_params["de"] = dte
+        dist_dc = f"(from_user_id IN ({dist_ph1}) OR to_user_id IN ({dist_ph2}))" if scope_ids else "1=0"
+
+        rows = (await session.execute(
+            text(f"SELECT * FROM distributions WHERE {dist_dc} AND {date_clause}"), dist_params
+        )).mappings().all()
+        target_distributions = [dict(r) for r in rows]
 
     return {
         "user": {"id": target_user.get("id"), "name": target_user.get("name", ""), "role": target_user.get("role", "")},
@@ -85,86 +131,79 @@ async def generate_report(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Generate a comprehensive system report as Excel with date-filtered data."""
     role = current_user.get("role")
     user_id = str(current_user.get("_id", current_user.get("id", "")))
     scope_root_id = _resolve_scope_root_for_sub_distribution_manager(current_user, user_id)
 
-    async with get_db() as db:
-        date_cond, date_params = _build_date_filter("1=1", (), start_date, end_date)
+    async with async_session_factory() as session:
+        date_cond, date_params_tup = _build_date_filter("1=1", {}, start_date, end_date)
 
-        scope_cond = "1=1"
-        scope_params: List[Any] = []
+        scope_ids: List[str] = []
         if role not in ["super_admin", "md_director", "manager", "pdic_staff"]:
-            scoped_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
-            placeholders = ",".join(["?"] * len(scoped_ids))
-            scope_cond = f"current_holder_id IN ({placeholders})"
-            scope_params = list(scoped_ids)
+            scoped_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id))
+            scope_ids = [str(s) for s in scoped_ids]
 
         device_stats = await device_service.get_device_stats(start_date, end_date)
 
-        device_type_cond = f"({date_cond}) AND ({scope_cond})"
-        device_type_params = list(date_params) + scope_params
-
-        cursor = await db.execute(
-            f"""SELECT
+        cursor = await session.execute(
+            text(f"""SELECT
                    COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
                    COUNT(*) AS total
-               FROM devices
-               WHERE {date_cond}
-               GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
-               ORDER BY total DESC""",
-            date_params
+                FROM devices
+                WHERE {date_cond}
+                GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
+                ORDER BY total DESC"""),
+            date_params_tup
         )
-        all_devices_by_type = {(r["device_type"]): int(r["total"]) for r in await cursor.fetchall()}
+        all_devices_by_type = {(r["device_type"]): int(r["total"]) for r in cursor.mappings().all()}
 
-        cursor = await db.execute(
-            f"""SELECT
+        cursor = await session.execute(
+            text(f"""SELECT
                    COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown') AS device_type,
                    COUNT(*) AS total
-               FROM devices
-               WHERE status IN ('distributed', 'in_use') AND {date_cond}
-               GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
-               ORDER BY total DESC""",
-            date_params
+                FROM devices
+                WHERE status IN ('distributed', 'in_use') AND {date_cond}
+                GROUP BY COALESCE(NULLIF(TRIM(device_type), ''), 'Unknown')
+                ORDER BY total DESC"""),
+            date_params_tup
         )
-        distributed_by_type = {(r["device_type"]): int(r["total"]) for r in await cursor.fetchall()}
+        distributed_by_type = {(r["device_type"]): int(r["total"]) for r in cursor.mappings().all()}
 
         date_cond_d = date_cond.replace("created_at", "d.created_at")
 
-        cursor = await db.execute(
-            f"""SELECT
-                   CAST(d.current_holder_id AS TEXT) AS holder_id,
+        cursor = await session.execute(
+            text(f"""SELECT
+                   CAST(d.current_holder_id AS CHAR) AS holder_id,
                    COALESCE(NULLIF(TRIM(u.name), ''), 'Unknown') AS holder_name,
                    COUNT(*) AS total_sent
-               FROM devices d
-               LEFT JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id
-               WHERE d.status IN ('distributed', 'in_use') AND {date_cond_d}
-               GROUP BY CAST(d.current_holder_id AS TEXT), COALESCE(NULLIF(TRIM(u.name), ''), 'Unknown')
-               ORDER BY total_sent DESC""",
-            date_params
+                FROM devices d
+                LEFT JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id
+                WHERE d.status IN ('distributed', 'in_use') AND {date_cond_d}
+                GROUP BY CAST(d.current_holder_id AS CHAR), COALESCE(NULLIF(TRIM(u.name), ''), 'Unknown')
+                ORDER BY total_sent DESC"""),
+            date_params_tup
         )
-        subdistributor_rows = await cursor.fetchall()
+        subdistributor_rows = cursor.mappings().all()
 
-        cursor = await db.execute(
-            f"""SELECT *
-               FROM devices
-               WHERE {date_cond}
-               ORDER BY id ASC""",
-            date_params
+        cursor = await session.execute(
+            text(f"""SELECT *
+                FROM devices
+                WHERE {date_cond}
+                ORDER BY id ASC"""),
+            date_params_tup
         )
-        all_device_rows = rows_to_list(await cursor.fetchall())
+        all_device_rows = [dict(r) for r in cursor.mappings().all()]
 
-        cursor = await db.execute(
-            f"""SELECT d.*,
+        cursor = await session.execute(
+            text(f"""SELECT d.*,
                        COALESCE(NULLIF(TRIM(u.name), ''), 'Unknown') AS holder_name
-               FROM devices d
-               LEFT JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id
-               WHERE d.status IN ('distributed', 'in_use') AND {date_cond_d}
-               ORDER BY d.id ASC""",
-            date_params
+                FROM devices d
+                LEFT JOIN users u ON CAST(d.current_holder_id AS UNSIGNED) = u.id
+                WHERE d.status IN ('distributed', 'in_use') AND {date_cond_d}
+                ORDER BY d.id ASC"""),
+            date_params_tup
         )
-        distributed_device_rows = rows_to_list(await cursor.fetchall())
+        distributed_device_rows = [dict(r) for r in cursor.mappings().all()]
 
     total_distributed = sum(distributed_by_type.values())
 

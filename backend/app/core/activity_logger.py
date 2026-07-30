@@ -3,7 +3,8 @@ import json
 import re
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 
 
 MEANINGFUL_ACTIVITY_RULES = [
@@ -142,29 +143,30 @@ async def log_api_activity(
     description: Optional[str] = None,
 ) -> None:
     """Persist API activity log without interrupting request flow."""
-    created_at = datetime.now().replace(tzinfo=None).isoformat()
+    created_at = datetime.now().replace(tzinfo=None)
     final_description = description or f"{method} {path} returned {status_code}"
 
     try:
-        async with get_db() as db:
-            await db.execute(
-                """INSERT INTO api_activity_logs (
+        async with async_session_factory() as session:
+            await session.execute(
+                text("""INSERT INTO api_activity_logs (
                        actor_id, actor_name, actor_role, method, path,
                        status_code, description, ip_address, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    actor_id,
-                    actor_name,
-                    actor_role,
-                    method,
-                    path,
-                    int(status_code),
-                    final_description,
-                    ip_address,
-                    created_at,
-                ),
+                   ) VALUES (:actor_id, :actor_name, :actor_role, :method, :path,
+                             :status_code, :description, :ip_address, :created_at)"""),
+                {
+                    "actor_id": actor_id,
+                    "actor_name": actor_name,
+                    "actor_role": actor_role,
+                    "method": method,
+                    "path": path,
+                    "status_code": int(status_code),
+                    "description": final_description,
+                    "ip_address": ip_address,
+                    "created_at": created_at,
+                },
             )
-            await db.commit()
+            await session.commit()
     except Exception:
         # Logging must never block API responses.
         return

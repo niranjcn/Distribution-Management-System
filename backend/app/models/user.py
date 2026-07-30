@@ -1,8 +1,13 @@
 import re
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, Dict, Any
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+
+
+class UserStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
 class UserRole(str, Enum):
@@ -16,33 +21,21 @@ class UserRole(str, Enum):
     OPERATOR = "operator"
 
 
-class UserStatus(str, Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    SUSPENDED = "suspended"
-
-
 class UserBase(BaseModel):
     email: EmailStr
     name: str = Field(..., min_length=2, max_length=100)
     role: UserRole
-    digital_id: Optional[str] = Field(default=None, max_length=128)
-    broadband_id: Optional[str] = Field(default=None, max_length=128)
-    cluster_id: Optional[str] = Field(default=None, max_length=128)
-    operator_id: Optional[str] = Field(default=None, max_length=128)
-    phone: Optional[str] = None
-    department: Optional[str] = None
+    status: UserStatus = UserStatus.ACTIVE
+    phone: str = Field(..., min_length=10)
+    designation: Optional[str] = None
     location: Optional[str] = None
     parent_id: Optional[str] = None
-    theme: Optional[str] = "light"
-    compact_mode: Optional[bool] = False
-    email_notifications: Optional[bool] = True
-    push_notifications: Optional[bool] = True
 
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=128)
-    permissions: Optional[Dict[str, bool]] = None
+    digital_id: Optional[str] = None
+    broadband_id: Optional[str] = None
 
     @field_validator("password")
     @classmethod
@@ -59,20 +52,13 @@ class UserCreate(UserBase):
 
 
 class UserUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=2, max_length=100)
-    digital_id: Optional[str] = Field(default=None, max_length=128)
-    broadband_id: Optional[str] = Field(default=None, max_length=128)
-    cluster_id: Optional[str] = Field(default=None, max_length=128)
-    operator_id: Optional[str] = Field(default=None, max_length=128)
     phone: Optional[str] = None
-    department: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    designation: Optional[str] = None
     location: Optional[str] = None
     status: Optional[UserStatus] = None
-    theme: Optional[str] = None
-    compact_mode: Optional[bool] = None
-    email_notifications: Optional[bool] = None
-    push_notifications: Optional[bool] = None
-    permissions: Optional[Dict[str, bool]] = None
+    digital_id: Optional[str] = None
+    broadband_id: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -80,20 +66,16 @@ class UserResponse(BaseModel):
     email: str
     name: str
     role: UserRole
-    digital_id: Optional[str] = None
-    broadband_id: Optional[str] = None
-    cluster_id: Optional[str] = None
-    operator_id: Optional[str] = None
+    status: UserStatus
     phone: Optional[str] = None
-    department: Optional[str] = None
+    designation: Optional[str] = None
     location: Optional[str] = None
     parent_id: Optional[str] = None
-    status: UserStatus
     is_verified: bool
-    permissions: Optional[Dict[str, bool]] = None
-    created_at: str
-    updated_at: str
-    last_login: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    last_login: Optional[datetime] = None
+    digital_ids: Optional[List[Dict[str, Any]]] = None
 
 
 class PasswordChange(BaseModel):
@@ -117,6 +99,7 @@ class PasswordChange(BaseModel):
 class ForcedCredentialUpdateRequest(BaseModel):
     current_password: str
     new_email: EmailStr
+    new_phone: str = Field(..., min_length=10)
     new_password: str = Field(..., min_length=8, max_length=128)
 
     @field_validator("new_password")
@@ -133,14 +116,10 @@ class ForcedCredentialUpdateRequest(BaseModel):
         return value
 
 
-class StatusUpdateRequest(BaseModel):
-    status: UserStatus
-
-
 class AdminCredentialUpdate(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = Field(None, min_length=8)
 
 
-class UserPermissionUpdate(BaseModel):
-    permissions: Dict[str, bool]
+class StatusUpdateRequest(BaseModel):
+    status: UserStatus

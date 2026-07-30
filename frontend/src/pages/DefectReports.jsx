@@ -14,7 +14,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { defectKeys } from '../hooks';
 import {
   Plus, Eye, AlertTriangle, MessageSquare, Loader2, RefreshCw,
-  Search, Link2, CheckCircle2, Bell, Package, Info, DollarSign
+  Search, Link2, CheckCircle2, Bell, Package, Info, DollarSign, X
 } from 'lucide-react';
 
 const DEVICE_TYPE_OPTIONS = [
@@ -92,9 +92,12 @@ const DefectReports = () => {
   const [replacementMode, setReplacementMode] = useState('existing');
   const [replacementFilter, setReplacementFilter] = useState('all');
   const [isReplacing, setIsReplacing] = useState(false);
-  const [availableDevices, setAvailableDevices] = useState([]);
-  const [loadingAvailableDevices, setLoadingAvailableDevices] = useState(false);
+  const [replacementDevices, setReplacementDevices] = useState([]);
+  const [loadingReplacementDevices, setLoadingReplacementDevices] = useState(false);
+  const [replacementDevicePage, setReplacementDevicePage] = useState(1);
+  const [hasMoreReplacementDevices, setHasMoreReplacementDevices] = useState(false);
   const [replacementSearch, setReplacementSearch] = useState('');
+  const [replacementSearchActive, setReplacementSearchActive] = useState('');
   const [replacementDeviceType, setReplacementDeviceType] = useState('all');
   const [selectedReplacementDeviceId, setSelectedReplacementDeviceId] = useState('');
   const [selectedReplacementDevice, setSelectedReplacementDevice] = useState(null);
@@ -326,6 +329,7 @@ const DefectReports = () => {
     setReplaceServiceCharge(row?.service_charge != null ? String(row.service_charge) : '');
     setReplacePaymentBillFile(null);
     setReplacementSearch('');
+    setReplacementSearchActive('');
     setReplacementDeviceType(normalizeDeviceType(row?.device_type));
     setSelectedReplacementDeviceId('');
     setSelectedReplacementDevice(null);
@@ -340,22 +344,52 @@ const DefectReports = () => {
       nuid: ''
     });
     setShowReplaceModal(true);
-    await fetchAvailableReplacementDevices(row);
+    await fetchAvailableReplacementDevices(1, '', normalizeDeviceType(row?.device_type), true, row?.device_id || null);
   };
 
-  const fetchAvailableReplacementDevices = async (row) => {
+  const fetchAvailableReplacementDevices = async (page, search, typeFilter, reset, excludeDeviceId) => {
     try {
-      setLoadingAvailableDevices(true);
-      // Use the dedicated management endpoint which returns all available/returned devices
-      const response = await devicesAPI.getDevicesForReplacement(row?.device_id || null);
-      setAvailableDevices(response.data || []);
+      setLoadingReplacementDevices(true);
+      const params = { page, page_size: 100 };
+      if (search) params.search = search;
+      if (typeFilter && typeFilter !== 'all') params.device_type = typeFilter;
+      if (excludeDeviceId) params.exclude_device_id = excludeDeviceId;
+      const response = await devicesAPI.getDevicesForReplacement(params);
+      const fetched = response.data || [];
+      const pagination = response.pagination || {};
+      setReplacementDevices(prev => reset ? fetched : [...prev, ...fetched]);
+      setReplacementDevicePage(page);
+      setHasMoreReplacementDevices(page < (pagination.total_pages || 0));
     } catch (error) {
       console.error('Failed to load available devices:', error);
       showToast('Failed to load available replacement devices', 'error');
-      setAvailableDevices([]);
+      if (reset) setReplacementDevices([]);
     } finally {
-      setLoadingAvailableDevices(false);
+      setLoadingReplacementDevices(false);
     }
+  };
+
+  const handleReplacementSearch = () => {
+    if (!replacementSearch.trim()) return;
+    setReplacementSearchActive(replacementSearch);
+    fetchAvailableReplacementDevices(1, replacementSearch, replacementDeviceType, true, selectedDefect?.device_id || null);
+  };
+
+  const handleReplacementClearSearch = () => {
+    setReplacementSearch('');
+    setReplacementSearchActive('');
+    fetchAvailableReplacementDevices(1, '', replacementDeviceType, true, selectedDefect?.device_id || null);
+  };
+
+  const handleReplacementLoadMore = () => {
+    fetchAvailableReplacementDevices(replacementDevicePage + 1, replacementSearchActive, replacementDeviceType, false, selectedDefect?.device_id || null);
+  };
+
+  const handleReplacementTypeChange = (e) => {
+    const newType = e.target.value;
+    setReplacementDeviceType(newType);
+    setReplacementSearchActive('');
+    fetchAvailableReplacementDevices(1, '', newType, true, selectedDefect?.device_id || null);
   };
 
   const applyReplacementFilter = (rows) => {
@@ -390,22 +424,6 @@ const DefectReports = () => {
   };
 
   const filteredDefectReports = applyReplacementFilter(defectReports);
-
-  const selectableReplacementDevices = availableDevices.filter((device) => {
-    if (
-      replacementDeviceType !== 'all' &&
-      normalizeDeviceType(device.device_type) !== normalizeDeviceType(replacementDeviceType)
-    ) {
-      return false;
-    }
-    if (!replacementSearch) {
-      return true;
-    }
-    const query = replacementSearch.toLowerCase();
-    return [device.device_id, device.serial_number, device.mac_address, device.model, device.manufacturer, device.nuid]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(query));
-  });
 
   const renderPaymentStatus = (row) => {
     const amount = Number(row?.return_amount || 0);
@@ -1337,7 +1355,7 @@ const DefectReports = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Type</label>
                   <select
                     value={replacementDeviceType}
-                    onChange={(e) => setReplacementDeviceType(e.target.value)}
+                    onChange={handleReplacementTypeChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                   >
                     <option value="all">All Types</option>
@@ -1346,33 +1364,40 @@ const DefectReports = () => {
                     ))}
                   </select>
                 </div>
-                <div className="flex-1">
+                <div className="flex-[2]">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <div className="flex gap-2">
                     <input
                       type="text"
                       value={replacementSearch}
                       onChange={(e) => setReplacementSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleReplacementSearch();
+                        }
+                      }}
                       placeholder="ID, serial, MAC, model..."
-                      className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                     />
+                    <Button type="button" onClick={handleReplacementSearch} disabled={loadingReplacementDevices || !replacementSearch.trim()} icon={Search} size="sm">Search</Button>
+                    <Button type="button" variant="secondary" onClick={handleReplacementClearSearch} disabled={loadingReplacementDevices} icon={X} size="sm">Clear</Button>
                   </div>
                 </div>
               </div>
 
               <div className="max-h-52 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-                {loadingAvailableDevices ? (
+                {loadingReplacementDevices && replacementDevices.length === 0 ? (
                   <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
                     <Loader2 className="w-4 h-4 animate-spin" /> Loading available devices...
                   </div>
-                ) : selectableReplacementDevices.length === 0 ? (
+                ) : replacementDevices.length === 0 ? (
                   <div className="p-4 text-sm text-gray-500 text-center">
                     <Info className="w-5 h-5 mx-auto mb-1 text-gray-400" />
                     No available devices found in stock.
                   </div>
                 ) : (
-                  selectableReplacementDevices.map((device) => (
+                  replacementDevices.map((device) => (
                     <label
                       key={device.id}
                       className={`flex items-start gap-3 p-3 cursor-pointer transition-colors ${
@@ -1403,6 +1428,20 @@ const DefectReports = () => {
                       </div>
                     </label>
                   ))
+                )}
+                {hasMoreReplacementDevices && !loadingReplacementDevices && (
+                  <button
+                    type="button"
+                    onClick={handleReplacementLoadMore}
+                    className="w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 font-medium border-t border-gray-100"
+                  >
+                    Load More
+                  </button>
+                )}
+                {loadingReplacementDevices && replacementDevices.length > 0 && (
+                  <div className="px-3 py-2 text-sm text-gray-400 text-center border-t border-gray-100">
+                    Loading...
+                  </div>
                 )}
               </div>
 

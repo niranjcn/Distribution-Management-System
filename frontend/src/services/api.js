@@ -13,7 +13,6 @@ import {
   distributionsAPI as _distributionsAPI,
   defectsAPI as _defectsAPI,
   returnsAPI as _returnsAPI,
-  approvalsAPI as _approvalsAPI,
   operatorsAPI as _operatorsAPI,
   notificationsAPI as _notificationsAPI,
   externalInventoryAPI as _externalInventoryAPI,
@@ -21,6 +20,7 @@ import {
   dashboardAPI as _dashboardAPI,
   changeRequestsAPI as _changeRequestsAPI,
   reassignmentRequestsAPI as _reassignmentRequestsAPI,
+  digitalIdsAPI as _digitalIdsAPI,
 } from './api/index.js';
 
 export const API_BASE_URL = _API_BASE_URL;
@@ -37,7 +37,6 @@ export const devicesAPI = _devicesAPI;
 export const distributionsAPI = _distributionsAPI;
 export const defectsAPI = _defectsAPI;
 export const returnsAPI = _returnsAPI;
-export const approvalsAPI = _approvalsAPI;
 export const operatorsAPI = _operatorsAPI;
 export const notificationsAPI = _notificationsAPI;
 export const externalInventoryAPI = _externalInventoryAPI;
@@ -45,6 +44,7 @@ export const reportsAPI = _reportsAPI;
 export const dashboardAPI = _dashboardAPI;
 export const changeRequestsAPI = _changeRequestsAPI;
 export const reassignmentRequestsAPI = _reassignmentRequestsAPI;
+export const digitalIdsAPI = _digitalIdsAPI;
 
 const api = {
   auth: _authAPI,
@@ -53,7 +53,6 @@ const api = {
   distributions: _distributionsAPI,
   defects: _defectsAPI,
   returns: _returnsAPI,
-  approvals: _approvalsAPI,
   operators: _operatorsAPI,
   notifications: _notificationsAPI,
   externalInventory: _externalInventoryAPI,
@@ -61,6 +60,7 @@ const api = {
   dashboard: _dashboardAPI,
   changeRequests: _changeRequestsAPI,
   reassignmentRequests: _reassignmentRequestsAPI,
+  digitalIds: _digitalIdsAPI,
 };
 
 export default api;

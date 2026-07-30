@@ -60,12 +60,13 @@ export const authAPI = {
     }
   },
 
-  completeForcedUpdate: async (currentPassword, newEmail, newPassword) => {
+  completeForcedUpdate: async (currentPassword, newEmail, newPhone, newPassword) => {
     const response = await apiRequest('/auth/complete-forced-update', {
       method: 'POST',
       body: JSON.stringify({
         current_password: currentPassword,
         new_email: newEmail,
+        new_phone: newPhone,
         new_password: newPassword,
       }),
     });

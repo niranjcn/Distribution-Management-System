@@ -15,7 +15,6 @@ class NotificationCategory(str, Enum):
     DISTRIBUTION = "distribution"
     RETURN = "return"
     DEFECT = "defect"
-    APPROVAL = "approval"
     SYSTEM = "system"
     USER = "user"
 

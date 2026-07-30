@@ -8,8 +8,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import settings
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
 from app.services.notification_service import delete_old_notifications
+from sqlalchemy import text
 
 logger = logging.getLogger("activity_log_cleanup")
 
@@ -20,15 +21,15 @@ SCHEDULER: AsyncIOScheduler = None
 async def purge_old_activity_logs() -> None:
     """Delete api_activity_logs rows older than ACTIVITY_LOG_RETENTION_DAYS."""
     retention = max(settings.ACTIVITY_LOG_RETENTION_DAYS, 1)
-    cutoff = (datetime.now().replace(tzinfo=None) - timedelta(days=retention)).isoformat()
+    cutoff = datetime.now().replace(tzinfo=None) - timedelta(days=retention)
 
     try:
-        async with get_db() as db:
-            cursor = await db.execute(
-                "DELETE FROM api_activity_logs WHERE created_at < ?", (cutoff,)
+        async with async_session_factory() as session:
+            result = await session.execute(
+                text("DELETE FROM api_activity_logs WHERE created_at < :cutoff"), {"cutoff": cutoff}
             )
-            deleted = cursor.rowcount
-            await db.commit()
+            deleted = result.rowcount
+            await session.commit()
         if deleted:
             logger.info("Purged %d activity log rows older than %d days", deleted, retention)
     except Exception:

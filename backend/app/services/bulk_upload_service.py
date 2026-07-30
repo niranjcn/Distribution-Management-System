@@ -8,7 +8,8 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 from fastapi import HTTPException, status
 
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 from app.core.activity_logger import log_business_activity
 from app.core.audit import audit_logger
 from app.utils.roles import normalize_role
@@ -16,7 +17,7 @@ from app.utils.roles import normalize_role
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-MAX_BULK_ROWS = 15000
+MAX_BULK_ROWS = 300000
 _MAX_XLSX_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500 MB
 
 
@@ -108,36 +109,37 @@ def _is_likely_text(content: bytes) -> bool:
     return b"\x00" not in content
 
 
-async def fetch_existing_values(db, table: str, column: str, values: List[str]) -> Set[str]:
+async def fetch_existing_values(session, table: str, column: str, values: List[str]) -> Set[str]:
     if not values:
         return set()
 
     existing = set()
     for batch in chunks(values, 500):
-        placeholders = ",".join(["?"] * len(batch))
-        cursor = await db.execute(
-            f"SELECT {column} FROM {table} WHERE {column} IN ({placeholders})",
-            batch,
+        placeholders = ",".join([f":v{i}" for i in range(len(batch))])
+        params = {f"v{i}": v for i, v in enumerate(batch)}
+        result = await session.execute(
+            text(f"SELECT {column} FROM {table} WHERE {column} IN ({placeholders})"),
+            params,
         )
-        rows = await cursor.fetchall()
-        for row in rows:
-            value = row.get(column) or row.get(0)
-            if value:
-                existing.add(str(value).strip().lower())
+        for row in result.scalars().all():
+            if row:
+                existing.add(str(row).strip().lower())
     return existing
 
 
-async def fetch_user_parent_map(db, emails: Set[str], role: str) -> Dict[str, int]:
+async def fetch_user_parent_map(session, emails: Set[str], role: str) -> Dict[str, int]:
     if not emails:
         return {}
     parent_map = {}
     for batch in chunks(list(emails), 500):
-        placeholders = ",".join(["?"] * len(batch))
-        cursor = await db.execute(
-            f"SELECT LOWER(email) as email, id FROM users WHERE LOWER(email) IN ({placeholders}) AND role = ?",
-            [*batch, role],
+        placeholders = ",".join([f":v{i}" for i in range(len(batch))])
+        params = {f"v{i}": v for i, v in enumerate(batch)}
+        params["role"] = role
+        result = await session.execute(
+            text(f"SELECT LOWER(email) as email, id FROM users WHERE LOWER(email) IN ({placeholders}) AND role = :role"),
+            params,
         )
-        for row in await cursor.fetchall():
+        for row in result.mappings().all():
             parent_map[row["email"]] = int(row["id"])
     return parent_map
 
@@ -166,12 +168,7 @@ async def process_bulk_user_upload(
         email = str(row.get("email") or "").strip().lower()
         password = str(row.get("password") or "")
         name = str(row.get("name") or "").strip()
-        digital_id = str(row.get("digital_id") or "").strip() or None
-        broadband_id = str(row.get("broadband_id") or "").strip() or None
-        cluster_id = str(row.get("cluster_id") or "").strip() or None
-        operator_id = str(row.get("operator_id") or "").strip() or None
         phone = str(row.get("phone") or "").strip() or None
-        department = str(row.get("department") or "").strip() or None
         location = str(row.get("location") or "").strip() or None
 
         if not email or not password or not name:
@@ -200,12 +197,7 @@ async def process_bulk_user_upload(
             "password": password,
             "name": name,
             "normalized_role": normalized_role,
-            "digital_id": digital_id,
-            "broadband_id": broadband_id,
-            "cluster_id": cluster_id,
-            "operator_id": operator_id,
             "phone": phone,
-            "department": department,
             "location": location,
             "sd_email": sd_email,
             "cluster_email": cluster_email,
@@ -221,9 +213,9 @@ async def process_bulk_user_upload(
     for item, pw_hash in zip(prepared_rows, hashed):
         item["password_hash"] = pw_hash
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         all_emails = [item["email"] for item in prepared_rows]
-        existing_emails = await fetch_existing_values(db, "users", "email", all_emails)
+        existing_emails = await fetch_existing_values(session, "users", "email", all_emails)
 
         sd_emails: Set[str] = set()
         cluster_emails: Set[str] = set()
@@ -233,8 +225,8 @@ async def process_bulk_user_upload(
             if item["normalized_role"] == "operator" and item["cluster_email"]:
                 cluster_emails.add(item["cluster_email"])
 
-        sd_parent_map = await fetch_user_parent_map(db, sd_emails, "sub_distributor")
-        cluster_parent_map = await fetch_user_parent_map(db, cluster_emails, "cluster")
+        sd_parent_map = await fetch_user_parent_map(session, sd_emails, "sub_distributor")
+        cluster_parent_map = await fetch_user_parent_map(session, cluster_emails, "cluster")
 
         insertable_rows = []
         for item in prepared_rows:
@@ -245,20 +237,20 @@ async def process_bulk_user_upload(
             parent_id = None
             if item["normalized_role"] in ("cluster", "sub_distribution_manager"):
                 if not item["sd_email"]:
-                    errors.append({"row": item["row"], "email": item["email"], "error": f"sub_distributor_email is required for role '{item['normalized_role']}'"})
+                    errors.append({"row": item["row"], "email": email, "error": f"sub_distributor_email is required for role '{item['normalized_role']}'"})
                     continue
                 parent_id = sd_parent_map.get(item["sd_email"])
                 if parent_id is None:
-                    errors.append({"row": item["row"], "email": item["email"], "error": f"Sub-distributor with email '{item['sd_email']}' not found"})
+                    errors.append({"row": item["row"], "email": email, "error": f"Sub-distributor with email '{item['sd_email']}' not found"})
                     continue
 
             if item["normalized_role"] == "operator":
                 if not item["cluster_email"]:
-                    errors.append({"row": item["row"], "email": item["email"], "error": "cluster_email is required for role 'operator'"})
+                    errors.append({"row": item["row"], "email": email, "error": "cluster_email is required for role 'operator'"})
                     continue
                 parent_id = cluster_parent_map.get(item["cluster_email"])
                 if parent_id is None:
-                    errors.append({"row": item["row"], "email": item["email"], "error": f"Cluster with email '{item['cluster_email']}' not found"})
+                    errors.append({"row": item["row"], "email": email, "error": f"Cluster with email '{item['cluster_email']}' not found"})
                     continue
 
             item["parent_id"] = parent_id
@@ -267,44 +259,34 @@ async def process_bulk_user_upload(
         if not insertable_rows:
             return _build_response(0, len(skipped), len(errors), created, skipped, errors)
 
-        insert_sql = """INSERT INTO users (email, password_hash, name, role, digital_id, broadband_id, cluster_id, operator_id,
-            phone, department, location, status, parent_id, permissions,
-            theme, compact_mode, email_notifications, push_notifications,
-            is_verified, created_at, updated_at, last_login)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        insert_sql = """INSERT INTO users (email, password_hash, name, role,
+            status, phone, location, parent_id,
+            is_verified, created_at, updated_at)
+        VALUES (:email, :password_hash, :name, :role,
+            :status, :phone, :location, :parent_id,
+            :is_verified, :created_at, :updated_at)"""
 
         should_commit = True
         for batch in chunks(insertable_rows, 500):
             batch_payload = []
             for item in batch:
-                now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-                batch_payload.append((
-                    item["email"],
-                    item["password_hash"],
-                    item["name"],
-                    item["normalized_role"],
-                    item["digital_id"] if item["normalized_role"] == "sub_distributor" else None,
-                    item["broadband_id"] if item["normalized_role"] == "sub_distributor" else None,
-                    item["cluster_id"] if item["normalized_role"] == "cluster" else None,
-                    item["operator_id"] if item["normalized_role"] == "operator" else None,
-                    item["phone"],
-                    item["department"],
-                    item["location"],
-                    "active",
-                    item.get("parent_id"),
-                    "{}",
-                    "light",
-                    0,
-                    1,
-                    1,
-                    0,
-                    now,
-                    now,
-                    None,
-                ))
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                batch_payload.append({
+                    "email": item["email"],
+                    "password_hash": item["password_hash"],
+                    "name": item["name"],
+                    "role": item["normalized_role"],
+                    "status": "active",
+                    "phone": item["phone"],
+                    "location": item["location"],
+                    "parent_id": item.get("parent_id"),
+                    "is_verified": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                })
 
             try:
-                await db.executemany(insert_sql, batch_payload)
+                await session.execute(text(insert_sql), batch_payload)
                 for item in batch:
                     created.append({"row": item["row"], "email": item["email"], "role": item["normalized_role"], "name": item["name"]})
             except Exception as batch_error:
@@ -312,33 +294,22 @@ async def process_bulk_user_upload(
                     row_idx = item["row"]
                     email = item["email"]
                     try:
-                        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-                        await db.execute(
-                            insert_sql,
-                            (
-                                email,
-                                item["password_hash"],
-                                item["name"],
-                                item["normalized_role"],
-                                item["digital_id"] if item["normalized_role"] == "sub_distributor" else None,
-                                item["broadband_id"] if item["normalized_role"] == "sub_distributor" else None,
-                                item["cluster_id"] if item["normalized_role"] == "cluster" else None,
-                                item["operator_id"] if item["normalized_role"] == "operator" else None,
-                                item["phone"],
-                                item["department"],
-                                item["location"],
-                                "active",
-                                item.get("parent_id"),
-                                "{}",
-                                "light",
-                                0,
-                                1,
-                                1,
-                                0,
-                                now,
-                                now,
-                                None,
-                            ),
+                        now = datetime.now(timezone.utc).replace(tzinfo=None)
+                        await session.execute(
+                            text(insert_sql),
+                            {
+                                "email": email,
+                                "password_hash": item["password_hash"],
+                                "name": item["name"],
+                                "role": item["normalized_role"],
+                                "status": "active",
+                                "phone": item["phone"],
+                                "location": item["location"],
+                                "parent_id": item.get("parent_id"),
+                                "is_verified": 0,
+                                "created_at": now,
+                                "updated_at": now,
+                            },
                         )
                         created.append({"row": row_idx, "email": email, "role": item["normalized_role"], "name": item["name"]})
                     except Exception as single_error:
@@ -358,11 +329,11 @@ async def process_bulk_user_upload(
             await asyncio.sleep(0)
 
         if should_commit and insertable_rows:
-            await db.commit()
+            await session.commit()
         elif not insertable_rows:
             pass
         else:
-            await db.rollback()
+            await session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."

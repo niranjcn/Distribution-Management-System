@@ -5,7 +5,8 @@ import io
 
 from openpyxl import Workbook
 
-from app.database import get_db, rows_to_list
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 
 
 ALLOWED_REPORT_TABLES = {
@@ -17,47 +18,47 @@ ALLOWED_REPORT_TABLES = {
 }
 
 
-async def _count(db, table: str, condition: str = "1=1", params=()) -> int:
+async def _count(session, table: str, condition: str = "1=1", params: Optional[dict] = None) -> int:
     if table not in ALLOWED_REPORT_TABLES:
         raise ValueError(f"Invalid table name: {table}")
-    cursor = await db.execute(f"SELECT COUNT(*) FROM {table} WHERE {condition}", params)
-    return (await cursor.fetchone())[0]
+    result = await session.execute(text(f"SELECT COUNT(*) FROM {table} WHERE {condition}"), params or {})
+    return result.scalar()
 
 
-def _build_date_filter(base_condition: str, base_params: tuple, start_date: Optional[str], end_date: Optional[str]) -> tuple:
+def _build_date_filter(base_condition: str, base_params: dict, start_date: Optional[str], end_date: Optional[str]) -> tuple:
     conds = [base_condition]
-    params = list(base_params)
+    params = dict(base_params)
     if start_date:
-        conds.append("created_at >= ?")
-        params.append(start_date)
+        conds.append("created_at >= :start_date")
+        params["start_date"] = start_date
     if end_date:
-        conds.append("created_at <= ?")
-        params.append(end_date)
-    return " AND ".join(conds), tuple(params)
+        conds.append("created_at <= :end_date")
+        params["end_date"] = end_date
+    return " AND ".join(conds), params
 
 
 async def get_inventory_report(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate device inventory report"""
-    async with get_db() as db:
-        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
-        total = await _count(db, "devices", cond, prm)
+    async with async_session_factory() as session:
+        cond, prm = _build_date_filter("1=1", {}, start_date, end_date)
+        total = await _count(session, "devices", cond, prm)
 
         by_status = {}
-        cursor = await db.execute(f"SELECT status, COUNT(*) as cnt FROM devices WHERE {cond} GROUP BY status", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT status, COUNT(*) as cnt FROM devices WHERE {cond} GROUP BY status"), prm)
+        for row in result.fetchall():
             by_status[row[0]] = row[1]
 
         by_type = {}
-        cursor = await db.execute(f"SELECT device_type, COUNT(*) as cnt FROM devices WHERE {cond} GROUP BY device_type", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT device_type, COUNT(*) as cnt FROM devices WHERE {cond} GROUP BY device_type"), prm)
+        for row in result.fetchall():
             by_type[row[0]] = row[1]
 
         by_location = {}
-        cursor = await db.execute(
-            f"SELECT current_holder_type, COUNT(*) as cnt FROM devices WHERE {cond} AND current_holder_type IS NOT NULL GROUP BY current_holder_type",
+        result = await session.execute(
+            text(f"SELECT current_holder_type, COUNT(*) as cnt FROM devices WHERE {cond} AND current_holder_type IS NOT NULL GROUP BY current_holder_type"),
             prm,
         )
-        for row in await cursor.fetchall():
+        for row in result.fetchall():
             by_location[row[0]] = row[1]
 
         return {
@@ -71,37 +72,37 @@ async def get_inventory_report(start_date: Optional[str] = None, end_date: Optio
 
 async def get_distribution_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate distribution summary report"""
-    async with get_db() as db:
-        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
-        total = await _count(db, "distributions", cond, prm)
+    async with async_session_factory() as session:
+        cond, prm = _build_date_filter("1=1", {}, start_date, end_date)
+        total = await _count(session, "distributions", cond, prm)
 
         by_status = {}
-        cursor = await db.execute(f"SELECT status, COUNT(*) as cnt FROM distributions WHERE {cond} GROUP BY status", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT status, COUNT(*) as cnt FROM distributions WHERE {cond} GROUP BY status"), prm)
+        for row in result.fetchall():
             by_status[row[0]] = row[1]
 
         by_month = []
         now = datetime.now().replace(tzinfo=None)
         six_months_ago = (datetime(now.year, now.month, 1) - timedelta(days=180)).isoformat()
-        mc, mp = _build_date_filter("created_at >= ?", (six_months_ago,), start_date, end_date)
-        cursor = await db.execute(
-            f"SELECT SUBSTR(created_at, 1, 7) as ym, COUNT(*) as cnt FROM distributions WHERE {mc} GROUP BY SUBSTR(created_at, 1, 7)",
+        mc, mp = _build_date_filter("created_at >= :six_months_ago", {"six_months_ago": six_months_ago}, start_date, end_date)
+        result = await session.execute(
+            text(f"SELECT SUBSTR(created_at, 1, 7) as ym, COUNT(*) as cnt FROM distributions WHERE {mc} GROUP BY SUBSTR(created_at, 1, 7)"),
             mp,
         )
-        month_counts = {row[0]: row[1] for row in await cursor.fetchall()}
+        month_counts = {row[0]: row[1] for row in result.fetchall()}
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             ym = month_start.strftime("%Y-%m")
             by_month.append({"month": month_start.strftime("%B %Y"), "count": month_counts.get(ym, 0)})
 
         # Top distributors
-        c, p = _build_date_filter("status = 'delivered'", (), start_date, end_date)
-        cursor = await db.execute(
-            f"""SELECT to_user_name, SUM(device_count) as total
+        c, p = _build_date_filter("status = 'delivered'", {}, start_date, end_date)
+        result = await session.execute(
+            text(f"""SELECT to_user_name, SUM(device_count) as total
             FROM distributions WHERE {c}
-            GROUP BY to_user_name ORDER BY total DESC LIMIT 5""", p
+            GROUP BY to_user_name ORDER BY total DESC LIMIT 5"""), p
         )
-        top = await cursor.fetchall()
+        top = result.fetchall()
 
         return {
             "total": total,
@@ -114,34 +115,34 @@ async def get_distribution_summary(start_date: Optional[str] = None, end_date: O
 
 async def get_defect_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate defect summary report"""
-    async with get_db() as db:
-        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
-        total = await _count(db, "defects", cond, prm)
+    async with async_session_factory() as session:
+        cond, prm = _build_date_filter("1=1", {}, start_date, end_date)
+        total = await _count(session, "defects", cond, prm)
 
         by_status = {}
-        cursor = await db.execute(f"SELECT status, COUNT(*) as cnt FROM defects WHERE {cond} GROUP BY status", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT status, COUNT(*) as cnt FROM defects WHERE {cond} GROUP BY status"), prm)
+        for row in result.fetchall():
             by_status[row[0]] = row[1]
 
         by_severity = {}
-        cursor = await db.execute(f"SELECT severity, COUNT(*) as cnt FROM defects WHERE {cond} GROUP BY severity", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT severity, COUNT(*) as cnt FROM defects WHERE {cond} GROUP BY severity"), prm)
+        for row in result.fetchall():
             by_severity[row[0]] = row[1]
 
         by_type = {}
-        cursor = await db.execute(f"SELECT defect_type, COUNT(*) as cnt FROM defects WHERE {cond} GROUP BY defect_type", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT defect_type, COUNT(*) as cnt FROM defects WHERE {cond} GROUP BY defect_type"), prm)
+        for row in result.fetchall():
             by_type[row[0]] = row[1]
 
         by_month = []
         now = datetime.now().replace(tzinfo=None)
         six_months_ago = (datetime(now.year, now.month, 1) - timedelta(days=180)).isoformat()
-        mc, mp = _build_date_filter("created_at >= ?", (six_months_ago,), start_date, end_date)
-        cursor = await db.execute(
-            f"SELECT SUBSTR(created_at, 1, 7) as ym, COUNT(*) as cnt FROM defects WHERE {mc} GROUP BY SUBSTR(created_at, 1, 7)",
+        mc, mp = _build_date_filter("created_at >= :six_months_ago", {"six_months_ago": six_months_ago}, start_date, end_date)
+        result = await session.execute(
+            text(f"SELECT SUBSTR(created_at, 1, 7) as ym, COUNT(*) as cnt FROM defects WHERE {mc} GROUP BY SUBSTR(created_at, 1, 7)"),
             mp,
         )
-        month_counts = {row[0]: row[1] for row in await cursor.fetchall()}
+        month_counts = {row[0]: row[1] for row in result.fetchall()}
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             ym = month_start.strftime("%Y-%m")
@@ -159,29 +160,29 @@ async def get_defect_summary(start_date: Optional[str] = None, end_date: Optiona
 
 async def get_return_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate return summary report"""
-    async with get_db() as db:
-        cond, prm = _build_date_filter("1=1", (), start_date, end_date)
-        total = await _count(db, "returns", cond, prm)
+    async with async_session_factory() as session:
+        cond, prm = _build_date_filter("1=1", {}, start_date, end_date)
+        total = await _count(session, "returns", cond, prm)
 
         by_status = {}
-        cursor = await db.execute(f"SELECT status, COUNT(*) as cnt FROM returns WHERE {cond} GROUP BY status", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT status, COUNT(*) as cnt FROM returns WHERE {cond} GROUP BY status"), prm)
+        for row in result.fetchall():
             by_status[row[0]] = row[1]
 
         by_reason = {}
-        cursor = await db.execute(f"SELECT reason, COUNT(*) as cnt FROM returns WHERE {cond} GROUP BY reason", prm)
-        for row in await cursor.fetchall():
+        result = await session.execute(text(f"SELECT reason, COUNT(*) as cnt FROM returns WHERE {cond} GROUP BY reason"), prm)
+        for row in result.fetchall():
             by_reason[row[0]] = row[1]
 
         by_month = []
         now = datetime.now().replace(tzinfo=None)
         six_months_ago = (datetime(now.year, now.month, 1) - timedelta(days=180)).isoformat()
-        mc, mp = _build_date_filter("created_at >= ?", (six_months_ago,), start_date, end_date)
-        cursor = await db.execute(
-            f"SELECT SUBSTR(created_at, 1, 7) as ym, COUNT(*) as cnt FROM returns WHERE {mc} GROUP BY SUBSTR(created_at, 1, 7)",
-            mp,
+        mc, mp = _build_date_filter("created_at >= :six_months_ago", {"six_months_ago": six_months_ago}, start_date, end_date)
+        result = await session.execute(
+            text(f"SELECT SUBSTR(created_at, 1, 7) as ym, COUNT(*) as cnt FROM returns WHERE {mc} GROUP BY SUBSTR(created_at, 1, 7)",
+            ), mp,
         )
-        month_counts = {row[0]: row[1] for row in await cursor.fetchall()}
+        month_counts = {row[0]: row[1] for row in result.fetchall()}
         for i in range(5, -1, -1):
             month_start = datetime(now.year, now.month, 1) - timedelta(days=i * 30)
             ym = month_start.strftime("%Y-%m")
@@ -199,27 +200,27 @@ async def get_return_summary(start_date: Optional[str] = None, end_date: Optiona
 async def get_user_activity_report(start_date: Optional[str] = None,
                                     end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate user activity report"""
-    async with get_db() as db:
+    async with async_session_factory() as session:
         by_role = {}
-        cursor = await db.execute("SELECT role, COUNT(*) as cnt FROM users GROUP BY role")
-        for row in await cursor.fetchall():
+        result = await session.execute(text("SELECT role, COUNT(*) as cnt FROM users GROUP BY role"))
+        for row in result.fetchall():
             by_role[row[0]] = row[1]
 
         if start_date:
-            active_users = await _count(db, "users", "last_login >= ?", (start_date,))
+            active_users = await _count(session, "users", "last_login >= :last_login", {"last_login": start_date})
         else:
             thirty_days_ago = (datetime.now().replace(tzinfo=None) - timedelta(days=30)).isoformat()
-            active_users = await _count(db, "users", "last_login >= ?", (thirty_days_ago,))
-        total_users = await _count(db, "users")
+            active_users = await _count(session, "users", "last_login >= :thirty_days_ago", {"thirty_days_ago": thirty_days_ago})
+        total_users = await _count(session, "users")
 
-        cursor = await db.execute("SELECT * FROM device_history ORDER BY timestamp DESC LIMIT 50")
-        rows = await cursor.fetchall()
+        result = await session.execute(text("SELECT * FROM device_history ORDER BY timestamp DESC LIMIT 50"))
+        rows = result.mappings().all()
 
         return {
             "total_users": total_users,
             "active_users": active_users,
             "by_role": by_role,
-            "recent_activities": rows_to_list(rows),
+            "recent_activities": [dict(r) for r in rows],
             "generated_at": datetime.now().replace(tzinfo=None).isoformat()
         }
 
@@ -227,19 +228,19 @@ async def get_user_activity_report(start_date: Optional[str] = None,
 async def get_device_utilization_report(start_date: Optional[str] = None,
                                          end_date: Optional[str] = None) -> Dict[str, Any]:
     """Generate device utilization report"""
-    async with get_db() as db:
-        total_devices = await _count(db, "devices")
+    async with async_session_factory() as session:
+        total_devices = await _count(session, "devices")
         if start_date or end_date:
-            cond, prm = _build_date_filter("status IN ('distributed', 'in_use')", (), start_date, end_date)
-            in_use = await _count(db, "devices", cond, prm)
-            ac, ap = _build_date_filter("status = 'available'", (), start_date, end_date)
-            available = await _count(db, "devices", ac, ap)
-            dfc, dfp = _build_date_filter("status = 'defective'", (), start_date, end_date)
-            defective = await _count(db, "devices", dfc, dfp)
+            cond, prm = _build_date_filter("status IN ('distributed', 'in_use')", {}, start_date, end_date)
+            in_use = await _count(session, "devices", cond, prm)
+            ac, ap = _build_date_filter("status = 'available'", {}, start_date, end_date)
+            available = await _count(session, "devices", ac, ap)
+            dfc, dfp = _build_date_filter("status = 'defective'", {}, start_date, end_date)
+            defective = await _count(session, "devices", dfc, dfp)
         else:
-            in_use = await _count(db, "devices", "status IN ('distributed', 'in_use')")
-            available = await _count(db, "devices", "status = 'available'")
-            defective = await _count(db, "devices", "status = 'defective'")
+            in_use = await _count(session, "devices", "status IN ('distributed', 'in_use')")
+            available = await _count(session, "devices", "status = 'available'")
+            defective = await _count(session, "devices", "status = 'defective'")
 
         utilization_rate = (in_use / total_devices * 100) if total_devices > 0 else 0
 
@@ -359,15 +360,15 @@ def _build_device_backup_file(rows: List[Dict[str, Any]], file_format: str) -> D
 async def get_device_backup_export(file_format: str = "xlsx") -> Dict[str, Any]:
     """Generate a full device backup export including journey path details."""
     MAX_EXPORT = 100000
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM devices ORDER BY id ASC LIMIT ?", (MAX_EXPORT,))
-        device_rows = rows_to_list(await cursor.fetchall())
+    async with async_session_factory() as session:
+        result = await session.execute(text("SELECT * FROM devices ORDER BY id ASC LIMIT :max_export"), {"max_export": MAX_EXPORT})
+        device_rows = [dict(r) for r in result.mappings().all()]
 
-        cursor = await db.execute(
-            "SELECT * FROM device_history ORDER BY timestamp ASC LIMIT ?",
-            (MAX_EXPORT * 5,)
+        result = await session.execute(
+            text("SELECT * FROM device_history ORDER BY timestamp ASC LIMIT :max_history"),
+            {"max_history": MAX_EXPORT * 5}
         )
-        history_rows = rows_to_list(await cursor.fetchall())
+        history_rows = [dict(r) for r in result.mappings().all()]
 
     history_by_device: Dict[str, List[Dict[str, Any]]] = {}
     for row in history_rows:
@@ -403,7 +404,8 @@ async def get_device_backup_export(file_format: str = "xlsx") -> Dict[str, Any]:
             }
         )
 
-    return _build_device_backup_file(export_rows, file_format=file_format)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _build_device_backup_file, export_rows, file_format)
 
 
 def _build_returns_defects_backup_file(
@@ -557,28 +559,18 @@ def _build_returns_defects_backup_file(
 
 async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[str, Any]:
     """Generate backup export for return requests and defect reports."""
-    async with get_db() as db:
-        returns_cursor = await db.execute("SELECT * FROM returns ORDER BY created_at DESC")
-        returns_rows = rows_to_list(await returns_cursor.fetchall())
+    async with async_session_factory() as session:
+        result = await session.execute(text("SELECT * FROM returns ORDER BY created_at DESC"))
+        returns_rows = [dict(r) for r in result.mappings().all()]
 
-        defects_cursor = await db.execute("SELECT * FROM defects ORDER BY created_at DESC")
-        defects_rows = rows_to_list(await defects_cursor.fetchall())
+        result = await session.execute(text("SELECT * FROM defects ORDER BY created_at DESC"))
+        defects_rows = [dict(r) for r in result.mappings().all()]
 
-        devices_cursor = await db.execute("SELECT id, device_id, model, serial_number, mac_address, nuid, device_type FROM devices")
-        devices_rows = rows_to_list(await devices_cursor.fetchall())
+        result = await session.execute(text("SELECT id, device_id, model, serial_number, mac_address, nuid, device_type FROM devices"))
+        devices_rows = [dict(r) for r in result.mappings().all()]
 
-        users_cursor = await db.execute("SELECT id, name FROM users")
-        users_rows = rows_to_list(await users_cursor.fetchall())
-
-        approvals_cursor = await db.execute(
-            """
-            SELECT approval_type, entity_id, approved_by, approved_by_name, approval_date, request_date, status
-            FROM approvals
-            WHERE approval_type IN ('return', 'defect')
-            ORDER BY COALESCE(approval_date, request_date) DESC
-            """
-        )
-        approval_rows = rows_to_list(await approvals_cursor.fetchall())
+        result = await session.execute(text("SELECT id, name FROM users"))
+        users_rows = [dict(r) for r in result.mappings().all()]
 
     device_lookup: Dict[str, Dict[str, Any]] = {}
     for device in devices_rows:
@@ -595,20 +587,6 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         if str(user.get("id") or "").strip()
     }
 
-    return_approval_lookup: Dict[str, Dict[str, Any]] = {}
-    defect_approval_lookup: Dict[str, Dict[str, Any]] = {}
-    for approval in approval_rows:
-        if str(approval.get("status") or "").lower() != "approved":
-            continue
-        entity_id = str(approval.get("entity_id") or "").strip()
-        if not entity_id:
-            continue
-        approval_type = str(approval.get("approval_type") or "").strip().lower()
-        if approval_type == "return" and entity_id not in return_approval_lookup:
-            return_approval_lookup[entity_id] = approval
-        elif approval_type == "defect" and entity_id not in defect_approval_lookup:
-            defect_approval_lookup[entity_id] = approval
-
     for row in returns_rows:
         raw_device_id = str(row.get("device_id") or "").strip()
         resolved_device = device_lookup.get(raw_device_id)
@@ -624,24 +602,12 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         if is_sb:
             row["device_serial"] = ""
 
-        return_db_id = str(row.get("id") or "").strip()
-        return_approval = return_approval_lookup.get(return_db_id)
-
         if not str(row.get("requested_by_name") or "").strip():
             row["requested_by_name"] = user_name_lookup.get(str(row.get("requested_by") or "").strip(), "")
         if not str(row.get("return_to_name") or "").strip():
             row["return_to_name"] = user_name_lookup.get(str(row.get("return_to") or "").strip(), "")
         if not str(row.get("approved_by_name") or "").strip():
-            row["approved_by_name"] = (
-                str((return_approval or {}).get("approved_by_name") or "").strip()
-                or user_name_lookup.get(str((return_approval or {}).get("approved_by") or "").strip(), "")
-                or user_name_lookup.get(str(row.get("approved_by") or "").strip(), "")
-            )
-        if not str(row.get("approval_date") or "").strip():
-            row["approval_date"] = (
-                str((return_approval or {}).get("approval_date") or "").strip()
-                or str((return_approval or {}).get("request_date") or "").strip()
-            )
+            row["approved_by_name"] = user_name_lookup.get(str(row.get("approved_by") or "").strip(), "")
 
     for row in defects_rows:
         raw_device_id = str(row.get("device_id") or "").strip()
@@ -658,33 +624,23 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         if is_sb:
             row["device_serial"] = ""
 
-        defect_db_id = str(row.get("id") or "").strip()
-        defect_approval = defect_approval_lookup.get(defect_db_id)
-
         if not str(row.get("reported_by_name") or "").strip():
             row["reported_by_name"] = user_name_lookup.get(str(row.get("reported_by") or "").strip(), "")
         resolved_name = str(row.get("resolved_by_name") or "").strip()
-        if defect_approval:
-            resolved_name = (
-                str(defect_approval.get("approved_by_name") or "").strip()
-                or user_name_lookup.get(str(defect_approval.get("approved_by") or "").strip(), "")
-                or resolved_name
-            )
-        elif not resolved_name or resolved_name == str(row.get("reported_by_name") or "").strip():
+        if not resolved_name or resolved_name == str(row.get("reported_by_name") or "").strip():
             resolved_name = user_name_lookup.get(str(row.get("resolved_by") or "").strip(), resolved_name)
         row["resolved_by_name"] = resolved_name
-        if not str(row.get("resolved_at") or "").strip() and defect_approval:
-            row["resolved_at"] = (
-                str(defect_approval.get("approval_date") or "").strip()
-                or str(defect_approval.get("request_date") or "").strip()
-            )
 
         row["operator_name"] = user_name_lookup.get(str(row.get("operator_id") or "").strip(), "")
         row["sub_distributor_name"] = user_name_lookup.get(str(row.get("sub_distributor_id") or "").strip(), "")
 
-    return _build_returns_defects_backup_file(
-        returns_rows=returns_rows,
-        defects_rows=defects_rows,
-        file_format=file_format,
+    import asyncio
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        _build_returns_defects_backup_file,
+        returns_rows,
+        defects_rows,
+        file_format,
     )
 

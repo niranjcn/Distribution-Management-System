@@ -1,10 +1,11 @@
 from datetime import datetime
 from typing import Dict, Any, Optional, Set
 
-from app.database import get_db
+from app.database_sqlalchemy import async_session_factory
+from sqlalchemy import text
 
 from .helpers import (
-    _build_date_filter,
+    _build_named_date_filter,
     _resolve_scope_root_for_sub_distribution_manager,
     _get_descendant_user_ids,
     _month_start,
@@ -20,39 +21,48 @@ async def get_scope_users(user: Dict[str, Any]) -> Dict[str, list]:
     user_id = str(user.get("_id", user.get("id", "")))
     scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         if role == "super_admin":
-            cursor = await db.execute(
-                "SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role IN ('sub_distributor', 'cluster', 'operator') ORDER BY role, name"
-            )
+            rows = (await session.execute(
+                text("SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role IN ('sub_distributor', 'cluster', 'operator') ORDER BY role, name")
+            )).mappings().all()
         elif role in ("manager", "md_director", "pdic_staff"):
-            scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
-            placeholders = ",".join(["?"] * len(scope_ids)) if scope_ids else "?"
-            cursor = await db.execute(
-                f"SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role IN ('sub_distributor', 'cluster', 'operator') AND id IN ({placeholders}) ORDER BY role, name",
-                tuple(scope_ids)
-            )
+            scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id))
+            if scope_ids:
+                params = {f"id{i}": sid for i, sid in enumerate(scope_ids)}
+                placeholders = ",".join([f":id{i}" for i in range(len(scope_ids))])
+            else:
+                params = {"id0": ""}
+                placeholders = ":id0"
+            rows = (await session.execute(
+                text(f"SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role IN ('sub_distributor', 'cluster', 'operator') AND id IN ({placeholders}) ORDER BY role, name"),
+                params
+            )).mappings().all()
         elif role == "sub_distributor":
-            cursor = await db.execute(
-                "SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE (role = 'cluster' AND parent_id = ?) OR (role = 'operator' AND parent_id IN (SELECT id FROM users WHERE role = 'cluster' AND parent_id = ?)) ORDER BY role, name",
-                (int(user_id), int(user_id))
-            )
+            rows = (await session.execute(
+                text("SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE (role = 'cluster' AND parent_id = :pid1) OR (role = 'operator' AND parent_id IN (SELECT id FROM users WHERE role = 'cluster' AND parent_id = :pid2)) ORDER BY role, name"),
+                {"pid1": int(user_id), "pid2": int(user_id)}
+            )).mappings().all()
         elif role == "cluster":
-            cursor = await db.execute(
-                "SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role = 'operator' AND parent_id = ? ORDER BY name",
-                (int(user_id),)
-            )
+            rows = (await session.execute(
+                text("SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role = 'operator' AND parent_id = :parent_id ORDER BY name"),
+                {"parent_id": int(user_id)}
+            )).mappings().all()
         elif role == "sub_distribution_manager":
-            scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(db, scope_root_id))
-            placeholders = ",".join(["?"] * len(scope_ids)) if scope_ids else "?"
-            cursor = await db.execute(
-                f"SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role IN ('sub_distributor', 'cluster', 'operator') AND id IN ({placeholders}) ORDER BY role, name",
-                tuple(scope_ids)
-            )
+            scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id))
+            if scope_ids:
+                params = {f"id{i}": sid for i, sid in enumerate(scope_ids)}
+                placeholders = ",".join([f":id{i}" for i in range(len(scope_ids))])
+            else:
+                params = {"id0": ""}
+                placeholders = ":id0"
+            rows = (await session.execute(
+                text(f"SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role IN ('sub_distributor', 'cluster', 'operator') AND id IN ({placeholders}) ORDER BY role, name"),
+                params
+            )).mappings().all()
         else:
             return {"sub_distributors": [], "clusters": [], "operators": []}
 
-        rows = await cursor.fetchall()
         users_list = [dict(r) for r in rows]
         for u in users_list:
             u["id"] = str(u["id"])
@@ -77,12 +87,12 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str,
     """Get KPI data for a specific user (devices, distributions, defects)."""
     empty = {"user": {}, "kpis": {}, "charts": {}}
 
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT id, email, name, role FROM users WHERE id = ?",
-            (int(target_user_id),)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text("SELECT id, email, name, role FROM users WHERE id = :uid"),
+            {"uid": int(target_user_id)}
         )
-        target_user = await cursor.fetchone()
+        target_user = result.mappings().first()
         if not target_user:
             return empty
 
@@ -90,40 +100,47 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str,
         target_user["id"] = str(target_user["id"])
 
         # Devices held by this user
-        dc, dp = _build_date_filter("current_holder_id = ?", (target_user["id"],), start_date, end_date)
-        cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {dc}", dp)
-        devices_in_hand = (await cursor.fetchone())[0]
+        params = {"hid": target_user["id"]}
+        date_clause = _build_named_date_filter(params, start_date, end_date)
+        dc = f"current_holder_id = :hid AND {date_clause}"
+        devices_in_hand = (await session.execute(text(f"SELECT COUNT(*) FROM devices WHERE {dc}"), params)).scalar()
 
         # Devices in hierarchy (descendants)
-        descendant_ids = sorted({target_user["id"]} | await _get_descendant_user_ids(db, target_user["id"]))
-        placeholders = ",".join(["?"] * len(descendant_ids)) if descendant_ids else "?"
-        hc, hp = _build_date_filter(f"current_holder_id IN ({placeholders})", tuple(descendant_ids), start_date, end_date)
-        cursor = await db.execute(f"SELECT COUNT(*) FROM devices WHERE {hc}", hp)
-        devices_in_hierarchy = (await cursor.fetchone())[0]
+        descendant_ids = sorted({target_user["id"]} | await _get_descendant_user_ids(session, target_user["id"]))
+        if descendant_ids:
+            params2 = {f"hid{i}": did for i, did in enumerate(descendant_ids)}
+            placeholders = ",".join([f":hid{i}" for i in range(len(descendant_ids))])
+        else:
+            params2 = {"hid0": ""}
+            placeholders = ":hid0"
+        date_clause2 = _build_named_date_filter(params2, start_date, end_date)
+        hc = f"current_holder_id IN ({placeholders}) AND {date_clause2}"
+        devices_in_hierarchy = (await session.execute(text(f"SELECT COUNT(*) FROM devices WHERE {hc}"), params2)).scalar()
 
         # Active/inactive in hierarchy
-        cursor = await db.execute(
-            f"""SELECT status, COUNT(*) AS total FROM devices
+        device_status_rows = (await session.execute(
+            text(f"""SELECT status, COUNT(*) AS total FROM devices
                 WHERE {hc}
-                GROUP BY status""",
-            hp
-        )
-        device_status_rows = await cursor.fetchall()
-        device_status = {str(r[0]): int(r[1]) for r in device_status_rows}
+                GROUP BY status"""),
+            params2
+        )).mappings().all()
+        device_status = {str(r["status"]): int(r["total"]) for r in device_status_rows}
         hierarchy_active = sum(
             v for k, v in device_status.items() if k in ACTIVE_DEVICE_STATUSES
         )
         hierarchy_inactive = max(0, devices_in_hierarchy - hierarchy_active)
 
         # Distributions where this user is the sender
-        dc2, dp2 = _build_date_filter("from_user_id = ?", (target_user["id"],), start_date, end_date)
-        cursor = await db.execute(f"SELECT COUNT(*) FROM distributions WHERE {dc2}", dp2)
-        distributed_count = (await cursor.fetchone())[0]
+        params3 = {"fuid": target_user["id"]}
+        date_clause3 = _build_named_date_filter(params3, start_date, end_date)
+        dc2 = f"from_user_id = :fuid AND {date_clause3}"
+        distributed_count = (await session.execute(text(f"SELECT COUNT(*) FROM distributions WHERE {dc2}"), params3)).scalar()
 
         # Defects reported by this user
-        dfc, dfp = _build_date_filter("CAST(reported_by AS CHAR) = ?", (target_user["id"],), start_date, end_date)
-        cursor = await db.execute(f"SELECT COUNT(*) FROM defects WHERE {dfc}", dfp)
-        total_defects = (await cursor.fetchone())[0]
+        params4 = {"ruid": target_user["id"]}
+        date_clause4 = _build_named_date_filter(params4, start_date, end_date)
+        dfc = f"CAST(reported_by AS CHAR) = :ruid AND {date_clause4}"
+        total_defects = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {dfc}"), params4)).scalar()
 
         # Defect/distribution trend (aggregated, not N+1)
         now = datetime.now().replace(tzinfo=None)
@@ -135,23 +152,27 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str,
             trend_start = _shift_months(month_start, -11)
             trend_end = _shift_months(month_start, 1)
 
-            cursor = await db.execute(
-                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = ? AND created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
-                (target_user["id"], trend_start.isoformat(), trend_end.isoformat())
-            )
-            reported_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+            reported_by_month = {
+                str(row["m"]): int(row["total"])
+                for row in (await session.execute(
+                    text("SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = :ruid AND created_at >= :ts AND created_at < :te GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m"),
+                    {"ruid": target_user["id"], "ts": trend_start.isoformat(), "te": trend_end.isoformat()}
+                )).mappings().all()
+            }
 
-            cursor = await db.execute(
-                "SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = ? AND status = 'resolved' AND resolved_at >= ? AND resolved_at < ? GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m",
-                (target_user["id"], trend_start.isoformat(), trend_end.isoformat())
-            )
-            resolved_by_month = {str(row["m"]): int(row["total"]) for row in await cursor.fetchall()}
+            resolved_by_month = {
+                str(row["m"]): int(row["total"])
+                for row in (await session.execute(
+                    text("SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = :ruid AND status = 'resolved' AND resolved_at >= :ts AND resolved_at < :te GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m"),
+                    {"ruid": target_user["id"], "ts": trend_start.isoformat(), "te": trend_end.isoformat()}
+                )).mappings().all()
+            }
 
-            cursor = await db.execute(
-                "SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total, SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered FROM distributions WHERE from_user_id = ? AND created_at >= ? AND created_at < ? GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m",
-                (target_user["id"], trend_start.isoformat(), trend_end.isoformat())
-            )
-            dist_by_month = {str(row["m"]): {"total": int(row["total"]), "delivered": int(row["delivered"])} for row in await cursor.fetchall()}
+            dist_rows = (await session.execute(
+                text("SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total, SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered FROM distributions WHERE from_user_id = :fuid AND created_at >= :ts AND created_at < :te GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m"),
+                {"fuid": target_user["id"], "ts": trend_start.isoformat(), "te": trend_end.isoformat()}
+            )).mappings().all()
+            dist_by_month = {str(row["m"]): {"total": int(row["total"]), "delivered": int(row["delivered"])} for row in dist_rows}
 
             for i in range(11, -1, -1):
                 start = _shift_months(month_start, -i)
@@ -197,11 +218,10 @@ async def get_system_alerts(user: Dict[str, Any]) -> list:
     alerts = []
 
     if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
-        async with get_db() as db:
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM defects WHERE severity = 'critical' AND status != 'resolved'"
-            )
-            critical_defects = (await cursor.fetchone())[0]
+        async with async_session_factory() as session:
+            critical_defects = (await session.execute(
+                text("SELECT COUNT(*) FROM defects WHERE severity = 'critical' AND status != 'resolved'")
+            )).scalar()
             if critical_defects > 0:
                 alerts.append({
                     "type": "error",
@@ -210,18 +230,9 @@ async def get_system_alerts(user: Dict[str, Any]) -> list:
                     "link": "/defects?severity=critical"
                 })
 
-            cursor = await db.execute("SELECT COUNT(*) FROM approvals WHERE status = 'pending'")
-            pending_approvals = (await cursor.fetchone())[0]
-            if pending_approvals > 0:
-                alerts.append({
-                    "type": "warning",
-                    "title": "Pending",
-                    "message": f"{pending_approvals} request(s) waiting for approval with Pending payments",
-                    "link": "/payments"
-                })
-
-            cursor = await db.execute("SELECT COUNT(*) FROM devices WHERE status = 'available'")
-            available_devices = (await cursor.fetchone())[0]
+            available_devices = (await session.execute(
+                text("SELECT COUNT(*) FROM devices WHERE status = 'available'")
+            )).scalar()
             if available_devices < 10:
                 alerts.append({
                     "type": "warning",

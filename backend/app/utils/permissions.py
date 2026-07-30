@@ -43,10 +43,6 @@ PERMISSIONS = {
     "returns:delete": [SUPER_ADMIN],
     "returns:approve": [SUPER_ADMIN, MANAGER, PDIC_STAFF],
 
-    "approvals:read": [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF],
-    "approvals:approve": [SUPER_ADMIN, MANAGER, PDIC_STAFF],
-    "approvals:reject": [SUPER_ADMIN, MANAGER, PDIC_STAFF],
-
     "reports:read": [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF],
     "reports:export": [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF],
 

@@ -40,7 +40,7 @@ async def login(request: Request, response: Response, credentials: LoginRequest)
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password"
+                detail="Invalid email/phone or password"
             )
 
         if user.get("status") != "active":
@@ -322,6 +322,7 @@ async def complete_forced_update(
             user_id=current_user["id"],
             current_password=payload.current_password,
             new_email=payload.new_email,
+            new_phone=payload.new_phone,
             new_password=payload.new_password,
         )
 

@@ -14,12 +14,12 @@ from slowapi import _rate_limit_exceeded_handler
 from starlette_csrf import CSRFMiddleware
 
 from app.config import settings
-from app.database import init_db, close_pool
+from app.database import init_db
 from app.routes import (
     auth, users, devices, distributions, 
-    defects, returns, approvals, operators,
+    defects, returns, operators,
     notifications, reports, dashboard, change_requests,
-    external_inventory, reassignment_requests
+    external_inventory, reassignment_requests, digital_ids
 )
 from app.middleware.error_handler import add_exception_handlers
 from app.middleware.auth_middleware import get_current_user, require_admin
@@ -33,41 +33,59 @@ from app.core.metrics import MetricsMiddleware, metrics_endpoint
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
-_logs_dir = Path(__file__).resolve().parents[1] / "logs"
-_logs_dir.mkdir(parents=True, exist_ok=True)
+def _setup_logging() -> None:
+    _logs_dir = Path(__file__).resolve().parents[1] / "logs"
+    _logs_dir.mkdir(parents=True, exist_ok=True)
 
-_root_logger = logging.getLogger()
-_root_logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
+    _root_logger = logging.getLogger()
+    # Remove any handlers uvicorn may have attached
+    for h in list(_root_logger.handlers):
+        _root_logger.removeHandler(h)
 
-_file_handler = RotatingFileHandler(
-    _logs_dir / "app.log",
-    maxBytes=10 * 1024 * 1024,
-    backupCount=5,
-    encoding="utf-8",
-)
-_file_handler.setLevel(logging.DEBUG)
-_file_handler.setFormatter(
-    logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
-)
+    _root_logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
 
-_console_handler = logging.StreamHandler(sys.stdout)
-_console_handler.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
-_console_handler.setFormatter(
-    logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
-)
+    _file_handler = RotatingFileHandler(
+        _logs_dir / "app.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _file_handler.setLevel(logging.DEBUG)
+    _file_handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+    )
 
-_root_logger.addHandler(_file_handler)
-_root_logger.addHandler(_console_handler)
+    _console_handler = logging.StreamHandler(sys.stdout)
+    _console_handler.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
+    _console_handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+    )
 
-logging.getLogger("apscheduler").setLevel(logging.WARNING)
-logging.getLogger("aiomysql").setLevel(logging.WARNING)
+    _root_logger.addHandler(_file_handler)
+    _root_logger.addHandler(_console_handler)
+
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
+    # Re-enable loggers that might have been disabled by uvicorn's dictConfig
+    # and configure uvicorn loggers to propagate to the root logger.
+    for name, logger in logging.root.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger):
+            logger.disabled = False
+            if name.startswith("uvicorn"):
+                for handler in list(logger.handlers):
+                    logger.removeHandler(handler)
+                logger.propagate = True
+
+_setup_logging()
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
-    # Startup - initialize SQLite database
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stdout, force=True,
+                        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+    _setup_logging()
     await init_db()
     
     # Seed initial data
@@ -114,9 +132,6 @@ async def lifespan(app: FastAPI):
             await metrics_task
         except asyncio.CancelledError:
             pass
-
-    await close_pool()
-
 
 # Create FastAPI app
 app = FastAPI(
@@ -174,7 +189,6 @@ app.include_router(devices.router, prefix=f"{settings.API_V1_PREFIX}/devices", t
 app.include_router(distributions.router, prefix=f"{settings.API_V1_PREFIX}/distributions", tags=["Distributions"])
 app.include_router(defects.router, prefix=f"{settings.API_V1_PREFIX}/defects", tags=["Defects"])
 app.include_router(returns.router, prefix=f"{settings.API_V1_PREFIX}/returns", tags=["Returns"])
-app.include_router(approvals.router, prefix=f"{settings.API_V1_PREFIX}/approvals", tags=["Approvals"])
 app.include_router(operators.router, prefix=f"{settings.API_V1_PREFIX}/operators", tags=["Operators"])
 app.include_router(notifications.router, prefix=f"{settings.API_V1_PREFIX}/notifications", tags=["Notifications"])
 app.include_router(reports.router, prefix=f"{settings.API_V1_PREFIX}/reports", tags=["Reports"])
@@ -182,6 +196,7 @@ app.include_router(dashboard.router, prefix=f"{settings.API_V1_PREFIX}/dashboard
 app.include_router(change_requests.router, prefix=f"{settings.API_V1_PREFIX}/change-requests", tags=["Change Requests"])
 app.include_router(external_inventory.router, prefix=f"{settings.API_V1_PREFIX}/external-inventory", tags=["External Inventory"])
 app.include_router(reassignment_requests.router, prefix=f"{settings.API_V1_PREFIX}/reassignment-requests", tags=["Reassignment Requests"])
+app.include_router(digital_ids.router, prefix=f"{settings.API_V1_PREFIX}/digital-ids", tags=["Digital IDs"])
 
 
 @app.get("/", tags=["Root"], summary="Root endpoint")

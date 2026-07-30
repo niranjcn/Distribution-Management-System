@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Set
 
-from app.database import get_db, row_to_dict, rows_to_list
+from sqlalchemy import text
+
+from app.database_sqlalchemy import async_session_factory
 from app.models.return_device import ReturnCreate, ReturnUpdate, ReturnStatus, ReturnReason
 from app.models.device import DeviceStatus
-from app.services import approval_service, device_service, notification_service
+from app.services import device_service, notification_service
 from app.utils.helpers import get_pagination, generate_return_id
-from app.utils.hierarchy import get_descendant_user_ids
 
 
 async def get_returns(
@@ -19,9 +20,8 @@ async def get_returns(
     search_by: Optional[str] = None,
     current_user: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Get all return requests with pagination and filters"""
 
-    async def _get_return_scope_user_ids(db, user: Dict[str, Any]) -> Optional[Set[str]]:
+    async def _get_return_scope_user_ids(session, user: Dict[str, Any]) -> Optional[Set[str]]:
         role = str(user.get("role") or "")
         user_id = str(user.get("id") or user.get("_id") or "")
         parent_id = str(user.get("parent_id") or "")
@@ -31,31 +31,45 @@ async def get_returns(
 
         scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
         scoped_ids: Set[str] = {scope_root}
-        scoped_ids.update(await get_descendant_user_ids(db, scope_root))
+        if str(scope_root).isdigit():
+            desc_rows = (await session.execute(
+                text("""
+                    WITH RECURSIVE descendants AS (
+                        SELECT id FROM users WHERE parent_id = :root
+                        UNION ALL
+                        SELECT u.id FROM users u
+                        INNER JOIN descendants d ON u.parent_id = d.id
+                    )
+                    SELECT id FROM descendants
+                """),
+                {"root": int(scope_root)}
+            )).scalars().all()
+            scoped_ids.update(str(did) for did in desc_rows if did)
         return scoped_ids
 
-    async with get_db() as db:
+    async with async_session_factory() as session:
         conditions = ["1=1"]
-        params = []
+        params: Dict[str, Any] = {}
 
         if status:
-            conditions.append("r.status = ?")
-            params.append(status)
+            conditions.append("r.status = :status")
+            params["status"] = status
         if reason:
-            conditions.append("r.reason = ?")
-            params.append(reason)
+            conditions.append("r.reason = :reason")
+            params["reason"] = reason
 
-        scope_ids = await _get_return_scope_user_ids(db, current_user) if current_user else None
+        scope_ids = await _get_return_scope_user_ids(session, current_user) if current_user else None
         if scope_ids is not None:
             if not scope_ids:
                 return {"data": [], "pagination": get_pagination(page, page_size, 0)}
             scope_list = sorted(scope_ids)
-            placeholders = ",".join(["?"] * len(scope_list))
-            conditions.append(f"r.requested_by IN ({placeholders})")
-            params.extend(scope_list)
+            ph = ",".join([f":sr_{i}" for i in range(len(scope_list))])
+            conditions.append(f"r.requested_by IN ({ph})")
+            for i, sid in enumerate(scope_list):
+                params[f"sr_{i}"] = sid
         elif requested_by:
-            conditions.append("r.requested_by = ?")
-            params.append(requested_by)
+            conditions.append("r.requested_by = :requested_by")
+            params["requested_by"] = requested_by
         if search:
             like = f"%{search}%"
             search_field_map = {
@@ -67,133 +81,133 @@ async def get_returns(
             }
             normalized_search_by = str(search_by or "all").strip().lower()
             if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
-                conditions.append(f"{search_field_map[normalized_search_by]} LIKE ?")
-                params.append(like)
+                conditions.append(f"{search_field_map[normalized_search_by]} LIKE :search_like")
+                params["search_like"] = like
             else:
-                conditions.append("(r.return_id LIKE ? OR r.device_serial LIKE ? OR r.requested_by_name LIKE ? OR r.reason LIKE ? OR r.status LIKE ?)")
-                params.extend([like, like, like, like, like])
+                conditions.append("(r.return_id LIKE :sl1 OR r.device_serial LIKE :sl2 OR r.requested_by_name LIKE :sl3 OR r.reason LIKE :sl4 OR r.status LIKE :sl5)")
+                for i in range(5):
+                    params[f"sl{i+1}"] = like
 
         where = " AND ".join(conditions)
 
-        cursor = await db.execute(f"SELECT COUNT(*) FROM returns r WHERE {where}", params)
-        total = (await cursor.fetchone())[0]
+        total = (await session.execute(
+            text(f"SELECT COUNT(*) FROM returns r WHERE {where}"), params
+        )).scalar() or 0
 
         offset = (page - 1) * page_size
-        cursor = await db.execute(
-            f"""
-            SELECT
-                r.*,
-                d.model AS device_model,
-                d.manufacturer AS manufacturer,
-                d.device_id AS source_device_id,
-                d.nuid AS device_nuid
-            FROM returns r
-            LEFT JOIN devices d ON d.id = r.device_id
-            WHERE {where}
-            ORDER BY r.created_at DESC
-            LIMIT ? OFFSET ?
-            """,
-            params + [page_size, offset]
-        )
-        rows = await cursor.fetchall()
+        params["_limit"] = page_size
+        params["_offset"] = offset
+        rows = (await session.execute(
+            text(f"""
+                SELECT
+                    r.*,
+                    d.model AS device_model,
+                    d.manufacturer AS manufacturer,
+                    d.device_id AS source_device_id,
+                    d.nuid AS device_nuid
+                FROM returns r
+                LEFT JOIN devices d ON d.id = r.device_id
+                WHERE {where}
+                ORDER BY r.created_at DESC
+                LIMIT :_limit OFFSET :_offset
+            """),
+            params
+        )).mappings().all()
 
         return {
-            "data": rows_to_list(rows),
+            "data": [dict(r) for r in rows],
             "pagination": get_pagination(page, page_size, total)
         }
 
 
 async def get_return_by_id(return_id: str) -> Optional[Dict[str, Any]]:
-    """Get return request by ID"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                r.*,
-                d.model AS device_model,
-                d.manufacturer AS manufacturer,
-                d.device_id AS source_device_id,
-                d.nuid AS device_nuid
-            FROM returns r
-            LEFT JOIN devices d ON d.id = r.device_id
-            WHERE r.id = ?
-            """,
-            (int(return_id),)
-        )
-        row = await cursor.fetchone()
-        return row_to_dict(row) if row else None
+    async with async_session_factory() as session:
+        row = (await session.execute(
+            text("""
+                SELECT
+                    r.*,
+                    d.model AS device_model,
+                    d.manufacturer AS manufacturer,
+                    d.device_id AS source_device_id,
+                    d.nuid AS device_nuid
+                FROM returns r
+                LEFT JOIN devices d ON d.id = r.device_id
+                WHERE r.id = :id
+            """),
+            {"id": int(return_id)}
+        )).mappings().first()
+        return dict(row) if row else None
 
 
 async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a new return request"""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(return_data.device_id),))
-        device = await cursor.fetchone()
+    async with async_session_factory() as session:
+        device = (await session.execute(
+            text("SELECT * FROM devices WHERE id = :id"), {"id": int(return_data.device_id)}
+        )).mappings().first()
         if not device:
             raise ValueError("Device not found")
         device = dict(device)
 
-        cursor = await db.execute("SELECT * FROM users WHERE role IN ('super_admin', 'manager') LIMIT 1")
-        return_to_user = await cursor.fetchone()
+        return_to_user = (await session.execute(
+            text("SELECT * FROM users WHERE role IN ('super_admin', 'manager') LIMIT 1")
+        )).mappings().first()
         if not return_to_user:
             raise ValueError("No admin/manager found to process return")
         return_to_user = dict(return_to_user)
 
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
+        return_id_val = generate_return_id()
 
-        cursor = await db.execute(
-            """INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,
-            requested_by, requested_by_name, return_to, return_to_name, reason, description,
-            status, request_date, approval_date, received_date, approved_by, approved_by_name,
-            created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                generate_return_id(),
-                return_data.device_id,
-                device["serial_number"],
-                device["device_type"],
-                device.get("mac_address"),
-                str(requester["_id"]),
-                requester["name"],
-                str(return_to_user["id"]),
-                return_to_user["name"],
-                return_data.reason.value,
-                return_data.description,
-                ReturnStatus.PENDING.value,
-                now, None, None, None, None,
-                now, now
-            )
+        result = await session.execute(
+            text("""
+                INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,
+                requested_by, requested_by_name, return_to, return_to_name, reason, description,
+                status, request_date, approval_date, received_date, approved_by, approved_by_name,
+                created_at, updated_at)
+                VALUES (:return_id, :device_id, :device_serial, :device_type, :mac_address,
+                :requested_by, :requested_by_name, :return_to, :return_to_name, :reason, :description,
+                :status, :request_date, :approval_date, :received_date, :approved_by, :approved_by_name,
+                :created_at, :updated_at)
+            """),
+            {
+                "return_id": return_id_val,
+                "device_id": return_data.device_id,
+                "device_serial": device["serial_number"],
+                "device_type": device["device_type"],
+                "mac_address": device.get("mac_address"),
+                "requested_by": str(requester["_id"]),
+                "requested_by_name": requester["name"],
+                "return_to": str(return_to_user["id"]),
+                "return_to_name": return_to_user["name"],
+                "reason": return_data.reason.value,
+                "description": return_data.description,
+                "status": ReturnStatus.PENDING.value,
+                "request_date": now,
+                "approval_date": None,
+                "received_date": None,
+                "approved_by": None,
+                "approved_by_name": None,
+                "created_at": now,
+                "updated_at": now,
+            }
         )
-        return_row_id = cursor.lastrowid
+        return_row_id = result.lastrowid
 
-        # Create approval entry
-        await db.execute(
-            """INSERT INTO approvals (approval_type, entity_id, entity_type, requested_by,
-            requested_by_name, status, priority, request_date, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "return", str(return_row_id), "return",
-                str(requester["_id"]), requester["name"],
-                "pending", "medium", now,
-                return_data.description, now, now
-            )
-        )
-        await db.commit()
+        await session.commit()
 
-    # Notify only enabled approval roles for return requests.
-    enabled_roles = await approval_service.get_routing_enabled_roles_for_approval_type("return")
+    enabled_roles = ["super_admin", "manager", "pdic_staff"]
     if not enabled_roles:
         enabled_roles = ["super_admin"]
-    role_placeholders = ", ".join(["?"] * len(enabled_roles))
-    async with get_db() as db:
-        cursor = await db.execute(
-            f"SELECT id, name FROM users WHERE role IN ({role_placeholders})",
-            enabled_roles,
-        )
-        staff_rows = await cursor.fetchall()
+    roles_ph = ",".join([f":r_{i}" for i in range(len(enabled_roles))])
+    roles_params = {f"r_{i}": r for i, r in enumerate(enabled_roles)}
+    async with async_session_factory() as session:
+        staff_rows = (await session.execute(
+            text(f"SELECT id, name FROM users WHERE role IN ({roles_ph})"),
+            roles_params
+        )).mappings().all()
     await notification_service.bulk_create_notifications([
         {
-            "user_id": str(dict(staff)["id"]),
+            "user_id": str(s["id"]),
             "title": "New Return Request — Awaiting Approval",
             "message": (
                 f"{requester['name']} has submitted a return request for device "
@@ -203,7 +217,7 @@ async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) ->
             "category": "return",
             "link": f"/returns?returnId={return_row_id}"
         }
-        for staff in staff_rows
+        for s in staff_rows
     ])
 
     return await get_return_by_id(str(return_row_id))
@@ -217,85 +231,75 @@ async def update_return_status(
     return_amount: Optional[float] = None,
     payment_bill_url: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Update return request status"""
     user_role = str(user.get("role", "")).lower()
-    if status in {ReturnStatus.APPROVED.value, ReturnStatus.REJECTED.value} and user_role in {"super_admin", "manager", "pdic_staff"}:
-        allowed = await approval_service.is_role_allowed_for_approval_type(user_role, "return")
-        if not allowed:
-            raise PermissionError(f"{user_role.capitalize()} role is not allowed to process return approvals")
-
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM returns WHERE id = ?", (int(return_id),))
-        return_req = await cursor.fetchone()
+    
+    async with async_session_factory() as session:
+        return_req = (await session.execute(
+            text("SELECT * FROM returns WHERE id = :id"), {"id": int(return_id)}
+        )).mappings().first()
         if not return_req:
             return None
         return_req = dict(return_req)
 
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
 
         if status == ReturnStatus.APPROVED.value:
-            await db.execute(
-                "UPDATE returns SET status = ?, approval_date = ?, approved_by = ?, approved_by_name = ?, updated_at = ? WHERE id = ?",
-                (status, now, str(user["_id"]), user["name"], now, int(return_id))
-            )
-            await db.execute(
-                """UPDATE approvals SET status = 'approved', approved_by = ?, approved_by_name = ?,
-                approval_date = ?, updated_at = ? WHERE entity_id = ? AND approval_type = 'return'""",
-                (str(user["_id"]), user["name"], now, now, return_id)
+            await session.execute(
+                text("UPDATE returns SET status = :status, approval_date = :now, approved_by = :uid, approved_by_name = :uname, updated_at = :now2 WHERE id = :id"),
+                {"status": status, "now": now, "uid": str(user["_id"]), "uname": user["name"], "now2": now, "id": int(return_id)}
             )
 
         elif status == ReturnStatus.RECEIVED.value:
-            await db.execute(
-                "UPDATE returns SET status = ?, received_date = ?, updated_at = ? WHERE id = ?",
-                (status, now, now, int(return_id))
+            await session.execute(
+                text("UPDATE returns SET status = :status, received_date = :now, updated_at = :now2 WHERE id = :id"),
+                {"status": status, "now": now, "now2": now, "id": int(return_id)}
             )
 
             if return_req.get("defect_id"):
                 set_fragments = [
-                    "payment_due_user_id = ?",
-                    "payment_due_user_name = ?",
-                    "updated_at = ?",
+                    "payment_due_user_id = :due_uid",
+                    "payment_due_user_name = :due_uname",
+                    "updated_at = :upd_at",
                 ]
-                defect_params = [
-                    str(return_req.get("requested_by") or ""),
-                    str(return_req.get("requested_by_name") or "Unknown"),
-                    now,
-                ]
-
+                defect_params: Dict[str, Any] = {
+                    "due_uid": str(return_req.get("requested_by") or ""),
+                    "due_uname": str(return_req.get("requested_by_name") or "Unknown"),
+                    "upd_at": now,
+                }
                 if return_amount is not None:
-                    set_fragments.append("return_amount = ?")
-                    defect_params.append(float(return_amount))
+                    set_fragments.append("return_amount = :ret_amt")
+                    defect_params["ret_amt"] = float(return_amount)
                     set_fragments.append("payment_confirmed = 0")
                 if payment_bill_url:
-                    set_fragments.append("payment_bill_url = ?")
-                    defect_params.append(str(payment_bill_url))
-
-                defect_params.append(int(return_req["defect_id"]))
-                await db.execute(
-                    f"UPDATE defects SET {', '.join(set_fragments)} WHERE id = ? AND COALESCE(payment_confirmed, 0) = 0",
+                    set_fragments.append("payment_bill_url = :bill_url")
+                    defect_params["bill_url"] = str(payment_bill_url)
+                defect_params["did"] = int(return_req["defect_id"])
+                await session.execute(
+                    text(f"UPDATE defects SET {', '.join(set_fragments)} WHERE id = :did AND COALESCE(payment_confirmed, 0) = 0"),
                     defect_params
                 )
 
         elif status == ReturnStatus.REJECTED.value:
-            await db.execute(
-                "UPDATE returns SET status = ?, updated_at = ? WHERE id = ?",
-                (status, now, int(return_id))
-            )
-            await db.execute(
-                """UPDATE approvals SET status = 'rejected', approved_by = ?, approved_by_name = ?,
-                approval_date = ?, rejection_reason = ?, updated_at = ?
-                WHERE entity_id = ? AND approval_type = 'return'""",
-                (str(user["_id"]), user["name"], now, notes, now, return_id)
+            await session.execute(
+                text("UPDATE returns SET status = :status, updated_at = :now WHERE id = :id"),
+                {"status": status, "now": now, "id": int(return_id)}
             )
         else:
-            await db.execute(
-                "UPDATE returns SET status = ?, updated_at = ? WHERE id = ?",
-                (status, now, int(return_id))
+            await session.execute(
+                text("UPDATE returns SET status = :status, updated_at = :now WHERE id = :id"),
+                {"status": status, "now": now, "id": int(return_id)}
             )
 
-        await db.commit()
+        await session.commit()
 
     if status == ReturnStatus.RECEIVED.value:
+        await device_service.update_device_status(
+            device_id=return_req["device_id"],
+            status=DeviceStatus.RETURNED.value,
+            performed_by=str(user["_id"]),
+            performed_by_name=user["name"],
+            notes=f"Device returned and received at PDIC via {return_req['return_id']}"
+        )
         await device_service.update_device_holder(
             device_id=return_req["device_id"],
             holder_id=None,
@@ -310,7 +314,6 @@ async def update_return_status(
             notes=f"Returned and received at PDIC via {return_req['return_id']}"
         )
 
-    # Notify the operator (requester)
     await notification_service.create_notification(
         user_id=return_req["requested_by"],
         title=(
@@ -329,22 +332,20 @@ async def update_return_status(
         link=f"/returns?returnId={return_id}"
     )
 
-    # When approved, remind all other staff to watch for the incoming device
     if status == ReturnStatus.APPROVED.value:
-        enabled_roles = await approval_service.get_routing_enabled_roles_for_approval_type("return")
-        if not enabled_roles:
-            enabled_roles = ["super_admin"]
-        role_placeholders = ", ".join(["?"] * len(enabled_roles))
+        enabled_roles = ["super_admin", "manager", "pdic_staff"]
         acting_user_id = str(user.get("_id") or user.get("id"))
-        async with get_db() as db:
-            cursor = await db.execute(
-                f"SELECT id FROM users WHERE role IN ({role_placeholders}) AND CAST(id AS TEXT) != ?",
-                enabled_roles + [acting_user_id],
-            )
-            staff_rows = await cursor.fetchall()
+        roles_ph = ",".join([f":r_{i}" for i in range(len(enabled_roles))])
+        roles_params = {f"r_{i}": r for i, r in enumerate(enabled_roles)}
+        roles_params["acting_uid"] = acting_user_id
+        async with async_session_factory() as session:
+            staff_rows = (await session.execute(
+                text(f"SELECT id FROM users WHERE role IN ({roles_ph}) AND CAST(id AS CHAR) != :acting_uid"),
+                roles_params
+            )).mappings().all()
         await notification_service.bulk_create_notifications([
             {
-                "user_id": str(dict(row)["id"]),
+                "user_id": str(r["id"]),
                 "title": "Return Approved — Confirm Device Receipt",
                 "message": (
                     f"Return request {return_req['return_id']} approved. "
@@ -355,17 +356,17 @@ async def update_return_status(
                 "category": "return",
                 "link": f"/returns?returnId={return_id}"
             }
-            for row in staff_rows
+            for r in staff_rows
         ])
 
     return await get_return_by_id(return_id)
 
 
 async def cancel_return(return_id: str, user_id: str) -> bool:
-    """Cancel a return request (only by creator)"""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM returns WHERE id = ?", (int(return_id),))
-        return_req = await cursor.fetchone()
+    async with async_session_factory() as session:
+        return_req = (await session.execute(
+            text("SELECT * FROM returns WHERE id = :id"), {"id": int(return_id)}
+        )).mappings().first()
         if not return_req:
             return False
         return_req = dict(return_req)
@@ -375,49 +376,46 @@ async def cancel_return(return_id: str, user_id: str) -> bool:
         if return_req["status"] != ReturnStatus.PENDING.value:
             raise ValueError("Only pending return requests can be cancelled")
 
-        await db.execute(
-            "UPDATE returns SET status = ?, updated_at = ? WHERE id = ?",
-            (ReturnStatus.CANCELLED.value, datetime.now().replace(tzinfo=None).isoformat(), int(return_id))
+        now = datetime.now().replace(tzinfo=None)
+        await session.execute(
+            text("UPDATE returns SET status = :status, updated_at = :now WHERE id = :id"),
+            {"status": ReturnStatus.CANCELLED.value, "now": now, "id": int(return_id)}
         )
-        await db.execute(
-            "DELETE FROM approvals WHERE entity_id = ? AND approval_type = 'return'",
-            (return_id,)
-        )
-        await db.commit()
+        await session.commit()
         return True
 
 
 async def get_return_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
-    """Get return statistics"""
-    async with get_db() as db:
-        params: List[Any] = []
-        date_filter = "1=1"
+    async with async_session_factory() as session:
+        params: Dict[str, Any] = {}
+        conditions = []
         if start_date:
-            date_filter = "created_at >= ?"
-            params.append(start_date)
+            conditions.append("created_at >= :start_date")
+            params["start_date"] = start_date
         if end_date:
-            date_filter += " AND created_at <= ?" if date_filter != "1=1" else "created_at <= ?"
-            params.append(end_date)
+            conditions.append("created_at <= :end_date")
+            params["end_date"] = end_date
+        date_filter = " AND ".join(conditions) if conditions else "1=1"
 
         total = 0
         by_status: Dict[str, int] = {}
-        cursor = await db.execute(
-            f"SELECT status, COUNT(*) AS total FROM returns WHERE {date_filter} GROUP BY status",
+        rows = (await session.execute(
+            text(f"SELECT status, COUNT(*) AS cnt FROM returns WHERE {date_filter} GROUP BY status"),
             params
-        )
-        for row in await cursor.fetchall():
-            status = str(row[0])
-            count = int(row[1])
+        )).mappings().all()
+        for row in rows:
+            status = str(row["status"])
+            count = int(row["cnt"])
             total += count
             by_status[status] = count
 
         by_reason: Dict[str, int] = {}
-        cursor = await db.execute(
-            f"SELECT reason, COUNT(*) AS total FROM returns WHERE {date_filter} GROUP BY reason",
+        rows = (await session.execute(
+            text(f"SELECT reason, COUNT(*) AS cnt FROM returns WHERE {date_filter} GROUP BY reason"),
             params
-        )
-        for row in await cursor.fetchall():
-            by_reason[str(row[0])] = int(row[1])
+        )).mappings().all()
+        for row in rows:
+            by_reason[str(row["reason"])] = int(row["cnt"])
 
         return {
             "total": total,
@@ -442,85 +440,81 @@ async def auto_create_defect_return(
     requester_id: str,
     requester_name: str
 ) -> Optional[Dict[str, Any]]:
-    """Auto-create a return request when a defect report is approved by manager/staff."""
-    async with get_db() as db:
-        cursor = await db.execute("SELECT * FROM devices WHERE id = ?", (int(device_id),))
-        device = await cursor.fetchone()
+    async with async_session_factory() as session:
+        device = (await session.execute(
+            text("SELECT * FROM devices WHERE id = :id"), {"id": int(device_id)}
+        )).mappings().first()
         if not device:
             raise ValueError("Device not found")
         device = dict(device)
 
-        # Avoid duplicate pending returns for the same device
-        cursor = await db.execute(
-            "SELECT id FROM returns WHERE device_id = ? AND status = 'pending'",
-            (device_id,)
-        )
-        existing = await cursor.fetchone()
+        existing = (await session.execute(
+            text("SELECT id FROM returns WHERE device_id = :did AND status = 'pending'"),
+            {"did": device_id}
+        )).mappings().first()
         if existing:
-            return await get_return_by_id(str(dict(existing)["id"]))
+            return await get_return_by_id(str(existing["id"]))
 
-        cursor = await db.execute("SELECT * FROM users WHERE role IN ('super_admin', 'manager') LIMIT 1")
-        return_to_user = await cursor.fetchone()
+        return_to_user = (await session.execute(
+            text("SELECT * FROM users WHERE role IN ('super_admin', 'manager') LIMIT 1")
+        )).mappings().first()
         if not return_to_user:
             raise ValueError("No admin/manager found to process return")
         return_to_user = dict(return_to_user)
 
-        now = datetime.now().replace(tzinfo=None).isoformat()
+        now = datetime.now().replace(tzinfo=None)
+        return_id_val = generate_return_id()
 
-        cursor = await db.execute(
-            """INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,
-            requested_by, requested_by_name, return_to, return_to_name, reason, description,
-            status, request_date, approval_date, received_date, approved_by, approved_by_name,
-            defect_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                generate_return_id(),
-                device_id,
-                device["serial_number"],
-                device["device_type"],
-                device.get("mac_address"),
-                requester_id,
-                requester_name,
-                str(return_to_user["id"]),
-                return_to_user["name"],
-                ReturnReason.DEFECTIVE.value,
-                f"Auto-generated return for approved defect report {defect_report_id}",
-                ReturnStatus.PENDING.value,
-                now, None, None, None, None,
-                defect_id,
-                now, now
-            )
+        result = await session.execute(
+            text("""
+                INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,
+                requested_by, requested_by_name, return_to, return_to_name, reason, description,
+                status, request_date, approval_date, received_date, approved_by, approved_by_name,
+                defect_id, created_at, updated_at)
+                VALUES (:return_id, :device_id, :device_serial, :device_type, :mac_address,
+                :requested_by, :requested_by_name, :return_to, :return_to_name, :reason, :description,
+                :status, :request_date, :approval_date, :received_date, :approved_by, :approved_by_name,
+                :defect_id, :created_at, :updated_at)
+            """),
+            {
+                "return_id": return_id_val,
+                "device_id": device_id,
+                "device_serial": device["serial_number"],
+                "device_type": device["device_type"],
+                "mac_address": device.get("mac_address"),
+                "requested_by": requester_id,
+                "requested_by_name": requester_name,
+                "return_to": str(return_to_user["id"]),
+                "return_to_name": return_to_user["name"],
+                "reason": ReturnReason.DEFECTIVE.value,
+                "description": f"Auto-generated return for approved defect report {defect_report_id}",
+                "status": ReturnStatus.PENDING.value,
+                "request_date": now,
+                "approval_date": None,
+                "received_date": None,
+                "approved_by": None,
+                "approved_by_name": None,
+                "defect_id": defect_id,
+                "created_at": now,
+                "updated_at": now,
+            }
         )
-        return_row_id = cursor.lastrowid
+        return_row_id = result.lastrowid
 
-        await db.execute(
-            """INSERT INTO approvals (approval_type, entity_id, entity_type, requested_by,
-            requested_by_name, status, priority, request_date, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "return", str(return_row_id), "return",
-                requester_id, requester_name,
-                "pending", "high", now,
-                f"Auto-generated from defect {defect_report_id}", now, now
-            )
-        )
-        await db.commit()
+        await session.commit()
 
-    # Notify only enabled approval roles for return requests.
-    enabled_roles = await approval_service.get_routing_enabled_roles_for_approval_type("return")
-    if not enabled_roles:
-        enabled_roles = ["super_admin"]
-    role_placeholders = ", ".join(["?"] * len(enabled_roles))
-    async with get_db() as db:
-        cursor = await db.execute(
-            f"SELECT id FROM users WHERE role IN ({role_placeholders})",
-            enabled_roles,
-        )
-        approver_rows = await cursor.fetchall()
+    enabled_roles = ["super_admin", "manager", "pdic_staff"]
+    roles_ph = ",".join([f":r_{i}" for i in range(len(enabled_roles))])
+    roles_params = {f"r_{i}": r for i, r in enumerate(enabled_roles)}
+    async with async_session_factory() as session:
+        approver_rows = (await session.execute(
+            text(f"SELECT id FROM users WHERE role IN ({roles_ph})"),
+            roles_params
+        )).mappings().all()
 
     await notification_service.bulk_create_notifications([
         {
-            "user_id": str(dict(approver)["id"]),
+            "user_id": str(a["id"]),
             "title": "Return Request Created — Defective Device",
             "message": (
                 f"A return request has been auto-created for defective device "
@@ -530,14 +524,14 @@ async def auto_create_defect_return(
             "category": "return",
             "link": f"/returns?returnId={return_row_id}"
         }
-        for approver in approver_rows
+        for a in approver_rows
     ])
 
-    # Alert the operator (requester) to physically return the device
-    async with get_db() as db:
-        cursor = await db.execute("SELECT return_id FROM returns WHERE id = ?", (return_row_id,))
-        row = await cursor.fetchone()
-        created_return_id = dict(row)["return_id"] if row else str(return_row_id)
+    async with async_session_factory() as session:
+        row = (await session.execute(
+            text("SELECT return_id FROM returns WHERE id = :id"), {"id": return_row_id}
+        )).mappings().first()
+        created_return_id = row["return_id"] if row else str(return_row_id)
 
     await notification_service.create_notification(
         user_id=requester_id,

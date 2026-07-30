@@ -1,8 +1,11 @@
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
-import json
 
-from app.database import get_db, row_to_dict, rows_to_list
+from sqlalchemy import select, func, and_, insert
+
+from app.database_sqlalchemy import async_session_factory
+from app.db_models.notification import Notification
 from app.utils.helpers import get_pagination
 
 
@@ -17,7 +20,7 @@ def _parse_notification_metadata(notification: Dict[str, Any]) -> Dict[str, Any]
 
 
 def _parse_notification_list(notifications: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [_parse_notification_metadata(notification) for notification in notifications]
+    return [_parse_notification_metadata(n) for n in notifications]
 
 
 async def get_notifications(
@@ -27,52 +30,56 @@ async def get_notifications(
     is_read: Optional[bool] = None
 ) -> Dict[str, Any]:
     """Get user notifications with pagination"""
-    async with get_db() as db:
-        conditions = ["user_id = ?"]
-        params = [user_id]
-        
+    async with async_session_factory() as session:
+        conditions = [Notification.user_id == user_id]
+
         if is_read is not None:
-            conditions.append("is_read = ?")
-            params.append(1 if is_read else 0)
-        
-        where_clause = " AND ".join(conditions)
-        
-        cursor = await db.execute(f"SELECT COUNT(*) FROM notifications WHERE {where_clause}", params)
-        total = (await cursor.fetchone())[0]
-        
+            conditions.append(Notification.is_read == (1 if is_read else 0))
+
+        where = and_(*conditions)
+
+        count_q = select(func.count()).select_from(Notification).where(where)
+        total = (await session.execute(count_q)).scalar()
+
         offset = (page - 1) * page_size
-        cursor = await db.execute(
-            f"SELECT * FROM notifications WHERE {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [page_size, offset]
+        q = (
+            select(Notification)
+            .where(where)
+            .order_by(Notification.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
         )
-        rows = await cursor.fetchall()
-        data = _parse_notification_list(rows_to_list(rows))
-        
+        rows = (await session.execute(q)).scalars().all()
+        data = _parse_notification_list([r.to_dict() for r in rows])
+
         return {
             "data": data,
-            "pagination": get_pagination(page, page_size, total)
+            "pagination": get_pagination(page, page_size, total),
         }
 
 
 async def get_unread_count(user_id: str) -> int:
     """Get count of unread notifications"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0",
-            (user_id,)
+    async with async_session_factory() as session:
+        q = (
+            select(func.count())
+            .select_from(Notification)
+            .where(and_(Notification.user_id == user_id, Notification.is_read == 0))
         )
-        return (await cursor.fetchone())[0]
+        return (await session.execute(q)).scalar()
 
 
 async def get_latest_notifications(user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
     """Get latest notifications for a user"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-            (user_id, limit)
+    async with async_session_factory() as session:
+        q = (
+            select(Notification)
+            .where(Notification.user_id == user_id)
+            .order_by(Notification.created_at.desc())
+            .limit(limit)
         )
-        rows = await cursor.fetchall()
-        return _parse_notification_list(rows_to_list(rows))
+        rows = (await session.execute(q)).scalars().all()
+        return _parse_notification_list([r.to_dict() for r in rows])
 
 
 async def create_notification(
@@ -85,90 +92,115 @@ async def create_notification(
     metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Create a new notification"""
-    async with get_db() as db:
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        metadata_json = json.dumps(metadata) if metadata else None
-        
-        cursor = await db.execute(
-            """INSERT INTO notifications (user_id, title, message, type, category, is_read, link, metadata, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, title, message, notification_type, category, 0, link, metadata_json, now)
+    now = datetime.now().replace(tzinfo=None)
+    metadata_json = json.dumps(metadata) if metadata else None
+
+    async with async_session_factory() as session:
+        n = Notification(
+            user_id=user_id,
+            title=title,
+            message=message,
+            type=notification_type,
+            category=category,
+            is_read=0,
+            link=link,
+            notif_metadata=metadata_json,
+            created_at=now,
         )
-        await db.commit()
-        
-        cursor = await db.execute("SELECT * FROM notifications WHERE id = ?", (cursor.lastrowid,))
-        row = await cursor.fetchone()
-        return _parse_notification_metadata(row_to_dict(row))
+        session.add(n)
+        await session.flush()
+        await session.commit()
+        return _parse_notification_metadata(n.to_dict())
 
 
 async def bulk_create_notifications(
     notifications: List[Dict[str, Any]]
 ) -> None:
-    """Create multiple notifications in a single batch INSERT.
-    
-    Each notification dict must contain: user_id, title, message.
-    Optional: notification_type (default 'info'), category (default 'system'),
-              link (default None), metadata (default None).
-    """
+    """Create multiple notifications in a single batch INSERT."""
     if not notifications:
         return
-    async with get_db() as db:
-        now = datetime.now().replace(tzinfo=None).isoformat()
-        values = []
-        params = []
-        for n in notifications:
-            values.append("(?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            metadata_json = json.dumps(n.get("metadata")) if n.get("metadata") else None
-            params.extend([
-                n["user_id"], n["title"], n["message"],
-                n.get("notification_type", "info"), n.get("category", "system"),
-                0, n.get("link"), metadata_json, now
-            ])
-        sql = f"INSERT INTO notifications (user_id, title, message, type, category, is_read, link, metadata, created_at) VALUES {', '.join(values)}"
-        await db.execute(sql, params)
-        await db.commit()
+
+    now = datetime.now().replace(tzinfo=None)
+    values = []
+    for n in notifications:
+        metadata_json = json.dumps(n.get("metadata")) if n.get("metadata") else None
+        values.append(
+            {
+                "user_id": n["user_id"],
+                "title": n["title"],
+                "message": n["message"],
+                "type": n.get("notification_type", "info"),
+                "category": n.get("category", "system"),
+                "is_read": 0,
+                "link": n.get("link"),
+                "notif_metadata": metadata_json,
+                "created_at": now,
+            }
+        )
+
+    async with async_session_factory() as session:
+        stmt = insert(Notification)
+        await session.execute(stmt, values)
+        await session.commit()
 
 
 async def mark_as_read(notification_id: str, user_id: str) -> bool:
     """Mark notification as read"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?",
-            (int(notification_id), user_id)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Notification).where(
+                and_(Notification.id == int(notification_id), Notification.user_id == user_id)
+            )
         )
-        await db.commit()
-        return cursor.rowcount > 0
+        n = result.scalar_one_or_none()
+        if not n:
+            return False
+        n.is_read = 1
+        await session.commit()
+        return True
 
 
 async def mark_all_as_read(user_id: str) -> int:
     """Mark all user notifications as read"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0",
-            (user_id,)
+    async with async_session_factory() as session:
+        q = select(Notification).where(
+            and_(Notification.user_id == user_id, Notification.is_read == 0)
         )
-        await db.commit()
-        return cursor.rowcount
+        rows = (await session.execute(q)).scalars().all()
+        count = len(rows)
+        for n in rows:
+            n.is_read = 1
+        await session.commit()
+        return count
 
 
 async def delete_notification(notification_id: str, user_id: str) -> bool:
     """Delete notification"""
-    async with get_db() as db:
-        cursor = await db.execute(
-            "DELETE FROM notifications WHERE id = ? AND user_id = ?",
-            (int(notification_id), user_id)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Notification).where(
+                and_(Notification.id == int(notification_id), Notification.user_id == user_id)
+            )
         )
-        await db.commit()
-        return cursor.rowcount > 0
+        n = result.scalar_one_or_none()
+        if not n:
+            return False
+        await session.delete(n)
+        await session.commit()
+        return True
 
 
 async def delete_old_notifications(days: int = 30) -> int:
     """Delete notifications older than specified days"""
     cutoff = (datetime.now().replace(tzinfo=None) - timedelta(days=days)).isoformat()
-    async with get_db() as db:
-        cursor = await db.execute("DELETE FROM notifications WHERE created_at < ?", (cutoff,))
-        await db.commit()
-        return cursor.rowcount
+    async with async_session_factory() as session:
+        q = select(Notification).where(Notification.created_at < cutoff)
+        rows = (await session.execute(q)).scalars().all()
+        count = len(rows)
+        for n in rows:
+            await session.delete(n)
+        await session.commit()
+        return count
 
 
 async def send_bulk_notification(
