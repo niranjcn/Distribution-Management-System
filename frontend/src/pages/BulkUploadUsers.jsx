@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Upload,
@@ -10,61 +10,165 @@ import {
   ArrowLeft,
   Loader2,
   Users,
+  Building,
+  Network,
 } from 'lucide-react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
 import { usersAPI, dashboardAPI } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { normalizeRole, ROLES } from '../utils/roles';
 
 const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
 
-const TEMPLATES = {
-  sub_distributor: {
-    filename: 'user-template-sub-distributor.csv',
-    headers: ['role', 'email', 'password', 'name', 'digital_id', 'broadband_id', 'phone', 'designation', 'location'],
-    sample: 'sub_distributor,sd1@example.com,Pass@123,Sub Distributor One,SD001,BB001,+911234567890,Designation A,Location A',
-    label: 'Sub Distributor',
-    description: 'role, email, password, name, digital_id, broadband_id, phone, designation, location',
-  },
-  cluster: {
-    filename: 'user-template-cluster.csv',
-    headers: ['role', 'email', 'password', 'name', 'cluster_id', 'phone', 'designation', 'location', 'sub_distributor_email'],
-    sample: 'cluster,cluster1@example.com,Pass@123,Cluster One,CL001,+911234567890,Designation B,Location B,sd1@example.com',
-    label: 'Cluster',
-    description: 'role, email, password, name, cluster_id, phone, designation, location, sub_distributor_email',
-  },
-  operator: {
-    filename: 'user-template-operator.csv',
-    headers: ['role', 'email', 'password', 'name', 'operator_id', 'phone', 'designation', 'location', 'sub_distributor_email', 'cluster_email'],
-    sample: 'operator,op1@example.com,Pass@123,Operator One,OP001,+911234567890,Designation C,Location C,,cluster1@example.com',
-    label: 'Operator',
-    description: 'role, email, password, name, operator_id, phone, designation, location, sub_distributor_email, cluster_email',
-  },
+const TEMPLATE = {
+  filename: 'user-bulk-upload-template.csv',
+  headers: ['email', 'password', 'name', 'digital_id', 'broadband_id', 'phone'],
+  sample: 'user1@example.com,Pass@123,John Doe,SD001|DIG002|DIG003,BB001,+8801234567890',
 };
 
 const BulkUploadUsers = () => {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
+  const [selectedMode, setSelectedMode] = useState(null);
+  const [parentOptions, setParentOptions] = useState([]);
+  const [selectedParentId, setSelectedParentId] = useState('');
+  const [loadingParents, setLoadingParents] = useState(false);
 
-  const downloadTemplate = useCallback(async (key) => {
-    const tpl = TEMPLATES[key];
-    if (!tpl) return;
+  const actorRole = normalizeRole(user?.role);
+  const isManagement = [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.SUB_DISTRIBUTION_MANAGER].includes(actorRole);
+  const isSubDist = actorRole === ROLES.SUB_DISTRIBUTOR;
+  const isCluster = actorRole === ROLES.CLUSTER;
+
+  const getModes = () => {
+    if (isManagement) {
+      return [
+        {
+          id: 'subdistributor',
+          label: 'Upload Subdistributors',
+          icon: Building,
+          targetRole: 'sub_distributor',
+          requiresParent: false,
+          description: 'Create subdistributor accounts',
+        },
+        {
+          id: 'cluster',
+          label: 'Upload Clusters',
+          icon: Network,
+          targetRole: 'cluster',
+          requiresParent: true,
+          parentRole: 'sub_distributor',
+          parentLabel: 'Parent Subdistributor',
+          description: 'Create cluster accounts under a subdistributor',
+        },
+        {
+          id: 'operator_to_sd',
+          label: 'Operators (under Subdistributor)',
+          icon: Users,
+          targetRole: 'operator',
+          requiresParent: true,
+          parentRole: 'sub_distributor',
+          parentLabel: 'Parent Subdistributor',
+          description: 'Create operators assigned to a subdistributor',
+        },
+        {
+          id: 'operator_to_cluster',
+          label: 'Operators (under Cluster)',
+          icon: Users,
+          targetRole: 'operator',
+          requiresParent: true,
+          parentRole: 'cluster',
+          parentLabel: 'Parent Cluster',
+          description: 'Create operators under a specific cluster',
+        },
+      ];
+    }
+    if (isSubDist) {
+      return [
+        {
+          id: 'operator_to_me',
+          label: 'Operators (assign to me)',
+          icon: Users,
+          targetRole: 'operator',
+          requiresParent: false,
+          parentId: String(user?.id),
+          description: 'Operators assigned directly to you',
+        },
+        {
+          id: 'operator_to_cluster',
+          label: 'Operators (under Cluster)',
+          icon: Network,
+          targetRole: 'operator',
+          requiresParent: true,
+          parentRole: 'cluster',
+          parentLabel: 'Select Cluster',
+          description: 'Operators under one of your clusters',
+        },
+      ];
+    }
+    if (isCluster) {
+      return [
+        {
+          id: 'operator_to_me',
+          label: 'Upload Operators',
+          icon: Users,
+          targetRole: 'operator',
+          requiresParent: false,
+          parentId: String(user?.id),
+          description: 'Create operators under your cluster',
+        },
+      ];
+    }
+    return [];
+  };
+
+  const modes = getModes();
+
+  useEffect(() => {
+    if (!selectedMode || !selectedMode.requiresParent) {
+      setParentOptions([]);
+      setSelectedParentId('');
+      return;
+    }
+
+    const fetchParents = async () => {
+      setLoadingParents(true);
+      try {
+        const params = { role: selectedMode.parentRole };
+        if (isSubDist && selectedMode.parentRole === 'cluster') {
+          params.parent_id = String(user?.id);
+        }
+        const res = await usersAPI.getUsers(params);
+        const list = Array.isArray(res?.data) ? res.data : [];
+        setParentOptions(list);
+      } catch {
+        setParentOptions([]);
+      } finally {
+        setLoadingParents(false);
+      }
+    };
+    fetchParents();
+  }, [selectedMode, isSubDist, user?.id]);
+
+  const downloadTemplate = useCallback(() => {
     try {
-      await dashboardAPI.trackActivity({
+      dashboardAPI.trackActivity({
         action: 'template_export',
-        description: `Exported ${tpl.label} bulk upload template`,
+        description: 'Exported bulk upload template',
         context: 'users_bulk_upload_template',
       });
     } catch {}
     const bom = '\uFEFF';
-    const blob = new Blob([bom + tpl.headers.join(',') + '\n' + tpl.sample], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob([bom + TEMPLATE.headers.join(',') + '\n' + TEMPLATE.sample], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = tpl.filename;
+    a.download = TEMPLATE.filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -95,11 +199,12 @@ const BulkUploadUsers = () => {
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file || !selectedMode) return;
     try {
       setUploading(true);
       setResult(null);
-      const res = await usersAPI.bulkUpload(file);
+      const parentId = selectedMode.parentId || selectedParentId || undefined;
+      const res = await usersAPI.bulkUpload(file, selectedMode.targetRole, parentId);
       setResult(res.data);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -116,6 +221,17 @@ const BulkUploadUsers = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const resetMode = () => {
+    setSelectedMode(null);
+    setFile(null);
+    setResult(null);
+    setSelectedParentId('');
+    setParentOptions([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const canUpload = file && selectedMode && (!selectedMode.requiresParent || selectedMode.parentId || selectedParentId);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -124,70 +240,130 @@ const BulkUploadUsers = () => {
         </button>
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Bulk Upload Users</h1>
-          <p className="text-sm text-gray-500">Upload sub-distributors, clusters, and operators via CSV or Excel</p>
+          <p className="text-sm text-gray-500">
+            {isSubDist
+              ? 'Upload operators — assign to yourself or one of your clusters'
+              : isCluster
+                ? 'Upload operators under your cluster'
+                : 'Upload subdistributors, clusters, or operators'}
+          </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <Card title="Templates" icon={FileSpreadsheet} className="lg:col-span-1">
-          <p className="text-sm text-gray-600 mb-4">
-            Download a CSV template for the user role you want to upload, fill in the data, and upload it back.
-          </p>
-          <div className="space-y-3">
-            {Object.entries(TEMPLATES).map(([key, tpl]) => (
-              <div key={key} className="p-3 border border-gray-200 rounded-lg">
-                <p className="text-sm font-medium text-gray-800 mb-1">{tpl.label}</p>
-                <p className="text-xs text-gray-500 mb-2">{tpl.description}</p>
-                <Button variant="outline" size="sm" onClick={() => downloadTemplate(key)}>
-                  <Download className="w-4 h-4" />
-                  Download
-                </Button>
-              </div>
+      {!selectedMode ? (
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">Choose what to upload</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {modes.map(mode => (
+              <button
+                key={mode.id}
+                onClick={() => setSelectedMode(mode)}
+                className="flex flex-col items-center gap-3 p-6 border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50/30 transition-all text-center"
+              >
+                <mode.icon className="w-10 h-10 text-blue-600" />
+                <div>
+                  <p className="font-semibold text-gray-800">{mode.label}</p>
+                  <p className="text-xs text-gray-500 mt-1">{mode.description}</p>
+                </div>
+              </button>
             ))}
           </div>
-        </Card>
 
-        <Card title="Upload File" icon={Upload} className="lg:col-span-2">
-          <div
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors"
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-            <Upload className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-            <p className="text-sm text-gray-600 font-medium">
-              {file ? file.name : 'Drop your file here or click to browse'}
-            </p>
-            <p className="text-xs text-gray-400 mt-1">Supports .csv, .xlsx, .xls</p>
-          </div>
-
-          {file && (
-            <div className="mt-4 flex items-center justify-between p-3 bg-blue-50 rounded-lg">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                <span className="text-sm font-medium text-gray-700">{file.name}</span>
-                <span className="text-xs text-gray-400">({(file.size / 1024).toFixed(1)} KB)</span>
+          <Card title="Template" icon={FileSpreadsheet} className="mt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  <strong>Columns:</strong> {TEMPLATE.headers.join(', ')}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Use pipe (|) in digital_id to add multiple digital IDs (operators)
+                </p>
               </div>
-              <div className="flex gap-2">
-                <Button variant="primary" onClick={handleUpload} disabled={uploading}>
-                  {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  {uploading ? 'Uploading...' : 'Upload'}
-                </Button>
-                <Button variant="ghost" onClick={handleClear}>Clear</Button>
-              </div>
+              <Button variant="outline" onClick={downloadTemplate}>
+                <Download className="w-4 h-4" /> Download Template
+              </Button>
             </div>
-          )}
-        </Card>
-      </div>
+          </Card>
+        </div>
+      ) : (
+        <>
+          <button
+            onClick={resetMode}
+            className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 mb-2"
+          >
+            ← Choose different upload type
+          </button>
 
-      {file && <FilePreview file={file} />}
+          <Card title={selectedMode.label} icon={selectedMode.icon}>
+            <p className="text-sm text-gray-600 mb-4">{selectedMode.description}</p>
+
+            {selectedMode.requiresParent && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {selectedMode.parentLabel}
+                </label>
+                {loadingParents ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+                  </div>
+                ) : parentOptions.length === 0 ? (
+                  <p className="text-sm text-amber-600">No {selectedMode.parentRole}s available</p>
+                ) : (
+                  <select
+                    value={selectedParentId}
+                    onChange={e => setSelectedParentId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select {selectedMode.parentLabel}...</option>
+                    {parentOptions.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors"
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <Upload className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+              <p className="text-sm text-gray-600 font-medium">
+                {file ? file.name : 'Drop your file here or click to browse'}
+              </p>
+              <p className="text-xs text-gray-400 mt-1">Supports .csv, .xlsx, .xls</p>
+            </div>
+
+            {file && (
+              <div className="mt-4 flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-blue-600" />
+                  <span className="text-sm font-medium text-gray-700">{file.name}</span>
+                  <span className="text-xs text-gray-400">({(file.size / 1024).toFixed(1)} KB)</span>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="primary" onClick={handleUpload} disabled={uploading || !canUpload}>
+                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                    {uploading ? 'Uploading...' : 'Upload'}
+                  </Button>
+                  <Button variant="ghost" onClick={handleClear}>Clear</Button>
+                </div>
+              </div>
+            )}
+
+            {file && <FilePreview file={file} />}
+          </Card>
+        </>
+      )}
 
       {uploading && (
         <div className="flex justify-center py-8">

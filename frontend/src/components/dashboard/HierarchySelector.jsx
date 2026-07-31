@@ -28,10 +28,23 @@ const HierarchySelector = ({ onSelect, selectedUserId }) => {
 
   const searchLower = search.toLowerCase().trim();
 
+  const matchesUser = (u, q) => {
+    const identities = Array.isArray(u?.digital_ids) ? u.digital_ids : [];
+    const hasIdentity = identities.some(di =>
+      String(di?.digital_id || '').toLowerCase().includes(q) ||
+      String(di?.broadband_id || '').toLowerCase().includes(q),
+    );
+    return (
+      u.name.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      hasIdentity
+    );
+  };
+
   const filteredSubDistributors = useMemo(() => {
     let list = scopeUsers.sub_distributors;
     if (searchLower) {
-      list = list.filter((u) => u.name.toLowerCase().includes(searchLower) || u.email.toLowerCase().includes(searchLower));
+      list = list.filter((u) => matchesUser(u, searchLower));
     }
     return list;
   }, [scopeUsers.sub_distributors, searchLower]);
@@ -40,14 +53,14 @@ const HierarchySelector = ({ onSelect, selectedUserId }) => {
     (c) => (c.parent_id === sdId || (!sdId))
   ).filter((c) => {
     if (!searchLower || sdId) return true;
-    return c.name.toLowerCase().includes(searchLower) || c.email.toLowerCase().includes(searchLower);
+    return matchesUser(c, searchLower);
   });
 
   const filteredOperators = scopeUsers.operators.filter(
     (op) => (op.parent_id === clusterId || (!clusterId))
   ).filter((op) => {
     if (!searchLower || clusterId) return true;
-    return op.name.toLowerCase().includes(searchLower) || op.email.toLowerCase().includes(searchLower);
+    return matchesUser(op, searchLower);
   });
 
   const handleSdChange = (e) => {

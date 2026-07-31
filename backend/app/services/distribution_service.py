@@ -12,6 +12,7 @@ from app.database_sqlalchemy import async_session_factory
 from app.models.distribution import DistributionCreate, DistributionStatus
 from app.models.device import DeviceStatus
 from app.services import device_service, notification_service
+from app.services.digital_id_search import build_identity_search_clause
 from app.utils.helpers import get_pagination, generate_distribution_id
 
 
@@ -323,14 +324,23 @@ async def get_distributions(
                 "status": "status",
                 "approved_by_name": "approved_by_name",
             }
+            identity_user_columns = ["distributions.from_user_id", "distributions.to_user_id"]
             normalized_search_by = str(search_by or "all").strip().lower()
-            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+            if normalized_search_by in {"digital_id", "broadband_id"}:
+                clause, iparams = build_identity_search_clause(
+                    identity_user_columns, like, fields=[normalized_search_by]
+                )
+                conditions.append(clause)
+                params.update(iparams)
+            elif normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
                 conditions.append(f"{search_field_map[normalized_search_by]} LIKE :search_like")
                 params["search_like"] = like
             else:
-                conditions.append("(distribution_id LIKE :sl1 OR from_user_name LIKE :sl2 OR to_user_name LIKE :sl3 OR status LIKE :sl4 OR approved_by_name LIKE :sl5)")
+                id_clause, iparams = build_identity_search_clause(identity_user_columns, like)
+                conditions.append("(distribution_id LIKE :sl1 OR from_user_name LIKE :sl2 OR to_user_name LIKE :sl3 OR status LIKE :sl4 OR approved_by_name LIKE :sl5 OR " + id_clause + ")")
                 for i in range(5):
                     params[f"sl{i+1}"] = like
+                params.update(iparams)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 

@@ -23,6 +23,8 @@ const TABLE_SEARCH_BY_OPTIONS = [
   { value: 'return_id', label: 'Return ID' },
   { value: 'device_serial', label: 'Device Serial' },
   { value: 'requested_by_name', label: 'Initiated By' },
+  { value: 'digital_id', label: 'Digital ID' },
+  { value: 'broadband_id', label: 'Broadband ID' },
   { value: 'reason', label: 'Reason' },
   { value: 'status', label: 'Status' },
 ];

@@ -195,6 +195,12 @@ const TrackDevice = () => {
     return { subDistributors, clusters, clustersBySub };
   }, [hierarchyUsers]);
 
+  const holderOptionLabel = (item) => {
+    const identities = Array.isArray(item?.digital_ids) ? item.digital_ids : [];
+    const ids = identities.flatMap((di) => [di?.digital_id, di?.broadband_id]).filter(Boolean);
+    return ids.length ? `${item.name} (${ids.join(', ')})` : item.name;
+  };
+
   const filterOptions = useMemo(() => {
     const insightTypes = Array.isArray(overviewInsights?.by_type)
       ? overviewInsights.by_type.map((item) => item?.type).filter(Boolean)
@@ -208,8 +214,8 @@ const TrackDevice = () => {
 
     const deviceTypes = [...new Set([...insightTypes, ...loadedTypes])].sort();
     const manufacturers = [...new Set([...insightManufacturers, ...loadedManufacturers])].sort();
-    const subDistributors = hierarchyIndex.subDistributors.map((item) => ({ id: String(item.id), name: item.name }));
-    const clusters = hierarchyIndex.clusters.map((item) => ({ id: String(item.id), name: item.name }));
+    const subDistributors = hierarchyIndex.subDistributors.map((item) => ({ id: String(item.id), name: holderOptionLabel(item) }));
+    const clusters = hierarchyIndex.clusters.map((item) => ({ id: String(item.id), name: holderOptionLabel(item) }));
     return { deviceTypes, manufacturers, subDistributors, clusters };
   }, [allDevices, hierarchyIndex, overviewInsights]);
 

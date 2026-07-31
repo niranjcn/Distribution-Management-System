@@ -7,6 +7,7 @@ from app.database_sqlalchemy import async_session_factory
 from app.models.return_device import ReturnCreate, ReturnUpdate, ReturnStatus, ReturnReason
 from app.models.device import DeviceStatus
 from app.services import device_service, notification_service
+from app.services.digital_id_search import build_identity_search_clause
 from app.utils.helpers import get_pagination, generate_return_id
 
 
@@ -80,13 +81,21 @@ async def get_returns(
                 "status": "r.status",
             }
             normalized_search_by = str(search_by or "all").strip().lower()
-            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+            if normalized_search_by in {"digital_id", "broadband_id"}:
+                clause, iparams = build_identity_search_clause(
+                    ["r.requested_by"], like, fields=[normalized_search_by]
+                )
+                conditions.append(clause)
+                params.update(iparams)
+            elif normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
                 conditions.append(f"{search_field_map[normalized_search_by]} LIKE :search_like")
                 params["search_like"] = like
             else:
-                conditions.append("(r.return_id LIKE :sl1 OR r.device_serial LIKE :sl2 OR r.requested_by_name LIKE :sl3 OR r.reason LIKE :sl4 OR r.status LIKE :sl5)")
+                id_clause, iparams = build_identity_search_clause(["r.requested_by"], like)
+                conditions.append("(r.return_id LIKE :sl1 OR r.device_serial LIKE :sl2 OR r.requested_by_name LIKE :sl3 OR r.reason LIKE :sl4 OR r.status LIKE :sl5 OR " + id_clause + ")")
                 for i in range(5):
                     params[f"sl{i+1}"] = like
+                params.update(iparams)
 
         where = " AND ".join(conditions)
 

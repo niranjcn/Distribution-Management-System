@@ -16,7 +16,7 @@ services:
       TZ: Asia/Kolkata
     command:
       - "--default-time-zone=+05:30"
-      - "--innodb_buffer_pool_size=2G"
+      - "--innodb_buffer_pool_size=512M"
       - "--max_connections=200"
       - "--wait_timeout=600"
     ulimits:
@@ -29,11 +29,11 @@ services:
       - mysql_data:/var/lib/mysql
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      test: ["CMD", "mysqladmin", "ping", "--silent"]
       interval: 10s
       timeout: 5s
-      retries: 15
-      start_period: 90s
+      retries: 20
+      start_period: 120s
     networks:
       dms_net:
         ipv4_address: 172.20.0.2
@@ -57,6 +57,12 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
     env_file:
       - ./backend/.env
     environment:
@@ -110,7 +116,8 @@ services:
         max-size: "10m"
         max-file: "3"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       TZ: Asia/Kolkata
     expose:
@@ -139,8 +146,10 @@ services:
         max-size: "10m"
         max-file: "3"
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
     ports:
       - "80:80"
       - "443:443"

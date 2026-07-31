@@ -67,6 +67,23 @@ async def get_scope_users(user: Dict[str, Any]) -> Dict[str, list]:
         for u in users_list:
             u["id"] = str(u["id"])
             u["parent_id"] = str(u["parent_id"]) if u["parent_id"] else ""
+            u["digital_ids"] = []
+
+        if users_list:
+            user_ids = [int(u["id"]) for u in users_list]
+            ph = ",".join([f":di_{i}" for i in range(len(user_ids))])
+            id_rows = (await session.execute(
+                text(f"SELECT user_id, digital_id, broadband_id FROM digital_identities WHERE user_id IN ({ph})"),
+                {f"di_{i}": v for i, v in enumerate(user_ids)},
+            )).mappings().all()
+            digital_map: Dict[int, list] = {}
+            for r in id_rows:
+                digital_map.setdefault(int(r["user_id"]), []).append({
+                    "digital_id": r["digital_id"],
+                    "broadband_id": r["broadband_id"],
+                })
+            for u in users_list:
+                u["digital_ids"] = digital_map.get(int(u["id"]), [])
 
     role_map = {
         "sub_distributor": "sub_distributors",

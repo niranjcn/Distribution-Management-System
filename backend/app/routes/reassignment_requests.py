@@ -30,6 +30,7 @@ async def get_reassignment_requests(
             "message": "Reassignment requests retrieved successfully",
             "data": result["data"],
             "pagination": result["pagination"],
+            "cleaned_up": result.get("cleaned_up", 0),
         }
     except HTTPException:
         raise

@@ -182,6 +182,75 @@ async def get_device_utilization_report(
         )
 
 
+@router.get("/sub-distributions", summary="Get sub-distribution hierarchy report")
+async def get_sub_distribution_report(
+    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
+):
+    """Get sub-distribution hierarchy report (operators, clusters, device rollups)."""
+    try:
+        report = await report_service.get_sub_distribution_report()
+
+        return {
+            "success": True,
+            "message": "Sub-distribution report generated successfully",
+            "data": report
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
+@router.get("/clusters", summary="Get cluster hierarchy report")
+async def get_cluster_report(
+    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
+):
+    """Get cluster hierarchy report (operators, device rollups)."""
+    try:
+        report = await report_service.get_cluster_report()
+
+        return {
+            "success": True,
+            "message": "Cluster report generated successfully",
+            "data": report
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
+@router.get("/operators", summary="Get operator hierarchy report")
+async def get_operator_report(
+    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
+):
+    """Get operator hierarchy report (parent cluster / sub-distribution, device rollups)."""
+    try:
+        report = await report_service.get_operator_report()
+
+        return {
+            "success": True,
+            "message": "Operator report generated successfully",
+            "data": report
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
 @router.post("/export", summary="Export report (placeholder for actual export functionality)")
 async def export_report(
     export_data: dict,

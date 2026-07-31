@@ -67,9 +67,9 @@ async def seed_initial_data():
         
         result = await session.execute(
             text("""INSERT INTO users (email, password_hash, name, role, status, force_email_change, force_password_change, phone,
-                location, is_verified, created_at, updated_at)
+                designation, created_at, updated_at)
             VALUES (:email, :password_hash, :name, :role, :status, :force_email_change, :force_password_change, :phone,
-                :location, :is_verified, :created_at, :updated_at)"""),
+                :designation, :created_at, :updated_at)"""),
             {
                 "email": "admin@dms.com",
                 "password_hash": get_password_hash(admin_password),
@@ -79,8 +79,7 @@ async def seed_initial_data():
                 "force_email_change": 1,
                 "force_password_change": 1,
                 "phone": "1111111111",
-                "location": "Head Office",
-                "is_verified": 1,
+                "designation": None,
                 "created_at": now,
                 "updated_at": now
             }

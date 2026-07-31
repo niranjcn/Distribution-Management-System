@@ -7,7 +7,7 @@ from app.models.return_device import ReturnRequest, ReturnCreate, ReturnUpdate, 
 from app.models.operator import Operator, OperatorCreate, OperatorUpdate
 from app.models.notification import Notification, NotificationCreate, NotificationType, NotificationCategory
 from app.models.auth import Token, TokenData, LoginRequest
-from app.models.digital_id import DigitalIdCreate, DigitalIdUpdate, DigitalIdResponse
+from app.models.digital_id import DigitalIdentityCreate, DigitalIdentityResponse
 from app.models.inventory import (
 	InventoryItemCreate,
 	InventoryItemUpdate,

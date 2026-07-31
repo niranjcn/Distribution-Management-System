@@ -279,10 +279,6 @@ async def complete_forced_credential_update(
         inst.updated_at = now
         await session.commit()
 
-        if normalized_email != old_email.lower().strip() or new_phone != old_phone:
-            from app.services.digital_id_service import recompute_hashes_for_user
-            await recompute_hashes_for_user(user_id, normalized_email, new_phone)
-
     async with async_session_factory() as session:
         inst = await session.get(User, int(user_id))
         if not inst:

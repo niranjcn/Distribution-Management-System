@@ -16,6 +16,9 @@ import Users from './pages/Users';
 import UserHierarchy from './pages/UserHierarchy';
 import Approvals from './pages/Approvals';
 import Reports from './pages/Reports';
+import SubDistributionReport from './pages/SubDistributionReport';
+import ClusterReport from './pages/ClusterReport';
+import OperatorReport from './pages/OperatorReport';
 import Backup from './pages/Backup';
 import Activities from './pages/Activities';
 import InstallBanner from './components/ui/InstallBanner';
@@ -236,7 +239,7 @@ function AppRoutes() {
         <Route
           path="users/bulk-upload"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'manager']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster']}>
               <BulkUploadUsers />
             </ProtectedRoute>
           }
@@ -280,6 +283,33 @@ function AppRoutes() {
               <Reports />
             </ProtectedRoute>
           } 
+        />
+
+        <Route
+          path="reports/sub-distribution"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff']}>
+              <SubDistributionReport />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="reports/cluster"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff']}>
+              <ClusterReport />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="reports/operator"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff']}>
+              <OperatorReport />
+            </ProtectedRoute>
+          }
         />
 
         <Route

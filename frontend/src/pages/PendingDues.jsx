@@ -13,6 +13,8 @@ const PENDING_DUES_SEARCH_BY_OPTIONS = [
   { value: 'user_name', label: 'User' },
   { value: 'user_role', label: 'Role' },
   { value: 'parent_name', label: 'Parent' },
+  { value: 'digital_id', label: 'Digital ID' },
+  { value: 'broadband_id', label: 'Broadband ID' },
   { value: 'total_due', label: 'Total Due' },
 ];
 
@@ -92,6 +94,12 @@ const PendingDues = () => {
       user_name: (row) => row?.user_name,
       user_role: (row) => row?.user_role,
       parent_name: (row) => row?.parent_name,
+      digital_id: (row) => Array.isArray(row?.digital_ids)
+        ? row.digital_ids.map((di) => di?.digital_id || '').join(' ')
+        : '',
+      broadband_id: (row) => Array.isArray(row?.digital_ids)
+        ? row.digital_ids.map((di) => di?.broadband_id || '').join(' ')
+        : '',
       total_due: (row) => row?.total_due,
     };
     const searchBy = String(appliedTableSearch.by || 'all');

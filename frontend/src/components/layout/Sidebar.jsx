@@ -89,9 +89,36 @@ const Sidebar = ({ isOpen, onClose }) => {
       { path: '/devices/track', icon: Search, label: 'Track Device' },
     ];
 
+    const defectMenu = {
+      key: 'defect',
+      icon: AlertTriangle,
+      label: 'Defect',
+      children: [
+        { path: '/defects', label: 'Defect Reports' },
+        { path: '/replacements', label: 'Replacements' },
+        { path: '/replacements/pending', label: 'Pending Replacements' },
+        { path: '/pending-dues', label: 'Pending Dues' },
+        { path: '/returns', label: 'Returns' },
+        { path: '/approvals', label: 'Approvals' },
+      ],
+    };
+
+    const reportMenu = {
+      key: 'report',
+      icon: BarChart3,
+      label: 'Report',
+      children: [
+        { path: '/reports', label: 'Overview' },
+        { path: '/reports/sub-distribution', label: 'Sub Distribution' },
+        { path: '/reports/cluster', label: 'Cluster' },
+        { path: '/reports/operator', label: 'Operator' },
+      ],
+    };
+
     const roleMenus = {
       [ROLES.SUPER_ADMIN]: [
         ...commonItems,
+        reportMenu,
         { path: '/view-as', icon: Eye, label: 'View User Dashboard' },
         { path: '/activities', icon: FileText, label: 'Activities' },
         {
@@ -127,35 +154,37 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
           ]
         },
-        { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
-        { path: '/returns', icon: RotateCcw, label: 'Returns' },
-        { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
-        { path: '/reports', icon: BarChart3, label: 'Reports' },
+        defectMenu,
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],
       [ROLES.MD_DIRECTOR]: [
         ...commonItems,
+        reportMenu,
         { path: '/view-as', icon: Eye, label: 'View User Dashboard' },
         { path: '/activities', icon: FileText, label: 'Activities' },
         { path: '/users', icon: Users, label: 'Users (Read Only)' },
         { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
         { path: '/devices', icon: Box, label: 'All Devices' },
         { path: '/distributions', icon: Truck, label: 'All Distributions' },
-        { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
-        { path: '/returns', icon: RotateCcw, label: 'Returns' },
-        { path: '/reports', icon: BarChart3, label: 'Reports' },
+        {
+          key: 'defect',
+          icon: AlertTriangle,
+          label: 'Defect',
+          children: [
+            { path: '/defects', label: 'Defect Reports' },
+            { path: '/replacements', label: 'Replacements' },
+            { path: '/replacements/pending', label: 'Pending Replacements' },
+            { path: '/pending-dues', label: 'Pending Dues' },
+            { path: '/returns', label: 'Returns' },
+          ],
+        },
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],
       [ROLES.MANAGER]: [
         ...commonItems,
+        reportMenu,
         { path: '/view-as', icon: Eye, label: 'View User Dashboard' },
         {
           key: 'users',
@@ -189,18 +218,13 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
           ]
         },
-        { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
-        { path: '/returns', icon: RotateCcw, label: 'Returns' },
-        { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
-        { path: '/reports', icon: BarChart3, label: 'Reports' },
+        defectMenu,
         { path: '/backup', icon: Database, label: 'Backup' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],
       [ROLES.PDIC_STAFF]: [
         ...commonItems,
+        reportMenu,
         {
           key: 'devices',
           icon: Box,
@@ -227,13 +251,20 @@ const Sidebar = ({ isOpen, onClose }) => {
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
         { path: '/returns', icon: RotateCcw, label: 'Returns' },
         { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
-        { path: '/reports', icon: BarChart3, label: 'Reports' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],
       [ROLES.SUB_DISTRIBUTION_MANAGER]: [
         ...commonItems,
-        { path: '/users', icon: Users, label: 'Scoped Users' },
-        { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
+        {
+          key: 'users',
+          icon: Users,
+          label: 'User Management',
+          children: [
+            { path: '/users', label: 'Scoped Users' },
+            { path: '/users/hierarchy', label: 'User Hierarchy' },
+            { path: '/users/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
         { path: '/devices', icon: Box, label: 'My Devices' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
         { path: '/distributions', icon: Truck, label: 'Scoped Distributions' },
@@ -246,8 +277,16 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.SUB_DISTRIBUTOR]: [
         ...commonItems,
-        { path: '/users', icon: Users, label: 'My Users' },
-        { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
+        {
+          key: 'users',
+          icon: Users,
+          label: 'User Management',
+          children: [
+            { path: '/users', label: 'My Users' },
+            { path: '/users/hierarchy', label: 'User Hierarchy' },
+            { path: '/users/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
         { path: '/devices', icon: Box, label: 'My Devices' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
@@ -272,8 +311,16 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.CLUSTER]: [
         ...commonItems,
-        { path: '/users', icon: Users, label: 'My Users' },
-        { path: '/users/hierarchy', icon: Network, label: 'User Hierarchy' },
+        {
+          key: 'users',
+          icon: Users,
+          label: 'User Management',
+          children: [
+            { path: '/users', label: 'My Users' },
+            { path: '/users/hierarchy', label: 'User Hierarchy' },
+            { path: '/users/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
         { path: '/devices', icon: Box, label: 'My Devices' },
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },

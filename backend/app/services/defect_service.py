@@ -15,6 +15,7 @@ from app.models.defect import (
 )
 from app.models.device import DeviceStatus, DeviceCreate
 from app.services import device_service, notification_service, return_service
+from app.services.digital_id_search import build_identity_search_clause
 from app.utils.helpers import get_pagination, generate_defect_id
 
 
@@ -302,13 +303,21 @@ async def get_defects(
                 "device_type": "device_type",
             }
             normalized_search_by = str(search_by or "all").strip().lower()
-            if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
+            if normalized_search_by in {"digital_id", "broadband_id"}:
+                clause, iparams = build_identity_search_clause(
+                    ["defects.reported_by"], like, fields=[normalized_search_by]
+                )
+                conditions.append(clause)
+                params.update(iparams)
+            elif normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
                 conditions.append(f"{search_field_map[normalized_search_by]} LIKE :search_like")
                 params["search_like"] = like
             else:
-                conditions.append("(report_id LIKE :sl1 OR device_serial LIKE :sl2 OR description LIKE :sl3 OR defect_type LIKE :sl4 OR severity LIKE :sl5 OR status LIKE :sl6 OR reported_by_name LIKE :sl7 OR device_type LIKE :sl8)")
+                id_clause, iparams = build_identity_search_clause(["defects.reported_by"], like)
+                conditions.append("(report_id LIKE :sl1 OR device_serial LIKE :sl2 OR description LIKE :sl3 OR defect_type LIKE :sl4 OR severity LIKE :sl5 OR status LIKE :sl6 OR reported_by_name LIKE :sl7 OR device_type LIKE :sl8 OR " + id_clause + ")")
                 for i in range(8):
                     params[f"sl{i+1}"] = like
+                params.update(iparams)
 
         if visibility_user:
             role = visibility_user.get("role")
@@ -867,7 +876,28 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
             """),
             params
         )).mappings().all()
-        return [dict(r) for r in rows]
+        result = [dict(r) for r in rows]
+
+        due_user_ids = [int(r["user_id"]) for r in result if r["user_id"] is not None]
+        if due_user_ids:
+            ph = ",".join([f":di_{i}" for i in range(len(due_user_ids))])
+            id_rows = (await session.execute(
+                text(f"SELECT user_id, digital_id, broadband_id FROM digital_identities WHERE user_id IN ({ph})"),
+                {f"di_{i}": v for i, v in enumerate(due_user_ids)},
+            )).mappings().all()
+            digital_map: Dict[int, list] = {}
+            for r in id_rows:
+                digital_map.setdefault(int(r["user_id"]), []).append({
+                    "digital_id": r["digital_id"],
+                    "broadband_id": r["broadband_id"],
+                })
+            for row in result:
+                row["digital_ids"] = digital_map.get(int(row["user_id"]), [])
+        else:
+            for row in result:
+                row["digital_ids"] = []
+
+        return result
 
 
 async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
