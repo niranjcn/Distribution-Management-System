@@ -936,7 +936,7 @@ async def confirm_receipt(
         )
         await notification_service.bulk_create_notifications([
             {
-                "user_id": str(r["id"]),
+                "user_id": r["id"],
                 "title": "Device Not Received — Dispute",
                 "message": dispute_msg,
                 "notification_type": "error",
@@ -946,7 +946,7 @@ async def confirm_receipt(
             for r in admin_rows
         ] + [
             {
-                "user_id": str(dist["from_user_id"]),
+                "user_id": dist["from_user_id"],
                 "title": "Receipt Disputed",
                 "message": f"{user['name']} reported NOT receiving your device(s) in distribution "
                            f"{dist['distribution_id']}. Admin, manager, and PDIC staff have been notified.",

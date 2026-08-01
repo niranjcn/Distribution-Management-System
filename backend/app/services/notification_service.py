@@ -24,7 +24,7 @@ def _parse_notification_list(notifications: List[Dict[str, Any]]) -> List[Dict[s
 
 
 async def get_notifications(
-    user_id: str,
+    user_id: int,
     page: int = 1,
     page_size: int = 20,
     is_read: Optional[bool] = None
@@ -58,7 +58,7 @@ async def get_notifications(
         }
 
 
-async def get_unread_count(user_id: str) -> int:
+async def get_unread_count(user_id: int) -> int:
     """Get count of unread notifications"""
     async with async_session_factory() as session:
         q = (
@@ -69,7 +69,7 @@ async def get_unread_count(user_id: str) -> int:
         return (await session.execute(q)).scalar()
 
 
-async def get_latest_notifications(user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+async def get_latest_notifications(user_id: int, limit: int = 5) -> List[Dict[str, Any]]:
     """Get latest notifications for a user"""
     async with async_session_factory() as session:
         q = (
@@ -83,7 +83,7 @@ async def get_latest_notifications(user_id: str, limit: int = 5) -> List[Dict[st
 
 
 async def create_notification(
-    user_id: str,
+    user_id: int,
     title: str,
     message: str,
     notification_type: str = "info",
@@ -126,7 +126,7 @@ async def bulk_create_notifications(
         metadata_json = json.dumps(n.get("metadata")) if n.get("metadata") else None
         values.append(
             {
-                "user_id": n["user_id"],
+                "user_id": int(n["user_id"]),
                 "title": n["title"],
                 "message": n["message"],
                 "type": n.get("notification_type", "info"),
@@ -144,7 +144,7 @@ async def bulk_create_notifications(
         await session.commit()
 
 
-async def mark_as_read(notification_id: str, user_id: str) -> bool:
+async def mark_as_read(notification_id: str, user_id: int) -> bool:
     """Mark notification as read"""
     async with async_session_factory() as session:
         result = await session.execute(
@@ -160,7 +160,7 @@ async def mark_as_read(notification_id: str, user_id: str) -> bool:
         return True
 
 
-async def mark_all_as_read(user_id: str) -> int:
+async def mark_all_as_read(user_id: int) -> int:
     """Mark all user notifications as read"""
     async with async_session_factory() as session:
         q = select(Notification).where(
@@ -174,7 +174,7 @@ async def mark_all_as_read(user_id: str) -> int:
         return count
 
 
-async def delete_notification(notification_id: str, user_id: str) -> bool:
+async def delete_notification(notification_id: str, user_id: int) -> bool:
     """Delete notification"""
     async with async_session_factory() as session:
         result = await session.execute(
@@ -204,7 +204,7 @@ async def delete_old_notifications(days: int = 30) -> int:
 
 
 async def send_bulk_notification(
-    user_ids: List[str],
+    user_ids: List[int],
     title: str,
     message: str,
     notification_type: str = "info",

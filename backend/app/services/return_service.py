@@ -207,7 +207,7 @@ async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) ->
         )).mappings().all()
     await notification_service.bulk_create_notifications([
         {
-            "user_id": str(s["id"]),
+            "user_id": s["id"],
             "title": "New Return Request — Awaiting Approval",
             "message": (
                 f"{requester['name']} has submitted a return request for device "
@@ -345,7 +345,7 @@ async def update_return_status(
             )).mappings().all()
         await notification_service.bulk_create_notifications([
             {
-                "user_id": str(r["id"]),
+                "user_id": r["id"],
                 "title": "Return Approved — Confirm Device Receipt",
                 "message": (
                     f"Return request {return_req['return_id']} approved. "
@@ -514,7 +514,7 @@ async def auto_create_defect_return(
 
     await notification_service.bulk_create_notifications([
         {
-            "user_id": str(a["id"]),
+            "user_id": a["id"],
             "title": "Return Request Created — Defective Device",
             "message": (
                 f"A return request has been auto-created for defective device "

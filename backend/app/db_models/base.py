@@ -23,7 +23,6 @@ class Base(DeclarativeBase):
 
         if "id" in d and d["id"] is not None:
             d["_id"] = str(d["id"])
-            d["id"] = str(d["id"])
 
         for key in [
             "is_verified", "is_read", "force_email_change", "force_password_change",

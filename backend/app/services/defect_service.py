@@ -561,7 +561,7 @@ async def forward_defect_to_management(
 
     await notification_service.bulk_create_notifications([
         {
-            "user_id": str(r["id"]),
+            "user_id": r["id"],
             "title": "Defect Forwarded by Sub Distributor",
             "message": (
                 f"Defect {defect.get('report_id')} was forwarded by {forwarder_name} "
@@ -582,7 +582,7 @@ async def forward_defect_to_management(
 
     if defect.get("reported_by"):
         await notification_service.create_notification(
-            user_id=str(defect["reported_by"]),
+            user_id=int(defect["reported_by"]),
             title="Defect Forwarded to Manager/Admin",
             message=(
                 f"Your defect report {defect.get('report_id')} has been forwarded to manager/admin "
@@ -725,7 +725,7 @@ async def update_defect_status(
                 )).mappings().all()
             notifications = [
                 {
-                    "user_id": str(r["id"]),
+                    "user_id": r["id"],
                     "title": "Defective Device Return — Pending Receipt",
                     "message": (
                         f"Defect {defect['report_id']} approved. The operator has been instructed to return "
@@ -736,7 +736,7 @@ async def update_defect_status(
                     "link": "/returns"
                 }
                 for r in staff_rows
-                if str(r["id"]) != defect["reported_by"]
+                if int(r["id"]) != int(defect["reported_by"])
             ]
             if notifications:
                 await notification_service.bulk_create_notifications(notifications)
@@ -803,7 +803,7 @@ async def confirm_defect_payment(
         )
         await session.commit()
 
-    due_user_id = str(defect.get("payment_due_user_id") or defect.get("reported_by") or "")
+    due_user_id = int(defect.get("payment_due_user_id") or defect.get("reported_by") or 0)
     if due_user_id:
         await notification_service.create_notification(
             user_id=due_user_id,
@@ -1169,11 +1169,11 @@ async def replace_defect_device(
         )
     )
 
-    holder_user_id = str(original_holder_id) if original_holder_id else None
+    holder_user_id = int(original_holder_id) if original_holder_id else None
     holder_user_name = original_holder_name or defect.get("reported_by_name") or "Operator"
 
-    reported_by_str = str(defect["reported_by"]) if defect.get("reported_by") else None
-    recipient_ids = {uid for uid in [holder_user_id, reported_by_str] if uid}
+    reported_by_str = int(defect["reported_by"]) if defect.get("reported_by") else None
+    recipient_ids = {uid for uid in [holder_user_id, reported_by_str] if uid is not None}
 
     title = (
         "Serviced Device Ready - Confirmation Required"
@@ -1232,9 +1232,9 @@ async def confirm_replacement_receipt(
             raise ValueError("Original defective device not found")
         old_device = dict(old_device)
 
-        holder_user_id = str(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
-        reporter_user_id = str(defect.get("reported_by")) if defect.get("reported_by") else None
-        allowed_confirmer_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid}
+        holder_user_id = int(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
+        reporter_user_id = int(defect.get("reported_by")) if defect.get("reported_by") else None
+        allowed_confirmer_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid is not None}
         if confirmer_id not in allowed_confirmer_ids:
             raise ValueError("Only the current holder or original defect reporter can confirm replacement receipt")
 
@@ -1304,7 +1304,7 @@ async def confirm_replacement_receipt(
 
     await notification_service.bulk_create_notifications([
         {
-            "user_id": str(r["id"]),
+            "user_id": r["id"],
             "title": "Replacement Receipt Confirmed",
             "message": (
                 f"{confirmer_name} ({confirmer_role.replace('_', ' ')}) confirmed receipt of replacement device "
@@ -1349,9 +1349,9 @@ async def enquire_replacement_status(
             raise ValueError("Original defective device not found")
         old_device = dict(old_device)
 
-        holder_user_id = str(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
-        reporter_user_id = str(defect.get("reported_by")) if defect.get("reported_by") else None
-        allowed_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid}
+        holder_user_id = int(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
+        reporter_user_id = int(defect.get("reported_by")) if defect.get("reported_by") else None
+        allowed_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid is not None}
         if enquirer_id not in allowed_ids:
             raise ValueError("Only the operator involved in this defect can send an enquiry")
 
@@ -1361,7 +1361,7 @@ async def enquire_replacement_status(
 
     await notification_service.bulk_create_notifications([
         {
-            "user_id": str(r["id"]),
+            "user_id": r["id"],
             "title": "Replacement Enquiry from Operator",
             "message": f"{enquirer_name} sent an enquiry for {defect.get('report_id')}: {message}",
             "notification_type": "warning",
@@ -1413,9 +1413,9 @@ async def resend_replacement_confirmation(
             raise ValueError("Replacement device not found")
         replacement_device = dict(replacement_device)
 
-        holder_user_id = str(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
-        reporter_user_id = str(defect.get("reported_by")) if defect.get("reported_by") else None
-        recipient_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid}
+        holder_user_id = int(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
+        reporter_user_id = int(defect.get("reported_by")) if defect.get("reported_by") else None
+        recipient_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid is not None}
 
     await notification_service.bulk_create_notifications([
         {
@@ -1473,9 +1473,9 @@ async def mark_replacement_waiting(
         )).mappings().first()
         old_device = dict(old_device) if old_device else {}
 
-        holder_user_id = str(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
-        reporter_user_id = str(defect.get("reported_by")) if defect.get("reported_by") else None
-        recipient_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid}
+        holder_user_id = int(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
+        reporter_user_id = int(defect.get("reported_by")) if defect.get("reported_by") else None
+        recipient_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid is not None}
 
     await notification_service.bulk_create_notifications([
         {

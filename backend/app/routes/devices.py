@@ -603,7 +603,7 @@ async def request_device_edit(
 
             result = await session.execute(text("SELECT id FROM users WHERE role IN ('super_admin', 'manager') AND status = 'active'"))
             reviewer_rows = result.mappings().all()
-            reviewer_ids = [str(row[0]) for row in reviewer_rows]
+            reviewer_ids = [int(row[0]) for row in reviewer_rows]
             await session.commit()
 
         proposer_name = current_user.get("name") or current_user.get("email", "pdic_staff")
