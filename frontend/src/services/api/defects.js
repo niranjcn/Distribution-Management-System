@@ -191,10 +191,10 @@ export const defectsAPI = {
     return response;
   },
 
-  confirmReplacementReceipt: async (defectId, notes = '') => {
+  confirmReplacementReceipt: async (defectId, notes) => {
     const response = await apiRequest(`/defects/${defectId}/replacement/confirm`, {
       method: 'POST',
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify(notes ? { notes } : {}),
     });
     return response;
   },

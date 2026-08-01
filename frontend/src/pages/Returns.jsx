@@ -22,6 +22,7 @@ const TABLE_SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
   { value: 'return_id', label: 'Return ID' },
   { value: 'device_serial', label: 'Device Serial' },
+  { value: 'device_nuid', label: 'NUID' },
   { value: 'requested_by_name', label: 'Initiated By' },
   { value: 'digital_id', label: 'Digital ID' },
   { value: 'broadband_id', label: 'Broadband ID' },
@@ -504,10 +505,13 @@ const Returns = () => {
                 <label className="text-xs text-gray-500 uppercase tracking-wider">Created At</label>
                 <p className="font-medium text-gray-800">{selectedReturn.created_at ? new Date(selectedReturn.created_at).toLocaleDateString() : 'N/A'}</p>
               </div>
-              {selectedReturn.approved_by_name && (
+              {selectedReturn.return_approved_by_name && (
                 <div>
-                  <label className="text-xs text-gray-500 uppercase tracking-wider">Approved By</label>
-                  <p className="font-medium text-gray-800">{selectedReturn.approved_by_name}</p>
+                  <label className="text-xs text-gray-500 uppercase tracking-wider">Return Approved By</label>
+                  <p className="font-medium text-gray-800">{selectedReturn.return_approved_by_name}</p>
+                  {selectedReturn.return_approved_at && (
+                    <p className="text-xs text-gray-500">{new Date(selectedReturn.return_approved_at).toLocaleDateString()}</p>
+                  )}
                 </div>
               )}
               {selectedReturn.received_date && (

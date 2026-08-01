@@ -246,7 +246,7 @@ const PendingDues = () => {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="font-semibold text-gray-800">{item.report_id} • {item.device_model || item.device_type || 'Device'}</p>
-                        <p className="text-sm text-gray-500">Serial: {item.device_serial || 'N/A'} • Return: {item.return_id || item.auto_return_id || 'N/A'}</p>
+                        <p className="text-sm text-gray-500">{item.device_nuid ? `NUID: ${item.device_nuid}` : `Serial: ${item.device_serial || 'N/A'}`} • Return: {item.return_id || item.auto_return_id || 'N/A'}</p>
                       </div>
                       <StatusBadge status={item.return_status || item.status || 'pending'} size="sm" />
                     </div>

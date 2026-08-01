@@ -775,7 +775,6 @@ async def replace_defect_device(
             register_device=replace_data.register_device.model_dump() if replace_data.register_device else None,
             notes=replace_data.notes,
             return_amount=replace_data.return_amount,
-            service_charge=replace_data.service_charge,
             payment_bill_url=replace_data.payment_bill_url,
             resolver=current_user
         )

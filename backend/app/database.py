@@ -41,7 +41,6 @@ async def init_db():
             "UPDATE devices SET current_holder_name = 'PDIC (Distribution)' WHERE current_holder_type = 'noc' AND (current_holder_name IS NULL OR current_holder_name = 'NOC')",
             "UPDATE defects SET report_target = 'manager_admin' WHERE report_target IS NULL OR report_target = ''",
             "UPDATE defects SET forwarded_to_management = COALESCE(forwarded_to_management, 0)",
-            "UPDATE defects SET return_amount = COALESCE(return_amount, 0)",
             "UPDATE defects SET payment_confirmed = COALESCE(payment_confirmed, 0)",
             "UPDATE defects SET payment_due_user_id = COALESCE(NULLIF(payment_due_user_id, ''), reported_by)",
             "UPDATE defects SET payment_due_user_name = COALESCE(NULLIF(payment_due_user_name, ''), reported_by_name)",
@@ -51,22 +50,6 @@ async def init_db():
             "UPDATE users SET role = 'pdic_staff' WHERE role = 'pdic_staff'",
         ]:
             await session.execute(text(stmt))
-
-        try:
-            await session.execute(text("""
-                INSERT IGNORE INTO distribution_devices (distribution_id, device_id, created_at)
-                SELECT
-                    d.distribution_id,
-                    jt.device_id,
-                    d.created_at
-                FROM distributions d
-                CROSS JOIN JSON_TABLE(
-                    d.device_ids,
-                    '$[*]' COLUMNS (device_id INT PATH '$')
-                ) jt
-            """))
-        except Exception:
-            pass
 
         result = await session.execute(
             text("SELECT id, new_password FROM change_requests WHERE new_password IS NOT NULL AND new_password != ''")

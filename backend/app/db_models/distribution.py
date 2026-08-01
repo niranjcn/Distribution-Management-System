@@ -7,7 +7,6 @@ class Distribution(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     distribution_id = Column(String(128), unique=True, nullable=False)
-    device_ids = Column(Text, nullable=False)
     device_count = Column(Integer, default=0)
     from_user_id = Column(Integer, nullable=False)
     from_user_name = Column(String(255))

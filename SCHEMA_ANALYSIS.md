@@ -393,7 +393,7 @@ CREATE TABLE distributions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-**Note:** `device_ids` LONGTEXT should be **removed** — it's redundant with `distribution_devices`. But check if any service code reads it directly (it does in `distribution_service.py` line ~708 and other places). Migration must populate `distribution_devices` from existing `device_ids` JSON strings first.
+**Note:** `device_ids` LONGTEXT was **removed** in migration `0013` — it was redundant with `distribution_devices`. The migration backfills `distribution_devices` from the existing `device_ids` JSON strings first, then drops the column. Service reads now resolve device lists from `distribution_devices` via `distribution_service._load_distribution_device_ids`.
 
 ---
 
@@ -438,11 +438,11 @@ CREATE TABLE distribution_devices (
 - `operator_id`/`sub_distributor_id` as VARCHAR(64) — should be INT FK to `users.id`
 - `images LONGTEXT` — JSON array of image URLs, should be proper JSON
 - All timestamps as VARCHAR(64)
-- **Payment fields mixed in** (return_amount, service_charge, payment_bill_url, payment_confirmed) — should be separate `defect_payments` table
+- **Payment fields mixed in** (return_amount, payment_bill_url, payment_confirmed) — should be separate `defect_payments` table
 - **Replacement fields mixed in** (replacement_device_id, replacement_requested_at, etc.) — some reference `defect_replacement_devices` concept but stored inline
 
-**Current columns (35):**
-`id`, `report_id`, `device_id`, `device_serial`, `device_type`, `reported_by`, `reported_by_name`, `defect_type`, `severity`, `description`, `symptoms`, `report_target`, `forwarded_to_management`, `forwarded_to_management_at`, `forwarded_to_management_by`, `forwarded_to_management_by_name`, `operator_id`, `sub_distributor_id`, `status`, `resolution`, `resolved_by`, `resolved_by_name`, `resolved_at`, `replacement_device_id`, `replacement_requested_at`, `replacement_confirmed_at`, `replacement_confirmed_by`, `replacement_confirmed_by_name`, `return_amount`, `service_charge`, `payment_bill_url`, `payment_confirmed`, `payment_confirmed_at`, `payment_confirmed_by`, `payment_confirmed_by_name`, `payment_due_user_id`, `payment_due_user_name`, `images`, `auto_return_id`, `created_at`, `updated_at`
+**Current columns (40):**
+`id`, `report_id`, `device_id`, `device_serial`, `device_nuid`, `device_type`, `reported_by`, `reported_by_name`, `defect_type`, `severity`, `description`, `report_target`, `forwarded_to_management`, `forwarded_to_management_at`, `forwarded_to_management_by`, `forwarded_to_management_by_name`, `operator_id`, `sub_distributor_id`, `status`, `resolution`, `replacement_by`, `replacement_by_name`, `resolved_at`, `replacement_device_id`, `replacement_confirmed_at`, `replacement_confirmed_by`, `replacement_confirmed_by_name`, `defect_approved_by`, `defect_approved_by_name`, `defect_approved_at`, `return_approved_by`, `return_approved_by_name`, `return_approved_at`, `return_amount`, `payment_bill_url`, `payment_confirmed`, `payment_confirmed_at`, `payment_confirmed_by`, `payment_confirmed_by_name`, `payment_due_user_id`, `payment_due_user_name`, `images`, `auto_return_id`, `created_at`, `updated_at`
 
 **Redesign — split into 3 tables:**
 
@@ -454,6 +454,7 @@ CREATE TABLE defects (
 
     device_id INT NOT NULL,
     device_serial VARCHAR(255),
+    device_nuid VARCHAR(255),
     device_type VARCHAR(128),
 
     reported_by INT NOT NULL,
@@ -465,7 +466,6 @@ CREATE TABLE defects (
     severity ENUM('low', 'medium', 'high', 'critical') NOT NULL,
     status VARCHAR(64) DEFAULT 'reported',
     description TEXT NOT NULL,
-    symptoms TEXT,
     resolution TEXT,
 
     report_target VARCHAR(64) DEFAULT 'manager_admin',
@@ -474,9 +474,17 @@ CREATE TABLE defects (
     forwarded_to_management_by INT,
     forwarded_to_management_by_name VARCHAR(255),
 
-    resolved_by INT,
-    resolved_by_name VARCHAR(255),
+    replacement_by INT,  -- who assigned the replacement device
+    replacement_by_name VARCHAR(255),
     resolved_at DATETIME,
+
+    defect_approved_by INT,
+    defect_approved_by_name VARCHAR(255),
+    defect_approved_at DATETIME,
+
+    return_approved_by INT,
+    return_approved_by_name VARCHAR(255),
+    return_approved_at DATETIME,
 
     images JSON,  -- array of image URLs
 
@@ -516,8 +524,7 @@ CREATE TABLE defect_replacements (
 CREATE TABLE defect_payments (
     id INT AUTO_INCREMENT PRIMARY KEY,
     defect_id INT NOT NULL UNIQUE,
-    return_amount DECIMAL(10, 2) DEFAULT 0,
-    service_charge DECIMAL(10, 2) DEFAULT 0,
+    return_amount DECIMAL(10, 2) DEFAULT NULL,
     bill_url VARCHAR(255),
     is_confirmed BOOLEAN DEFAULT FALSE,
     confirmed_at DATETIME,
@@ -544,13 +551,14 @@ The images are stored in rclone cloud storage (defect_photos/), and the URLs are
 
 ### 3.11 `returns`
 
-**Purpose:** Device return workflow — devices returned up the chain.
+**Purpose:** Device return workflow — devices returned up the chain. Minimal table: only the returned-device record. Approval/requester/actor details live on `defects` (joined via `defect_id`).
 
 **Current schema issues:**
 - `device_id VARCHAR(64)` — should be INT FK
-- `requested_by`/`approved_by` as VARCHAR(64) — should be INT FK
 - All timestamps as VARCHAR(64)
-- `request_date`/`approval_date`/`received_date` — should be DATETIME
+- `request_date`/`received_date` — should be DATETIME
+
+**Note (migrations 0010/0011):** `returns` no longer stores `requested_by(_name)`, `return_to(_name)`, `description`, `approval_date`, `approved_by(_name)`. `requested_by(_name)`, `description`, `defect_report_id`, `return_approved_by(_name)`, `return_approved_at` are resolved by joining `defects` on `defect_id`.
 
 **Redesign:**
 
@@ -561,36 +569,23 @@ CREATE TABLE returns (
 
     device_id INT NOT NULL,
     device_serial VARCHAR(255),
+    device_nuid VARCHAR(255),
     device_type VARCHAR(128),
     defect_id INT,
 
-    requested_by INT NOT NULL,
-    requested_by_name VARCHAR(255),
-    return_to INT,
-    return_to_name VARCHAR(255),
-
     reason VARCHAR(64) NOT NULL,
-    description TEXT,
     mac_address VARCHAR(255),
 
     status VARCHAR(64) DEFAULT 'pending',
     request_date DATETIME NOT NULL,
-    approval_date DATETIME,
     received_date DATETIME,
-
-    approved_by INT,
-    approved_by_name VARCHAR(255),
 
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
     INDEX idx_returns_status (status),
     INDEX idx_returns_device (device_id),
-    INDEX idx_returns_requested_by (requested_by),
     CONSTRAINT fk_ret_device FOREIGN KEY (device_id) REFERENCES devices(id),
-    CONSTRAINT fk_ret_requested_by FOREIGN KEY (requested_by) REFERENCES users(id),
-    CONSTRAINT fk_ret_return_to FOREIGN KEY (return_to) REFERENCES users(id) ON DELETE SET NULL,
-    CONSTRAINT fk_ret_approved_by FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_ret_defect FOREIGN KEY (defect_id) REFERENCES defects(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
@@ -1096,7 +1091,7 @@ external_inventory_items ──── purchase_orders ──── po_lines
 | 1 | Merge `operators` table? | Merge into users / keep as 1:1 | **Merge** — dual-write is a bug farm |
 | 2 | Split `defects` into 3 tables? | Keep wide / split payments + replacements | **Split** — the payment/replacement columns are independent sub-entities |
 | 3 | Drop `is_verified`? | Drop / keep dead / build verification flow | **Drop** — dead column, no business logic depends on it |
-| 4 | Drop `device_ids` from distributions? | Keep denormalized / remove (rely on distribution_devices) | **Remove** — it's a duplicate of distribution_devices |
+| 4 | Drop `device_ids` from distributions? | Keep denormalized / remove (rely on distribution_devices) | **Done** — removed in migration `0013` |
 | 5 | UI preferences in DB or localStorage? | Keep `user_preferences` table / localStorage only | **localStorage** — unless multi-device sync is required |
 | 6 | ENUM or reference table for statuses? | ENUM (rigid) / reference table (flexible) | **ENUM** for simple, unchanging statuses; reference table if statuses are user-configurable |
 

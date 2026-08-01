@@ -57,6 +57,7 @@ const TABLE_SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
   { value: 'report_id', label: 'Report ID' },
   { value: 'device_serial', label: 'Device Serial' },
+  { value: 'device_nuid', label: 'NUID' },
   { value: 'description', label: 'Description' },
   { value: 'defect_type', label: 'Defect Type' },
   { value: 'severity', label: 'Severity' },
@@ -89,7 +90,6 @@ const DefectReports = () => {
   const [reviewComment, setReviewComment] = useState('');
   const [replaceData, setReplaceData] = useState({ notes: '' });
   const [replaceReturnAmount, setReplaceReturnAmount] = useState('');
-  const [replaceServiceCharge, setReplaceServiceCharge] = useState('');
   const [replacePaymentBillFile, setReplacePaymentBillFile] = useState(null);
   const [replacementMode, setReplacementMode] = useState('existing');
   const [replacementFilter, setReplacementFilter] = useState('all');
@@ -328,7 +328,6 @@ const DefectReports = () => {
     setReplacementMode('existing');
     setReplaceData({ notes: '' });
     setReplaceReturnAmount(row?.return_amount != null ? String(row.return_amount) : '');
-    setReplaceServiceCharge(row?.service_charge != null ? String(row.service_charge) : '');
     setReplacePaymentBillFile(null);
     setReplacementSearch('');
     setReplacementSearchActive('');
@@ -686,21 +685,9 @@ const DefectReports = () => {
         : { register_device: cleanedNewDeviceData })
     };
 
-    const shouldSendDueAmount = replacementMode !== 'same';
-    const amountValue = shouldSendDueAmount
-      ? (replaceReturnAmount === '' ? null : Number(replaceReturnAmount))
-      : null;
+    const amountValue = replaceReturnAmount === '' ? null : Number(replaceReturnAmount);
     if (amountValue !== null && (!Number.isFinite(amountValue) || amountValue < 0)) {
       showToast('Enter a valid due amount', 'error');
-      return;
-    }
-
-    const shouldSendServiceCharge = replacementMode === 'same';
-    const serviceChargeValue = shouldSendServiceCharge
-      ? (replaceServiceCharge === '' ? null : Number(replaceServiceCharge))
-      : null;
-    if (serviceChargeValue !== null && (!Number.isFinite(serviceChargeValue) || serviceChargeValue < 0)) {
-      showToast('Enter a valid service charge amount', 'error');
       return;
     }
 
@@ -715,7 +702,6 @@ const DefectReports = () => {
       const finalPayload = {
         ...payload,
         ...(amountValue !== null ? { return_amount: amountValue } : {}),
-        ...(serviceChargeValue !== null ? { service_charge: serviceChargeValue } : {}),
         ...(uploadedBillUrl ? { payment_bill_url: uploadedBillUrl } : {}),
       };
       await defectsAPI.replaceDevice(selectedDefect._id || selectedDefect.id, finalPayload);
@@ -723,7 +709,7 @@ const DefectReports = () => {
         replacementMode === 'existing' && selectedReplacementDevice
           ? `${selectedReplacementDevice.device_id} (${selectedReplacementDevice.serial_number})`
           : replacementMode === 'same'
-          ? `Serviced same device (${selectedDefect?.defective_device?.device_id || selectedDefect?.device_serial || 'N/A'})`
+          ? `Serviced same device (${selectedDefect?.defective_device?.device_id || selectedDefect?.device_nuid || selectedDefect?.device_serial || 'N/A'})`
           : replacementMode === 'new'
           ? `New ${cleanedNewDeviceData.device_type} (${cleanedNewDeviceData.serial_number})`
           : 'selected device';
@@ -734,7 +720,6 @@ const DefectReports = () => {
       setShowReplaceModal(false);
       setReplaceData({ notes: '' });
       setReplaceReturnAmount('');
-      setReplaceServiceCharge('');
       setReplacePaymentBillFile(null);
       // Data refetch is handled automatically by appDataMutation event
     } catch (error) {
@@ -1271,7 +1256,6 @@ const DefectReports = () => {
           setShowReplaceModal(false);
           setReplaceData({ notes: '' });
           setReplaceReturnAmount('');
-          setReplaceServiceCharge('');
           setReplacePaymentBillFile(null);
           setReplacePaymentBillPreview(null);
           setSelectedReplacementDevice(null);
@@ -1294,7 +1278,7 @@ const DefectReports = () => {
           <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
             <p className="text-xs text-red-600 uppercase tracking-wider font-semibold mb-2">🔴 Defective Device Being Replaced</p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-              <div><span className="text-gray-500">ID:</span> <span className="font-medium text-red-900">{selectedDefect?.defective_device?.device_id || selectedDefect?.device_serial || 'N/A'}</span></div>
+              <div><span className="text-gray-500">ID:</span> <span className="font-medium text-red-900">{selectedDefect?.defective_device?.device_id || selectedDefect?.device_nuid || selectedDefect?.device_serial || 'N/A'}</span></div>
               <div><span className="text-gray-500">Type:</span> <span className="font-medium text-red-900">{selectedDefect?.device_type || selectedDefect?.defective_device?.device_type || 'N/A'}</span></div>
               <div><span className="text-gray-500">Serial:</span> <span className="font-medium text-red-900">{selectedDefect?.defective_device?.serial_number || 'N/A'}</span></div>
               <div><span className="text-gray-500">Operator:</span> <span className="font-medium text-red-900">{selectedDefect?.reported_by_name || 'N/A'}</span></div>
@@ -1459,7 +1443,7 @@ const DefectReports = () => {
                       <span className="text-gray-500">{isSetupBoxType(selectedReplacementDevice.device_type) ? 'Box Type:' : 'Band:'}</span>{' '}
                       <span className="font-medium text-blue-900">
                         {isSetupBoxType(selectedReplacementDevice.device_type)
-                          ? (selectedReplacementDevice.box_type || selectedReplacementDevice.metadata?.box_type || 'N/A')
+                          ? (selectedReplacementDevice.box_type || 'N/A')
                           : (selectedReplacementDevice.band_type || 'N/A')}
                       </span>
                     </div>
@@ -1596,34 +1580,18 @@ const DefectReports = () => {
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {replacementMode !== 'same' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Due Amount (Optional)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={replaceReturnAmount}
-                  onChange={(e) => setReplaceReturnAmount(e.target.value)}
-                  placeholder="Set amount user should pay"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            )}
-            {replacementMode === 'same' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Service Charge (Optional)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={replaceServiceCharge}
-                  onChange={(e) => setReplaceServiceCharge(e.target.value)}
-                  placeholder="Set service charge amount"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Due Amount (Optional)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={replaceReturnAmount}
+                onChange={(e) => setReplaceReturnAmount(e.target.value)}
+                placeholder="Set amount user should pay"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

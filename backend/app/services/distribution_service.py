@@ -1,6 +1,5 @@
 from datetime import datetime, timezone, date
 from typing import Optional, List, Dict, Any, Set
-import json
 import io
 import csv
 from pathlib import Path
@@ -267,6 +266,25 @@ async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Opt
     return scoped_ids
 
 
+async def _load_distribution_device_ids(
+    session,
+    distribution_codes: List[str],
+) -> Dict[str, List[str]]:
+    """Return {distribution_code: [device_id, ...]} from distribution_devices."""
+    result: Dict[str, List[str]] = {}
+    if not distribution_codes:
+        return result
+    ph = ",".join([f":c_{i}" for i in range(len(distribution_codes))])
+    params = {f"c_{i}": code for i, code in enumerate(distribution_codes)}
+    rows = (await session.execute(
+        text(f"SELECT distribution_id, device_id FROM distribution_devices WHERE distribution_id IN ({ph})"),
+        params
+    )).mappings().all()
+    for r in rows:
+        result.setdefault(str(r["distribution_id"]), []).append(str(r["device_id"]))
+    return result
+
+
 async def get_distributions(
     page: int = 1,
     page_size: int = 20,
@@ -356,14 +374,14 @@ async def get_distributions(
             params
         )).mappings().all()
 
+        device_map = await _load_distribution_device_ids(
+            session, [str(r["distribution_id"]) for r in rows]
+        )
+
         result = []
         for r in rows:
             d = dict(r)
-            if d.get("device_ids"):
-                try:
-                    d["device_ids"] = json.loads(d["device_ids"])
-                except (json.JSONDecodeError, TypeError):
-                    d["device_ids"] = []
+            d["device_ids"] = device_map.get(str(d["distribution_id"]), [])
             result.append(d)
 
         return {
@@ -372,13 +390,12 @@ async def get_distributions(
         }
 
 
-def _parse_device_ids(d: Dict[str, Any]) -> Dict[str, Any]:
-    if d.get("device_ids"):
-        try:
-            d["device_ids"] = json.loads(d["device_ids"])
-        except (json.JSONDecodeError, TypeError):
-            d["device_ids"] = []
-    return d
+async def _attach_device_ids(session, distribution: Dict[str, Any]) -> Dict[str, Any]:
+    device_map = await _load_distribution_device_ids(
+        session, [str(distribution.get("distribution_id"))]
+    )
+    distribution["device_ids"] = device_map.get(str(distribution.get("distribution_id")), [])
+    return distribution
 
 
 async def get_distribution_by_id(distribution_id: str) -> Optional[Dict[str, Any]]:
@@ -386,7 +403,9 @@ async def get_distribution_by_id(distribution_id: str) -> Optional[Dict[str, Any
         row = (await session.execute(
             text("SELECT * FROM distributions WHERE id = :id"), {"id": int(distribution_id)}
         )).mappings().first()
-        return _parse_device_ids(dict(row)) if row else None
+        if not row:
+            return None
+        return await _attach_device_ids(session, dict(row))
 
 
 async def get_distribution_by_code(distribution_code: str) -> Optional[Dict[str, Any]]:
@@ -395,7 +414,9 @@ async def get_distribution_by_code(distribution_code: str) -> Optional[Dict[str,
             text("SELECT * FROM distributions WHERE distribution_id = :code"),
             {"code": str(distribution_code)}
         )).mappings().first()
-        return _parse_device_ids(dict(row)) if row else None
+        if not row:
+            return None
+        return await _attach_device_ids(session, dict(row))
 
 
 async def create_distribution_from_identifiers(
@@ -718,16 +739,15 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
         dist_id = generate_distribution_id()
 
         result = await session.execute(
-            text("""INSERT INTO distributions (distribution_id, device_ids, device_count,
+            text("""INSERT INTO distributions (distribution_id, device_count,
                 from_user_id, from_user_name, from_user_type, to_user_id, to_user_name, to_user_type,
                 status, request_date, date_of_distribution, approval_date, approved_by, approved_by_name,
                 notes, created_by, created_at, updated_at)
-            VALUES (:dist_id, :device_ids, :device_count, :from_user_id, :from_user_name, :from_user_type,
+            VALUES (:dist_id, :device_count, :from_user_id, :from_user_name, :from_user_type,
                 :to_user_id, :to_user_name, :to_user_type, :status, :request_date, :date_of_distribution,
                 :approval_date, :approved_by, :approved_by_name, :notes, :created_by, :created_at, :updated_at)"""),
             {
                 "dist_id": dist_id,
-                "device_ids": json.dumps(dist_data.device_ids),
                 "device_count": len(dist_data.device_ids),
                 "from_user_id": from_user_id,
                 "from_user_name": from_user["name"],
@@ -857,11 +877,6 @@ async def confirm_receipt(
         raise ValueError("This distribution is not awaiting receipt confirmation")
 
     device_ids = dist.get("device_ids") or []
-    if isinstance(device_ids, str):
-        try:
-            device_ids = json.loads(device_ids)
-        except (json.JSONDecodeError, TypeError):
-            device_ids = []
 
     now = datetime.now().replace(tzinfo=None)
 
@@ -1110,10 +1125,7 @@ async def get_distribution_mac_nuid_export(
 
     device_ids = dist.get("device_ids") or []
     if isinstance(device_ids, str):
-        try:
-            device_ids = json.loads(device_ids)
-        except (json.JSONDecodeError, TypeError):
-            device_ids = []
+        device_ids = []
 
     devices: List[Dict[str, Any]] = []
     if device_ids:
@@ -1139,14 +1151,15 @@ async def get_pending_distributions() -> List[Dict[str, Any]]:
             text("SELECT * FROM distributions WHERE status = :status ORDER BY created_at DESC LIMIT 1000"),
             {"status": DistributionStatus.PENDING.value}
         )).mappings().all()
+
+        device_map = await _load_distribution_device_ids(
+            session, [str(r["distribution_id"]) for r in rows]
+        )
+
         result = []
         for r in rows:
             d = dict(r)
-            if d.get("device_ids"):
-                try:
-                    d["device_ids"] = json.loads(d["device_ids"])
-                except (json.JSONDecodeError, TypeError):
-                    d["device_ids"] = []
+            d["device_ids"] = device_map.get(str(d["distribution_id"]), [])
             result.append(d)
         return result
 
@@ -1194,13 +1207,12 @@ async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
         errors = []
         user_id = int(user.get("id", user.get("_id", 0)))
 
+        device_map = await _load_distribution_device_ids(
+            session, [str(dist["distribution_id"]) for dist in distributions]
+        )
+
         for dist in distributions:
-            device_ids = dist.get("device_ids", "[]")
-            if isinstance(device_ids, str):
-                try:
-                    device_ids = json.loads(device_ids)
-                except (json.JSONDecodeError, TypeError):
-                    device_ids = []
+            device_ids = device_map.get(str(dist.get("distribution_id")), [])
 
             if device_ids:
                 updated = await _bulk_update_device_holders(

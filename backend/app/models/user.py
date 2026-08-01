@@ -75,6 +75,7 @@ class UserResponse(BaseModel):
     address: Optional[str] = None
     pincode: Optional[str] = None
     parent_id: Optional[str] = None
+    created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     last_login: Optional[datetime] = None

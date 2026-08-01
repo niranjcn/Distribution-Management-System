@@ -14,6 +14,7 @@ class Device(Base):
     manufacturer = Column(String(255), nullable=False)
     band_type = Column(String(16))
     nuid = Column(String(255), unique=True)
+    box_type = Column(String(16))
     status = Column(String(32), default="available")
     current_location = Column(String(255))
     current_holder_id = Column(Integer)

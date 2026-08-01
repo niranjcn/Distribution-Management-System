@@ -200,7 +200,6 @@ const RegisterDevice = () => {
         box_type: requiresNuid ? String(formData.boxType || '').toUpperCase() : null,
         nuid: formData.nuid.trim() || null,
         metadata: {
-          ...(requiresNuid ? { box_type: String(formData.boxType || '').toUpperCase() } : {}),
           hardware_version: formData.hardwareVersion.trim(),
           firmware_version: formData.firmwareVersion.trim(),
           condition: formData.condition,

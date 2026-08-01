@@ -30,17 +30,6 @@ const asDisplayValue = (value) => {
 
 const extractBoxType = (device) => {
   if (device?.box_type) return String(device.box_type).toUpperCase();
-  if (device?.metadata && typeof device.metadata === 'object' && device.metadata.box_type) {
-    return String(device.metadata.box_type).toUpperCase();
-  }
-  if (typeof device?.metadata === 'string') {
-    try {
-      const parsed = JSON.parse(device.metadata);
-      if (parsed?.box_type) return String(parsed.box_type).toUpperCase();
-    } catch {
-      // Ignore invalid JSON metadata
-    }
-  }
   return null;
 };
 
@@ -507,7 +496,6 @@ const Devices = () => {
       box_type: isSbDeviceType(trimmedForm.device_type) ? String(trimmedForm.box_type || '').toUpperCase() : null,
       nuid: isSbDeviceType(trimmedForm.device_type) ? trimmedForm.nuid : null,
       current_location: trimmedForm.current_location,
-      metadata: isSbDeviceType(trimmedForm.device_type) ? { box_type: String(trimmedForm.box_type || '').toUpperCase() } : undefined,
     };
 
     const hasChanges = Object.entries(updatePayload).some(([key, value]) => {

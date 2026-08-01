@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
+import asyncio
 import csv
 import io
 
@@ -424,20 +425,20 @@ def _build_returns_defects_backup_file(
 
     return_headers = [
         "return_id",
+        "defect_report_id",
         "device_identifier",
         "device_model",
         "device_serial",
         "device_nuid",
         "device_type",
         "requested_by_name",
-        "return_to_name",
         "reason",
         "description",
         "status",
         "request_date",
-        "approval_date",
+        "return_approved_at",
+        "return_approved_by_name",
         "received_date",
-        "approved_by_name",
         "created_at",
         "updated_at",
     ]
@@ -455,13 +456,16 @@ def _build_returns_defects_backup_file(
         "defect_type",
         "severity",
         "description",
-        "symptoms",
         "report_target",
         "forwarded_to_management",
         "status",
         "resolution",
-        "resolved_by_name",
+        "replacement_by_name",
         "resolved_at",
+        "defect_approved_by_name",
+        "defect_approved_at",
+        "return_approved_by_name",
+        "return_approved_at",
         "created_at",
         "updated_at",
     ]
@@ -587,6 +591,12 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         if str(user.get("id") or "").strip()
     }
 
+    defect_lookup: Dict[str, Dict[str, Any]] = {}
+    for defect in defects_rows:
+        db_id = str(defect.get("id") or "").strip()
+        if db_id:
+            defect_lookup[db_id] = defect
+
     for row in returns_rows:
         raw_device_id = str(row.get("device_id") or "").strip()
         resolved_device = device_lookup.get(raw_device_id)
@@ -595,19 +605,25 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
             or raw_device_id
         )
         row["device_model"] = str((resolved_device or {}).get("model") or "")
-        row["device_nuid"] = str((resolved_device or {}).get("nuid") or "")
+        row["device_nuid"] = str((row.get("device_nuid") or "") or ((resolved_device or {}).get("nuid") or ""))
 
         resolved_type = str((resolved_device or {}).get("device_type") or row.get("device_type") or "")
         is_sb = resolved_type.strip().lower() in {"set-top box", "set top box", "sb", "stb"}
         if is_sb:
             row["device_serial"] = ""
 
-        if not str(row.get("requested_by_name") or "").strip():
-            row["requested_by_name"] = user_name_lookup.get(str(row.get("requested_by") or "").strip(), "")
-        if not str(row.get("return_to_name") or "").strip():
-            row["return_to_name"] = user_name_lookup.get(str(row.get("return_to") or "").strip(), "")
-        if not str(row.get("approved_by_name") or "").strip():
-            row["approved_by_name"] = user_name_lookup.get(str(row.get("approved_by") or "").strip(), "")
+        linked_defect = defect_lookup.get(str(row.get("defect_id") or "").strip()) or {}
+        row["defect_report_id"] = str(linked_defect.get("report_id") or "")
+        row["requested_by_name"] = str(
+            row.get("requested_by_name") or linked_defect.get("reported_by_name") or ""
+        )
+        row["description"] = str(row.get("description") or linked_defect.get("description") or "")
+        row["return_approved_at"] = row.get("return_approved_at") or linked_defect.get("return_approved_at") or ""
+        row["return_approved_by_name"] = str(
+            row.get("return_approved_by_name")
+            or linked_defect.get("return_approved_by_name")
+            or ""
+        )
 
     for row in defects_rows:
         raw_device_id = str(row.get("device_id") or "").strip()
@@ -617,7 +633,7 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
             or raw_device_id
         )
         row["device_model"] = str((resolved_device or {}).get("model") or "")
-        row["device_nuid"] = str((resolved_device or {}).get("nuid") or "")
+        row["device_nuid"] = str((row.get("device_nuid") or "") or ((resolved_device or {}).get("nuid") or ""))
 
         resolved_type = str((resolved_device or {}).get("device_type") or row.get("device_type") or "")
         is_sb = resolved_type.strip().lower() in {"set-top box", "set top box", "sb", "stb"}
@@ -626,15 +642,19 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
 
         if not str(row.get("reported_by_name") or "").strip():
             row["reported_by_name"] = user_name_lookup.get(str(row.get("reported_by") or "").strip(), "")
-        resolved_name = str(row.get("resolved_by_name") or "").strip()
-        if not resolved_name or resolved_name == str(row.get("reported_by_name") or "").strip():
-            resolved_name = user_name_lookup.get(str(row.get("resolved_by") or "").strip(), resolved_name)
-        row["resolved_by_name"] = resolved_name
+        resolved_name = str(row.get("replacement_by_name") or "").strip()
+        if not resolved_name:
+            resolved_name = user_name_lookup.get(str(row.get("replacement_by") or "").strip(), resolved_name)
+        row["replacement_by_name"] = resolved_name
+
+        if not str(row.get("defect_approved_by_name") or "").strip():
+            row["defect_approved_by_name"] = user_name_lookup.get(str(row.get("defect_approved_by") or "").strip(), "")
+        if not str(row.get("return_approved_by_name") or "").strip():
+            row["return_approved_by_name"] = user_name_lookup.get(str(row.get("return_approved_by") or "").strip(), "")
 
         row["operator_name"] = user_name_lookup.get(str(row.get("operator_id") or "").strip(), "")
         row["sub_distributor_name"] = user_name_lookup.get(str(row.get("sub_distributor_id") or "").strip(), "")
 
-    import asyncio
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,

@@ -278,7 +278,7 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
             resolved_by_month = {str(row["m"]): int(row["total"]) for row in result.mappings().all()}
 
             result = await session.execute(
-                text("SELECT SUBSTRING(replacement_requested_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE replacement_device_id IS NOT NULL AND replacement_requested_at >= :t_start AND replacement_requested_at < :t_end GROUP BY SUBSTRING(replacement_requested_at, 1, 7) ORDER BY m"),
+                text("SELECT SUBSTRING(return_approved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE replacement_device_id IS NOT NULL AND return_approved_at >= :t_start AND return_approved_at < :t_end GROUP BY SUBSTRING(return_approved_at, 1, 7) ORDER BY m"),
                 t_params
             )
             replaced_by_month = {str(row["m"]): int(row["total"]) for row in result.mappings().all()}
@@ -324,10 +324,10 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
             rp_params = {}
             rp_conds = ["replacement_device_id IS NOT NULL"]
             if start_date:
-                rp_conds.append("replacement_requested_at >= :rp_start")
+                rp_conds.append("return_approved_at >= :rp_start")
                 rp_params["rp_start"] = start_date
             if end_date:
-                rp_conds.append("replacement_requested_at <= :rp_end")
+                rp_conds.append("return_approved_at <= :rp_end")
                 rp_params["rp_end"] = end_date
             replaced_total = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {' AND '.join(rp_conds)}"), rp_params)).scalar() or 0
 

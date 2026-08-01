@@ -170,7 +170,7 @@ async def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
         return inst.to_dict()
 
 
-async def create_user(user_data: UserCreate, creator_role: str = "super_admin") -> Dict[str, Any]:
+async def create_user(user_data: UserCreate, creator_id: Optional[int] = None) -> Dict[str, Any]:
     """Create a new user"""
     async with async_session_factory() as session:
         existing = (
@@ -216,6 +216,7 @@ async def create_user(user_data: UserCreate, creator_role: str = "super_admin") 
             address=user_data.address,
             pincode=user_data.pincode,
             parent_id=parent_id,
+            created_by=creator_id,
             created_at=now,
             updated_at=now,
             last_login=None,
@@ -250,6 +251,7 @@ async def create_user(user_data: UserCreate, creator_role: str = "super_admin") 
             "address": user_data.address,
             "pincode": user_data.pincode,
             "parent_id": str(parent_id) if parent_id is not None else None,
+            "created_by": creator_id,
             "created_at": now,
             "updated_at": now,
             "last_login": None,

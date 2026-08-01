@@ -33,6 +33,27 @@ def _execute_if_table_exists(conn, table_name: str, sql: str) -> None:
         conn.execute(sa.text(sql))
 
 
+def _drop_table_if_exists(conn, table_name: str) -> None:
+    """Drop a table if it exists.
+
+    Best-effort: skips when the table is absent and tolerates a denied
+    DROP privilege so migrations never fail on leftover cleanup tables.
+    """
+    result = conn.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema = DATABASE() AND table_name = :name"
+        ),
+        {"name": table_name},
+    )
+    if result.scalar() == 0:
+        return
+    try:
+        conn.execute(sa.text(f"DROP TABLE IF EXISTS {table_name}"))
+    except Exception:
+        pass
+
+
 def _column_exists(conn, table: str, column: str) -> bool:
     result = conn.execute(
         sa.text(
@@ -88,7 +109,7 @@ def upgrade() -> None:
     """)
 
     # ── 5. Drop old digital_ids table ──
-    op.execute("DROP TABLE IF EXISTS digital_ids")
+    _drop_table_if_exists(conn, "digital_ids")
 
 
 def downgrade() -> None:

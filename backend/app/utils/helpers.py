@@ -64,8 +64,6 @@ def generate_inventory_receipt_id() -> str:
 def generate_inventory_movement_id() -> str:
     """Generate external inventory stock movement ID"""
     return generate_id("EIM")
-
-
 def get_pagination(page: int, page_size: int, total: int) -> Dict[str, int]:
     """Calculate pagination info"""
     total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
@@ -76,3 +74,9 @@ def get_pagination(page: int, page_size: int, total: int) -> Dict[str, int]:
         "total_pages": total_pages,
         "has_next": page < total_pages,
     }
+
+
+def is_set_top_box_device(device: Optional[dict]) -> bool:
+    """Return True if the device is a set-top box (identified by NUID rather than serial)."""
+    device_type = str((device or {}).get("device_type") or "").strip().lower().replace("-", " ")
+    return device_type in {"set top box", "setup box", "sb", "stb"}

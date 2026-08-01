@@ -16,7 +16,7 @@ from app.models.defect import (
 from app.models.device import DeviceStatus, DeviceCreate
 from app.services import device_service, notification_service, return_service
 from app.services.digital_id_search import build_identity_search_clause
-from app.utils.helpers import get_pagination, generate_defect_id
+from app.utils.helpers import get_pagination, generate_defect_id, is_set_top_box_device
 
 
 def _parse_json_metadata(raw_metadata: Any) -> Dict[str, Any]:
@@ -211,9 +211,9 @@ async def _enrich_defect_rows(session, defects: List[Dict[str, Any]]) -> List[Di
         defect["replacement_mapped"] = bool(replacement_device)
 
         if defective_device:
-            if not defect.get("device_serial"):
+            if not defect.get("device_serial") and not is_set_top_box_device(defective_device):
                 defect["device_serial"] = defective_device.get("serial_number")
-            if not defect.get("mac_address"):
+            if not defect.get("mac_address") and not is_set_top_box_device(defective_device):
                 defect["mac_address"] = defective_device.get("mac_address")
             if not defect.get("device_type"):
                 defect["device_type"] = defective_device.get("device_type")
@@ -295,6 +295,7 @@ async def get_defects(
             search_field_map = {
                 "report_id": "report_id",
                 "device_serial": "device_serial",
+                "device_nuid": "device_nuid",
                 "description": "description",
                 "defect_type": "defect_type",
                 "severity": "severity",
@@ -314,8 +315,8 @@ async def get_defects(
                 params["search_like"] = like
             else:
                 id_clause, iparams = build_identity_search_clause(["defects.reported_by"], like)
-                conditions.append("(report_id LIKE :sl1 OR device_serial LIKE :sl2 OR description LIKE :sl3 OR defect_type LIKE :sl4 OR severity LIKE :sl5 OR status LIKE :sl6 OR reported_by_name LIKE :sl7 OR device_type LIKE :sl8 OR " + id_clause + ")")
-                for i in range(8):
+                conditions.append("(report_id LIKE :sl1 OR device_serial LIKE :sl2 OR device_nuid LIKE :sl9 OR description LIKE :sl3 OR defect_type LIKE :sl4 OR severity LIKE :sl5 OR status LIKE :sl6 OR reported_by_name LIKE :sl7 OR device_type LIKE :sl8 OR " + id_clause + ")")
+                for i in range(9):
                     params[f"sl{i+1}"] = like
                 params.update(iparams)
 
@@ -410,36 +411,40 @@ async def create_defect(
         lineage = await _resolve_defect_lineage_ids(session, reporter_id=reporter_id, reporter_role=reporter_role)
         report_id = generate_defect_id()
 
+        is_sb = is_set_top_box_device(device)
+        device_serial = None if is_sb else device.get("serial_number")
+        device_nuid = device.get("nuid") if is_sb else None
+
         result = await session.execute(
             text("""
-                INSERT INTO defects (report_id, device_id, device_serial, device_type,
-                reported_by, reported_by_name, defect_type, severity, description, symptoms,
-                operator_id, sub_distributor_id, report_target, forwarded_to_management, status, resolution, resolved_by,
-                resolved_by_name, resolved_at, images, created_at, updated_at)
-                VALUES (:report_id, :device_id, :device_serial, :device_type,
-                :reported_by, :reported_by_name, :defect_type, :severity, :description, :symptoms,
-                :operator_id, :sub_distributor_id, :report_target, :forwarded_to_management, :status, :resolution, :resolved_by,
-                :resolved_by_name, :resolved_at, :images, :created_at, :updated_at)
+                INSERT INTO defects (report_id, device_id, device_serial, device_nuid, device_type,
+                reported_by, reported_by_name, defect_type, severity, description,
+                operator_id, sub_distributor_id, report_target, forwarded_to_management, status, resolution, replacement_by,
+                replacement_by_name, resolved_at, images, created_at, updated_at)
+                VALUES (:report_id, :device_id, :device_serial, :device_nuid, :device_type,
+                :reported_by, :reported_by_name, :defect_type, :severity, :description,
+                :operator_id, :sub_distributor_id, :report_target, :forwarded_to_management, :status, :resolution, :replacement_by,
+                :replacement_by_name, :resolved_at, :images, :created_at, :updated_at)
             """),
             {
                 "report_id": report_id,
                 "device_id": defect_data.device_id,
-                "device_serial": device["serial_number"],
+                "device_serial": device_serial,
+                "device_nuid": device_nuid,
                 "device_type": device["device_type"],
                 "reported_by": reporter_id,
                 "reported_by_name": reporter_name,
                 "defect_type": defect_data.defect_type.value,
                 "severity": defect_data.severity.value,
                 "description": defect_data.description,
-                "symptoms": defect_data.symptoms,
                 "operator_id": lineage.get("operator_id"),
                 "sub_distributor_id": lineage.get("sub_distributor_id"),
                 "report_target": report_target,
                 "forwarded_to_management": 0,
                 "status": DefectStatus.REPORTED.value,
                 "resolution": None,
-                "resolved_by": None,
-                "resolved_by_name": None,
+                "replacement_by": None,
+                "replacement_by_name": None,
                 "resolved_at": None,
                 "images": images_json,
                 "created_at": now,
@@ -513,7 +518,6 @@ async def create_or_get_active_defect_for_device(
         defect_type=DefectType.OTHER,
         severity=DefectSeverity.MEDIUM,
         description=description,
-        symptoms=note_text or None,
         images=[]
     )
     return await create_defect(payload, reporter, sync_device_status=False)
@@ -658,14 +662,21 @@ async def update_defect_status(
         update_params: Dict[str, Any] = {"status": status, "updated_at": now, "id": int(defect_id)}
 
         if status == DefectStatus.APPROVED.value:
-            amount = float(return_amount) if return_amount is not None else float(defect.get("return_amount") or 0)
+            amount = return_amount if return_amount is not None else (defect.get("return_amount") or None)
+            stored_amount = float(amount) if amount is not None and float(amount) > 0 else None
             update_parts.append("return_amount = :return_amount")
             update_parts.append("payment_due_user_id = :payment_due_user_id")
             update_parts.append("payment_due_user_name = :payment_due_user_name")
             update_parts.append("payment_confirmed = 0")
-            update_params["return_amount"] = amount
+            update_parts.append("defect_approved_by = :defect_approved_by")
+            update_parts.append("defect_approved_by_name = :defect_approved_by_name")
+            update_parts.append("defect_approved_at = :defect_approved_at")
+            update_params["return_amount"] = stored_amount
             update_params["payment_due_user_id"] = defect.get("reported_by")
             update_params["payment_due_user_name"] = str(defect.get("reported_by_name") or "Unknown")
+            update_params["defect_approved_by"] = int(user.get("_id") or user.get("id"))
+            update_params["defect_approved_by_name"] = user.get("name", "Unknown")
+            update_params["defect_approved_at"] = now
             if payment_bill_url:
                 update_parts.append("payment_bill_url = :payment_bill_url")
                 update_params["payment_bill_url"] = payment_bill_url
@@ -693,8 +704,7 @@ async def update_defect_status(
                     device_id=defect["device_id"],
                     defect_id=defect_id,
                     defect_report_id=defect["report_id"],
-                    requester_id=defect["reported_by"],
-                    requester_name=defect["reported_by_name"]
+                    requester_id=defect["reported_by"]
                 )
                 if auto_return:
                     async with async_session_factory() as session:
@@ -914,6 +924,7 @@ async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[st
                     d.report_id,
                     d.device_id,
                     d.device_serial,
+                    d.device_nuid,
                     d.device_type,
                     d.reported_by,
                     d.reported_by_name,
@@ -970,14 +981,11 @@ async def resolve_defect(
         now = datetime.now().replace(tzinfo=None)
         result = await session.execute(
             text("""
-                UPDATE defects SET status = :status, resolution = :resolution, resolved_by = :resolved_by,
-                resolved_by_name = :resolved_by_name, resolved_at = :resolved_at, updated_at = :updated_at WHERE id = :id
+                UPDATE defects SET status = :status, resolution = :resolution, resolved_at = :resolved_at, updated_at = :updated_at WHERE id = :id
             """),
             {
                 "status": DefectStatus.RESOLVED.value,
                 "resolution": resolution,
-                "resolved_by": int(resolver["_id"]),
-                "resolved_by_name": resolver["name"],
                 "resolved_at": now,
                 "updated_at": now,
                 "id": int(defect_id)
@@ -1014,7 +1022,6 @@ async def replace_defect_device(
     register_device: Optional[Dict[str, Any]],
     notes: Optional[str],
     return_amount: Optional[float],
-    service_charge: Optional[float],
     payment_bill_url: Optional[str],
     resolver: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -1097,11 +1104,6 @@ async def replace_defect_device(
 
         is_same_device_reassignment = str(new_device["id"]) == str(old_device["id"])
 
-        effective_return_amount = return_amount
-        if is_same_device_reassignment and service_charge is not None:
-            base_due = float(return_amount) if return_amount is not None else 0.0
-            effective_return_amount = base_due + float(service_charge)
-
         if (not is_same_device_reassignment) and new_device.get("status") not in [DeviceStatus.AVAILABLE.value, DeviceStatus.RETURNED.value]:
             raise ValueError(
                 f"Replacement device must be available. Current status: {new_device.get('status')}"
@@ -1128,37 +1130,33 @@ async def replace_defect_device(
         update_parts = [
             "status = :status",
             "replacement_device_id = :replacement_device_id",
-            "replacement_requested_at = :replacement_requested_at",
             "resolution = :resolution",
-            "resolved_by = :resolved_by",
-            "resolved_by_name = :resolved_by_name",
+            "replacement_by = :replacement_by",
+            "replacement_by_name = :replacement_by_name",
             "resolved_at = :resolved_at",
             "updated_at = :updated_at",
         ]
         update_params: Dict[str, Any] = {
             "status": DefectStatus.REPLACEMENT_PENDING_CONFIRMATION.value,
             "replacement_device_id": str(new_device["id"]),
-            "replacement_requested_at": now,
             "resolution": resolution_note,
-            "resolved_by": None,
-            "resolved_by_name": None,
+            "replacement_by": resolver_id,
+            "replacement_by_name": resolver_name,
             "resolved_at": None,
             "updated_at": now,
             "id": int(defect_id),
         }
 
-        if effective_return_amount is not None:
+        if return_amount is not None:
+            stored_amount = float(return_amount) if float(return_amount) > 0 else None
             update_parts.append("return_amount = :return_amount")
-            update_parts.append("payment_due_user_id = :payment_due_user_id")
-            update_parts.append("payment_due_user_name = :payment_due_user_name")
-            update_parts.append("payment_confirmed = 0")
-            update_params["return_amount"] = float(effective_return_amount)
-            update_params["payment_due_user_id"] = defect.get("reported_by")
-            update_params["payment_due_user_name"] = str(defect.get("reported_by_name") or "Unknown")
-
-        if service_charge is not None:
-            update_parts.append("service_charge = :service_charge")
-            update_params["service_charge"] = float(service_charge)
+            update_params["return_amount"] = stored_amount
+            if float(return_amount) > 0:
+                update_parts.append("payment_due_user_id = :payment_due_user_id")
+                update_parts.append("payment_due_user_name = :payment_due_user_name")
+                update_parts.append("payment_confirmed = 0")
+                update_params["payment_due_user_id"] = defect.get("reported_by")
+                update_params["payment_due_user_name"] = str(defect.get("reported_by_name") or "Unknown")
 
         if payment_bill_url:
             update_parts.append("payment_bill_url = :payment_bill_url")
@@ -1287,8 +1285,8 @@ async def confirm_replacement_receipt(
         await session.execute(
             text("""
                 UPDATE defects SET status = :status, replacement_confirmed_at = :rca, replacement_confirmed_by = :rcb,
-                replacement_confirmed_by_name = :rcbn, resolved_by = :rb, resolved_by_name = :rbn, resolved_at = :ra,
-                updated_at = :ua, resolution = COALESCE(:resolution, resolution)
+                replacement_confirmed_by_name = :rcbn, resolved_at = :ra,
+                updated_at = :ua, resolution = COALESCE(NULLIF(:resolution, ''), resolution)
                 WHERE id = :id
             """),
             {
@@ -1296,8 +1294,6 @@ async def confirm_replacement_receipt(
                 "rca": now,
                 "rcb": confirmer_id,
                 "rcbn": confirmer_name,
-                "rb": confirmer_id,
-                "rbn": confirmer_name,
                 "ra": now,
                 "ua": now,
                 "resolution": notes,

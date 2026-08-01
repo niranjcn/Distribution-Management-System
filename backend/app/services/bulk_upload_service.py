@@ -216,6 +216,8 @@ async def process_bulk_user_upload(
         password = str(row.get("password") or "")
         name = str(row.get("name") or "").strip()
         phone = str(row.get("phone") or "").strip() or None
+        address = str(row.get("address") or "").strip() or None
+        pincode = str(row.get("pincode") or "").strip() or None
 
         # digital_id may contain multiple ids separated by "|" (operators can
         # have several digital ids). The first value is the primary id, the
@@ -265,6 +267,8 @@ async def process_bulk_user_upload(
             "broadband_id": broadband_id,
             "additional_digital_ids": additional_digital_ids,
             "phone": phone,
+            "address": address,
+            "pincode": pincode,
         })
 
     if not prepared_rows:
@@ -321,9 +325,11 @@ async def process_bulk_user_upload(
             return _build_response(0, len(skipped), len(errors), created, skipped, errors)
 
         insert_sql = """INSERT INTO users (email, password_hash, name, role,
-            status, phone, designation, parent_id, created_at, updated_at)
+            status, phone, designation, address, pincode, parent_id, created_by, created_at, updated_at)
         VALUES (:email, :password_hash, :name, :role,
-            :status, :phone, :designation, :parent_id, :created_at, :updated_at)"""
+            :status, :phone, :designation, :address, :pincode, :parent_id, :created_by, :created_at, :updated_at)"""
+
+        creator_id = int(current_user.get("id") or 0)
 
         should_commit = True
         for batch in chunks(insertable_rows, 500):
@@ -337,7 +343,10 @@ async def process_bulk_user_upload(
                     "status": "active",
                     "phone": item["phone"],
                     "designation": None,
+                    "address": item["address"],
+                    "pincode": item["pincode"],
                     "parent_id": item.get("parent_id"),
+                    "created_by": creator_id,
                     "created_at": now,
                     "updated_at": now,
                 })
@@ -361,7 +370,10 @@ async def process_bulk_user_upload(
                                 "status": "active",
                                 "phone": item["phone"],
                                 "designation": None,
+                                "address": item["address"],
+                                "pincode": item["pincode"],
                                 "parent_id": item.get("parent_id"),
+                                "created_by": creator_id,
                                 "created_at": now,
                                 "updated_at": now,
                             },

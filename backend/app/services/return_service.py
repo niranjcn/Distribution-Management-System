@@ -8,7 +8,7 @@ from app.models.return_device import ReturnCreate, ReturnUpdate, ReturnStatus, R
 from app.models.device import DeviceStatus
 from app.services import device_service, notification_service
 from app.services.digital_id_search import build_identity_search_clause
-from app.utils.helpers import get_pagination, generate_return_id
+from app.utils.helpers import get_pagination, generate_return_id, is_set_top_box_device
 
 
 async def get_returns(
@@ -65,25 +65,26 @@ async def get_returns(
                 return {"data": [], "pagination": get_pagination(page, page_size, 0)}
             scope_list = sorted(scope_ids)
             ph = ",".join([f":sr_{i}" for i in range(len(scope_list))])
-            conditions.append(f"r.requested_by IN ({ph})")
+            conditions.append(f"def.reported_by IN ({ph})")
             for i, sid in enumerate(scope_list):
                 params[f"sr_{i}"] = sid
         elif requested_by:
-            conditions.append("r.requested_by = :requested_by")
+            conditions.append("def.reported_by = :requested_by")
             params["requested_by"] = requested_by
         if search:
             like = f"%{search}%"
             search_field_map = {
                 "return_id": "r.return_id",
                 "device_serial": "r.device_serial",
-                "requested_by_name": "r.requested_by_name",
+                "device_nuid": "r.device_nuid",
+                "requested_by_name": "def.reported_by_name",
                 "reason": "r.reason",
                 "status": "r.status",
             }
             normalized_search_by = str(search_by or "all").strip().lower()
             if normalized_search_by in {"digital_id", "broadband_id"}:
                 clause, iparams = build_identity_search_clause(
-                    ["r.requested_by"], like, fields=[normalized_search_by]
+                    ["def.reported_by"], like, fields=[normalized_search_by]
                 )
                 conditions.append(clause)
                 params.update(iparams)
@@ -91,16 +92,16 @@ async def get_returns(
                 conditions.append(f"{search_field_map[normalized_search_by]} LIKE :search_like")
                 params["search_like"] = like
             else:
-                id_clause, iparams = build_identity_search_clause(["r.requested_by"], like)
-                conditions.append("(r.return_id LIKE :sl1 OR r.device_serial LIKE :sl2 OR r.requested_by_name LIKE :sl3 OR r.reason LIKE :sl4 OR r.status LIKE :sl5 OR " + id_clause + ")")
-                for i in range(5):
+                id_clause, iparams = build_identity_search_clause(["def.reported_by"], like)
+                conditions.append("(r.return_id LIKE :sl1 OR r.device_serial LIKE :sl2 OR r.device_nuid LIKE :sl6 OR def.reported_by_name LIKE :sl3 OR r.reason LIKE :sl4 OR r.status LIKE :sl5 OR " + id_clause + ")")
+                for i in range(6):
                     params[f"sl{i+1}"] = like
                 params.update(iparams)
 
         where = " AND ".join(conditions)
 
         total = (await session.execute(
-            text(f"SELECT COUNT(*) FROM returns r WHERE {where}"), params
+            text(f"SELECT COUNT(*) FROM returns r LEFT JOIN defects def ON def.id = r.defect_id WHERE {where}"), params
         )).scalar() or 0
 
         offset = (page - 1) * page_size
@@ -110,12 +111,20 @@ async def get_returns(
             text(f"""
                 SELECT
                     r.*,
-                    d.model AS device_model,
-                    d.manufacturer AS manufacturer,
-                    d.device_id AS source_device_id,
-                    d.nuid AS device_nuid
+                    dv.model AS device_model,
+                    dv.manufacturer AS manufacturer,
+                    dv.device_id AS source_device_id,
+                    def.report_id AS defect_report_id,
+                    def.reported_by AS requested_by,
+                    def.reported_by_name AS requested_by_name,
+                    def.description AS description,
+                    def.return_approved_by AS return_approved_by,
+                    def.return_approved_by_name AS return_approved_by_name,
+                    def.return_approved_at AS return_approved_at,
+                    def.defect_approved_at AS defect_approved_at
                 FROM returns r
-                LEFT JOIN devices d ON d.id = r.device_id
+                LEFT JOIN defects def ON def.id = r.defect_id
+                LEFT JOIN devices dv ON dv.id = r.device_id
                 WHERE {where}
                 ORDER BY r.created_at DESC
                 LIMIT :_limit OFFSET :_offset
@@ -135,12 +144,20 @@ async def get_return_by_id(return_id: str) -> Optional[Dict[str, Any]]:
             text("""
                 SELECT
                     r.*,
-                    d.model AS device_model,
-                    d.manufacturer AS manufacturer,
-                    d.device_id AS source_device_id,
-                    d.nuid AS device_nuid
+                    dv.model AS device_model,
+                    dv.manufacturer AS manufacturer,
+                    dv.device_id AS source_device_id,
+                    def.report_id AS defect_report_id,
+                    def.reported_by AS requested_by,
+                    def.reported_by_name AS requested_by_name,
+                    def.description AS description,
+                    def.return_approved_by AS return_approved_by,
+                    def.return_approved_by_name AS return_approved_by_name,
+                    def.return_approved_at AS return_approved_at,
+                    def.defect_approved_at AS defect_approved_at
                 FROM returns r
-                LEFT JOIN devices d ON d.id = r.device_id
+                LEFT JOIN defects def ON def.id = r.defect_id
+                LEFT JOIN devices dv ON dv.id = r.device_id
                 WHERE r.id = :id
             """),
             {"id": int(return_id)}
@@ -157,45 +174,34 @@ async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) ->
             raise ValueError("Device not found")
         device = dict(device)
 
-        return_to_user = (await session.execute(
-            text("SELECT * FROM users WHERE role IN ('super_admin', 'manager') LIMIT 1")
-        )).mappings().first()
-        if not return_to_user:
-            raise ValueError("No admin/manager found to process return")
-        return_to_user = dict(return_to_user)
-
         now = datetime.now().replace(tzinfo=None)
         return_id_val = generate_return_id()
 
+        is_sb = is_set_top_box_device(device)
+        device_serial = None if is_sb else device.get("serial_number")
+        device_nuid = device.get("nuid") if is_sb else None
+        mac_address = None if is_sb else device.get("mac_address")
+
         result = await session.execute(
             text("""
-                INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,
-                requested_by, requested_by_name, return_to, return_to_name, reason, description,
-                status, request_date, approval_date, received_date, approved_by, approved_by_name,
+                INSERT INTO returns (return_id, device_id, device_serial, device_nuid, device_type, mac_address,
+                reason, status, request_date, received_date,
                 created_at, updated_at)
-                VALUES (:return_id, :device_id, :device_serial, :device_type, :mac_address,
-                :requested_by, :requested_by_name, :return_to, :return_to_name, :reason, :description,
-                :status, :request_date, :approval_date, :received_date, :approved_by, :approved_by_name,
+                VALUES (:return_id, :device_id, :device_serial, :device_nuid, :device_type, :mac_address,
+                :reason, :status, :request_date, :received_date,
                 :created_at, :updated_at)
             """),
             {
                 "return_id": return_id_val,
                 "device_id": return_data.device_id,
-                "device_serial": device["serial_number"],
+                "device_serial": device_serial,
+                "device_nuid": device_nuid,
                 "device_type": device["device_type"],
-                "mac_address": device.get("mac_address"),
-                "requested_by": int(requester["_id"]),
-                "requested_by_name": requester["name"],
-                "return_to": str(return_to_user["id"]),
-                "return_to_name": return_to_user["name"],
+                "mac_address": mac_address,
                 "reason": return_data.reason.value,
-                "description": return_data.description,
                 "status": ReturnStatus.PENDING.value,
                 "request_date": now,
-                "approval_date": None,
                 "received_date": None,
-                "approved_by": None,
-                "approved_by_name": None,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -250,13 +256,26 @@ async def update_return_status(
             return None
         return_req = dict(return_req)
 
+        linked_defect: Optional[Dict[str, Any]] = None
+        if return_req.get("defect_id"):
+            linked_defect = (await session.execute(
+                text("SELECT id, report_id, reported_by, reported_by_name FROM defects WHERE id = :id"),
+                {"id": int(return_req["defect_id"])}
+            )).mappings().first()
+            linked_defect = dict(linked_defect) if linked_defect else None
+
         now = datetime.now().replace(tzinfo=None)
 
         if status == ReturnStatus.APPROVED.value:
             await session.execute(
-                text("UPDATE returns SET status = :status, approval_date = :now, approved_by = :uid, approved_by_name = :uname, updated_at = :now2 WHERE id = :id"),
-                {"status": status, "now": now, "uid": int(user["_id"]), "uname": user["name"], "now2": now, "id": int(return_id)}
+                text("UPDATE returns SET status = :status, updated_at = :now2 WHERE id = :id"),
+                {"status": status, "now2": now, "id": int(return_id)}
             )
+            if linked_defect:
+                await session.execute(
+                    text("UPDATE defects SET return_approved_by = :uid, return_approved_by_name = :uname, return_approved_at = :now, updated_at = :now2 WHERE id = :did"),
+                    {"uid": int(user["_id"]), "uname": user["name"], "now": now, "now2": now, "did": linked_defect["id"]}
+                )
 
         elif status == ReturnStatus.RECEIVED.value:
             await session.execute(
@@ -265,20 +284,26 @@ async def update_return_status(
             )
 
             if return_req.get("defect_id"):
+                if linked_defect:
+                    await session.execute(
+                        text("UPDATE defects SET return_approved_by = :uid, return_approved_by_name = :uname, return_approved_at = :now, updated_at = :now2 WHERE id = :did"),
+                        {"uid": int(user["_id"]), "uname": user["name"], "now": now, "now2": now, "did": linked_defect["id"]}
+                    )
                 set_fragments = [
                     "payment_due_user_id = :due_uid",
                     "payment_due_user_name = :due_uname",
                     "updated_at = :upd_at",
                 ]
                 defect_params: Dict[str, Any] = {
-                    "due_uid": str(return_req.get("requested_by") or ""),
-                    "due_uname": str(return_req.get("requested_by_name") or "Unknown"),
+                    "due_uid": str((linked_defect or {}).get("reported_by") or ""),
+                    "due_uname": str((linked_defect or {}).get("reported_by_name") or "Unknown"),
                     "upd_at": now,
                 }
                 if return_amount is not None:
                     set_fragments.append("return_amount = :ret_amt")
-                    defect_params["ret_amt"] = float(return_amount)
-                    set_fragments.append("payment_confirmed = 0")
+                    defect_params["ret_amt"] = float(return_amount) if float(return_amount) > 0 else None
+                    if float(return_amount) > 0:
+                        set_fragments.append("payment_confirmed = 0")
                 if payment_bill_url:
                     set_fragments.append("payment_bill_url = :bill_url")
                     defect_params["bill_url"] = str(payment_bill_url)
@@ -318,28 +343,30 @@ async def update_return_status(
             status=DeviceStatus.RETURNED.value,
             performed_by=int(user["_id"]),
             performed_by_name=user["name"],
-            from_user_id=int(return_req["requested_by"]),
-            from_user_name=return_req["requested_by_name"],
+            from_user_id=int((linked_defect or {}).get("reported_by") or 0) or None,
+            from_user_name=(linked_defect or {}).get("reported_by_name"),
             notes=f"Returned and received at PDIC via {return_req['return_id']}"
         )
 
-    await notification_service.create_notification(
-        user_id=return_req["requested_by"],
-        title=(
-            "Device Received at PDIC" if status == ReturnStatus.RECEIVED.value
-            else f"Return Request {status.capitalize()}"
-        ),
-        message=(
-            f"Your return request {return_req['return_id']} has been confirmed received at PDIC. "
-            f"Device ownership has been transferred back to distribution."
-        ) if status == ReturnStatus.RECEIVED.value else (
-            f"Your return request {return_req['return_id']} has been {status}. "
-            + ("Please bring the device to PDIC as soon as possible." if status == ReturnStatus.APPROVED.value else "")
-        ),
-        notification_type="success" if status in ["approved", "received"] else "warning",
-        category="return",
-        link=f"/returns?returnId={return_id}"
-    )
+    notify_user_id = (linked_defect or {}).get("reported_by")
+    if notify_user_id:
+        await notification_service.create_notification(
+            user_id=notify_user_id,
+            title=(
+                "Device Received at PDIC" if status == ReturnStatus.RECEIVED.value
+                else f"Return Request {status.capitalize()}"
+            ),
+            message=(
+                f"Your return request {return_req['return_id']} has been confirmed received at PDIC. "
+                f"Device ownership has been transferred back to distribution."
+            ) if status == ReturnStatus.RECEIVED.value else (
+                f"Your return request {return_req['return_id']} has been {status}. "
+                + ("Please bring the device to PDIC as soon as possible." if status == ReturnStatus.APPROVED.value else "")
+            ),
+            notification_type="success" if status in ["approved", "received"] else "warning",
+            category="return",
+            link=f"/returns?returnId={return_id}"
+        )
 
     if status == ReturnStatus.APPROVED.value:
         enabled_roles = ["super_admin", "manager", "pdic_staff"]
@@ -380,7 +407,14 @@ async def cancel_return(return_id: str, user_id: int) -> bool:
             return False
         return_req = dict(return_req)
 
-        if return_req["requested_by"] != user_id:
+        requester_id = None
+        if return_req.get("defect_id"):
+            requester_id = (await session.execute(
+                text("SELECT reported_by FROM defects WHERE id = :id"),
+                {"id": int(return_req["defect_id"])}
+            )).scalar()
+
+        if requester_id is None or int(requester_id) != user_id:
             raise ValueError("Only the requester can cancel this return request")
         if return_req["status"] != ReturnStatus.PENDING.value:
             raise ValueError("Only pending return requests can be cancelled")
@@ -446,8 +480,7 @@ async def auto_create_defect_return(
     device_id: str,
     defect_id: str,
     defect_report_id: str,
-    requester_id: int,
-    requester_name: str
+    requester_id: int
 ) -> Optional[Dict[str, Any]]:
     async with async_session_factory() as session:
         device = (await session.execute(
@@ -464,45 +497,34 @@ async def auto_create_defect_return(
         if existing:
             return await get_return_by_id(str(existing["id"]))
 
-        return_to_user = (await session.execute(
-            text("SELECT * FROM users WHERE role IN ('super_admin', 'manager') LIMIT 1")
-        )).mappings().first()
-        if not return_to_user:
-            raise ValueError("No admin/manager found to process return")
-        return_to_user = dict(return_to_user)
-
         now = datetime.now().replace(tzinfo=None)
         return_id_val = generate_return_id()
 
+        is_sb = is_set_top_box_device(device)
+        device_serial = None if is_sb else device.get("serial_number")
+        device_nuid = device.get("nuid") if is_sb else None
+        mac_address = None if is_sb else device.get("mac_address")
+
         result = await session.execute(
             text("""
-                INSERT INTO returns (return_id, device_id, device_serial, device_type, mac_address,
-                requested_by, requested_by_name, return_to, return_to_name, reason, description,
-                status, request_date, approval_date, received_date, approved_by, approved_by_name,
+                INSERT INTO returns (return_id, device_id, device_serial, device_nuid, device_type, mac_address,
+                reason, status, request_date, received_date,
                 defect_id, created_at, updated_at)
-                VALUES (:return_id, :device_id, :device_serial, :device_type, :mac_address,
-                :requested_by, :requested_by_name, :return_to, :return_to_name, :reason, :description,
-                :status, :request_date, :approval_date, :received_date, :approved_by, :approved_by_name,
+                VALUES (:return_id, :device_id, :device_serial, :device_nuid, :device_type, :mac_address,
+                :reason, :status, :request_date, :received_date,
                 :defect_id, :created_at, :updated_at)
             """),
             {
                 "return_id": return_id_val,
                 "device_id": device_id,
-                "device_serial": device["serial_number"],
+                "device_serial": device_serial,
+                "device_nuid": device_nuid,
                 "device_type": device["device_type"],
-                "mac_address": device.get("mac_address"),
-                "requested_by": requester_id,
-                "requested_by_name": requester_name,
-                "return_to": str(return_to_user["id"]),
-                "return_to_name": return_to_user["name"],
+                "mac_address": mac_address,
                 "reason": ReturnReason.DEFECTIVE.value,
-                "description": f"Auto-generated return for approved defect report {defect_report_id}",
                 "status": ReturnStatus.PENDING.value,
                 "request_date": now,
-                "approval_date": None,
                 "received_date": None,
-                "approved_by": None,
-                "approved_by_name": None,
                 "defect_id": defect_id,
                 "created_at": now,
                 "updated_at": now,

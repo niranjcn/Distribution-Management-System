@@ -42,19 +42,19 @@ class ReturnRequest(BaseModel):
     return_id: str  # Unique like RETURN-2026-0001
     device_id: str
     device_serial: str
+    device_nuid: Optional[str] = None
     device_type: str
-    requested_by: str
-    requested_by_name: str
-    return_to: str
-    return_to_name: str
+    requested_by_name: Optional[str] = None
+    return_to_name: Optional[str] = None
     reason: ReturnReason
     description: Optional[str] = None
     status: ReturnStatus = ReturnStatus.PENDING
     request_date: datetime
-    approval_date: Optional[datetime] = None
     received_date: Optional[datetime] = None
-    approved_by: Optional[str] = None
-    approved_by_name: Optional[str] = None
+    return_approved_by: Optional[str] = None
+    return_approved_by_name: Optional[str] = None
+    return_approved_at: Optional[datetime] = None
+    defect_report_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     
@@ -68,19 +68,18 @@ class ReturnResponse(BaseModel):
     return_id: str
     device_id: str
     device_serial: str
+    device_nuid: Optional[str] = None
     device_type: str
-    requested_by: str
-    requested_by_name: str
-    return_to: str
-    return_to_name: str
+    requested_by_name: Optional[str] = None
     reason: ReturnReason
     description: Optional[str] = None
     status: ReturnStatus
     request_date: datetime
-    approval_date: Optional[datetime] = None
     received_date: Optional[datetime] = None
-    approved_by: Optional[str] = None
-    approved_by_name: Optional[str] = None
+    return_approved_by: Optional[str] = None
+    return_approved_by_name: Optional[str] = None
+    return_approved_at: Optional[datetime] = None
+    defect_report_id: Optional[str] = None
     created_at: datetime
 
 

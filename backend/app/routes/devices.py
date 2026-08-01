@@ -970,7 +970,7 @@ async def bulk_upload_devices(
                 "band_type": None if is_sb_row else (band_type_val or "single_band"),
                 "nuid": str(nuid).strip() or None,
                 "box_type": box_type if is_sb_row else None,
-                "metadata": ({"box_type": box_type} if is_sb_row and box_type else None),
+                "metadata": None,
                 "is_sb": is_sb_row,
             })
 
@@ -1036,11 +1036,11 @@ async def bulk_upload_devices(
             created_by_name = current_user.get("name") or current_user.get("email") or "PDIC Staff"
             insert_sql = """INSERT INTO devices (
                 device_id, device_type, model, serial_number, mac_address,
-                manufacturer, band_type, nuid, status, current_location,
+                manufacturer, band_type, nuid, box_type, status, current_location,
                 current_holder_id, current_holder_name, current_holder_type,
                 registered_by_name, purchase_date, warranty_expiry, metadata,
                 created_at, updated_at
-            ) VALUES (:device_id, :device_type, :model, :serial_number, :mac_address, :manufacturer, :band_type, :nuid, :status, :current_location, :current_holder_id, :current_holder_name, :current_holder_type, :registered_by_name, :purchase_date, :warranty_expiry, :metadata, :created_at, :updated_at)"""
+            ) VALUES (:device_id, :device_type, :model, :serial_number, :mac_address, :manufacturer, :band_type, :nuid, :box_type, :status, :current_location, :current_holder_id, :current_holder_name, :current_holder_type, :registered_by_name, :purchase_date, :warranty_expiry, :metadata, :created_at, :updated_at)"""
 
             history_sql = """INSERT INTO device_history (
                 device_id, action, from_user_id, from_user_name, to_user_id, to_user_name,
@@ -1063,6 +1063,7 @@ async def bulk_upload_devices(
                         "manufacturer": item["manufacturer"],
                         "band_type": item["band_type"],
                         "nuid": item["nuid"],
+                        "box_type": item["box_type"],
                         "status": "available",
                         "current_location": "PDIC",
                         "current_holder_id": None,

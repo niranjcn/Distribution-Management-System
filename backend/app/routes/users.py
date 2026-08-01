@@ -353,7 +353,7 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected parent is outside your branch")
 
     try:
-        user = await user_service.create_user(user_data, creator_role=actor_role)
+        user = await user_service.create_user(user_data, creator_id=int(current_user.get("id") or 0))
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         await log_business_activity(
             user=current_user,

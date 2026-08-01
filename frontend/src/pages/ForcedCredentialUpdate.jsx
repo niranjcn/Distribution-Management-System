@@ -96,7 +96,6 @@ const ForcedCredentialUpdate = () => {
               className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-slate-100"
               value={newPhone}
               onChange={(event) => setNewPhone(event.target.value)}
-              placeholder="Enter your phone number"
               required
               minLength={10}
             />

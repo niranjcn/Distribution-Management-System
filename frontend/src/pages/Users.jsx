@@ -69,6 +69,8 @@ const emptyForm = {
   role: 'operator',
   phone: '',
   designation: '',
+  address: '',
+  pincode: '',
   parentId: '',
   digitalId: '',
   broadbandId: '',
@@ -431,6 +433,8 @@ const Users = () => {
       if (extraIds.length > 0) payload.additional_digital_ids = extraIds.join('|');
       if (formData.phone)      payload.phone = formData.phone;
       if (formData.designation) payload.designation = formData.designation;
+      if (formData.address)    payload.address = formData.address;
+      if (formData.pincode)    payload.pincode = formData.pincode;
       if (formData.parentId)   payload.parent_id = formData.parentId;
 
       await usersAPI.createUser(payload);
@@ -1111,6 +1115,20 @@ const Users = () => {
                   <p className="font-medium text-gray-800">{selectedUser.designation || 'Not assigned'}</p>
                 </div>
               </div>
+              <div className="flex items-center gap-3">
+                <Building className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Address</p>
+                  <p className="font-medium text-gray-800">{selectedUser.address || 'Not provided'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Building className="w-5 h-5 text-gray-400" />
+                <div>
+                  <p className="text-sm text-gray-500">Pincode</p>
+                  <p className="font-medium text-gray-800">{selectedUser.pincode || 'Not provided'}</p>
+                </div>
+              </div>
 
               {/* ── Account ── */}
               <div className="flex items-center gap-3">
@@ -1350,6 +1368,21 @@ const Users = () => {
               </select>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Phone <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="tel"
+                value={formData.phone}
+                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="+880..."
+                minLength={10}
+                required
+              />
+            </div>
+
             {/* Parent selector — shown when admin/manager creates sub-distributor/cluster/operator,
                 OR when sub_distributor creates an operator (must select a parent), OR when cluster creates an operator */}
             {((isAdminOrManager) && (formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator')) ||
@@ -1556,16 +1589,6 @@ const Users = () => {
           <p className="text-xs text-gray-400 pt-1">Optional — user can fill these in later</p>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-              <input
-                type="tel"
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="+880..."
-              />
-            </div>
-            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
               <input
                 type="text"
@@ -1573,6 +1596,29 @@ const Users = () => {
                 onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="e.g., IT"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+              <input
+                type="text"
+                value={formData.address}
+                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter address"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pincode</label>
+              <input
+                type="text"
+                value={formData.pincode}
+                onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter pincode"
               />
             </div>
           </div>
@@ -1861,6 +1907,8 @@ const Users = () => {
                 { key: 'email', label: 'Email' },
                 { key: 'phone', label: 'Phone' },
                 { key: 'designation', label: 'Designation' },
+                { key: 'address', label: 'Address' },
+                { key: 'pincode', label: 'Pincode' },
               ].map(({ key, label }) => (
                 <div key={key}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
@@ -1929,6 +1977,8 @@ const Users = () => {
                       name: detailForm.name,
                       phone: detailForm.phone,
                       designation: detailForm.designation,
+                      address: detailForm.address,
+                      pincode: detailForm.pincode,
                     };
                     await usersAPI.updateUser(detailUser.id, updatePayload);
                     if (detailForm.email && detailForm.email !== detailUser.email) {

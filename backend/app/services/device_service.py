@@ -24,22 +24,8 @@ async def _get_locked_distribution_device_ids(session) -> set:
 def _augment_device_record(device: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not device:
         return device
-    metadata_raw = device.get("metadata")
-    metadata_obj = None
-    if isinstance(metadata_raw, str) and metadata_raw.strip():
-        try:
-            metadata_obj = json.loads(metadata_raw)
-        except Exception:
-            metadata_obj = None
-    elif isinstance(metadata_raw, dict):
-        metadata_obj = metadata_raw
-
-    box_type = None
-    if isinstance(metadata_obj, dict):
-        raw_box = str(metadata_obj.get("box_type") or "").strip().upper()
-        if raw_box in {"HD", "OTT"}:
-            box_type = raw_box
-    device["box_type"] = box_type
+    raw_box = str(device.get("box_type") or "").strip().upper()
+    device["box_type"] = raw_box if raw_box in {"HD", "OTT"} else None
     return device
 
 
@@ -175,8 +161,7 @@ async def create_device(device_data: DeviceCreate, created_by: int, created_by_n
         now = datetime.now().replace(tzinfo=None)
         dev_id = generate_device_id(device_data.device_type.value)
         metadata_payload = dict(device_data.metadata or {})
-        if is_sb and box_type in {"HD", "OTT"}:
-            metadata_payload["box_type"] = box_type
+        metadata_payload.pop("box_type", None)  # box_type lives in its own column
         metadata_json = json.dumps(metadata_payload) if metadata_payload else None
         purchase_date = device_data.purchase_date
         warranty_expiry = device_data.warranty_expiry
@@ -197,6 +182,7 @@ async def create_device(device_data: DeviceCreate, created_by: int, created_by_n
             manufacturer=device_data.manufacturer,
             band_type=band_type_val,
             nuid=device_data.nuid,
+            box_type=box_type,
             status=DeviceStatus.AVAILABLE.value,
             current_location="PDIC",
             current_holder_id=None,
@@ -227,7 +213,7 @@ async def create_device(device_data: DeviceCreate, created_by: int, created_by_n
             "id": new_id, "device_id": dev_id, "device_type": device_data.device_type.value,
             "model": device_data.model, "serial_number": serial_number, "mac_address": mac_address,
             "manufacturer": device_data.manufacturer, "band_type": band_type_val,
-            "nuid": device_data.nuid, "status": DeviceStatus.AVAILABLE.value,
+            "nuid": device_data.nuid, "box_type": box_type, "status": DeviceStatus.AVAILABLE.value,
             "current_location": "PDIC", "current_holder_id": None,
             "current_holder_name": "PDIC (Distribution)", "current_holder_type": HolderType.NOC.value,
             "registered_by_name": created_by_name, "metadata": metadata_payload if metadata_payload else None,
@@ -306,7 +292,7 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
             inst.warranty_expiry = data["warranty_expiry"]
 
         if "metadata" in data and data["metadata"] is not None:
-            base_metadata = data["metadata"] if isinstance(data["metadata"], dict) else {}
+            base_metadata = dict(data["metadata"]) if isinstance(data["metadata"], dict) else {}
         else:
             existing_metadata = current.get("metadata")
             if isinstance(existing_metadata, str) and existing_metadata.strip():
@@ -318,15 +304,16 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
                 base_metadata = dict(existing_metadata)
             else:
                 base_metadata = {}
+        base_metadata.pop("box_type", None)  # box_type lives in its own column
 
         if next_device_type == "Set-top box":
             normalized_box = str(data.get("box_type", next_box_type) or "").strip().upper()
             if normalized_box:
-                base_metadata["box_type"] = normalized_box
+                inst.box_type = normalized_box
             if "nuid" in data and data["nuid"] is not None:
                 inst.nuid = str(data["nuid"]).strip() or None
         else:
-            base_metadata.pop("box_type", None)
+            inst.box_type = None
             inst.nuid = None
 
         inst.device_metadata = json.dumps(base_metadata) if base_metadata else None

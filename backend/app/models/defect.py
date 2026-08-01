@@ -41,7 +41,6 @@ class DefectBase(BaseModel):
     defect_type: DefectType
     severity: DefectSeverity
     description: str = Field(..., min_length=10, max_length=1000)
-    symptoms: Optional[str] = None
 
 
 class DefectCreate(DefectBase):
@@ -53,15 +52,15 @@ class DefectUpdate(BaseModel):
     defect_type: Optional[DefectType] = None
     severity: Optional[DefectSeverity] = None
     description: Optional[str] = None
-    symptoms: Optional[str] = None
     status: Optional[DefectStatus] = None
 
 
 class DefectReport(BaseModel):
-    id: str = Field(..., alias="_id")
+    id: str = Field(alias="_id")
     report_id: str  # Unique like DEFECT-2026-0001
     device_id: str
     device_serial: str
+    device_nuid: Optional[str] = None
     device_type: str
     reported_by: str
     reported_by_name: str
@@ -70,7 +69,6 @@ class DefectReport(BaseModel):
     defect_type: DefectType
     severity: DefectSeverity
     description: str
-    symptoms: Optional[str] = None
     report_target: DefectReportTarget = DefectReportTarget.MANAGER_ADMIN
     forwarded_to_management: bool = False
     forwarded_to_management_at: Optional[datetime] = None
@@ -78,9 +76,15 @@ class DefectReport(BaseModel):
     forwarded_to_management_by_name: Optional[str] = None
     status: DefectStatus = DefectStatus.REPORTED
     resolution: Optional[str] = None
-    resolved_by: Optional[str] = None
-    resolved_by_name: Optional[str] = None
+    replacement_by: Optional[str] = None
+    replacement_by_name: Optional[str] = None
     resolved_at: Optional[datetime] = None
+    defect_approved_by: Optional[str] = None
+    defect_approved_by_name: Optional[str] = None
+    defect_approved_at: Optional[datetime] = None
+    return_approved_by: Optional[str] = None
+    return_approved_by_name: Optional[str] = None
+    return_approved_at: Optional[datetime] = None
     return_amount: Optional[float] = 0
     payment_bill_url: Optional[str] = None
     payment_confirmed: bool = False
@@ -134,7 +138,6 @@ class ReplaceDeviceRequest(BaseModel):
     register_device: Optional[ReplacementDeviceCreate] = None
     notes: Optional[str] = None
     return_amount: Optional[float] = Field(default=None, ge=0)
-    service_charge: Optional[float] = Field(default=None, ge=0)
     payment_bill_url: Optional[str] = None
 
 
@@ -143,6 +146,7 @@ class DefectResponse(BaseModel):
     report_id: str
     device_id: str
     device_serial: str
+    device_nuid: Optional[str] = None
     device_type: str
     reported_by: str
     reported_by_name: str
@@ -151,7 +155,6 @@ class DefectResponse(BaseModel):
     defect_type: DefectType
     severity: DefectSeverity
     description: str
-    symptoms: Optional[str] = None
     report_target: DefectReportTarget
     forwarded_to_management: bool = False
     forwarded_to_management_at: Optional[datetime] = None
@@ -159,11 +162,16 @@ class DefectResponse(BaseModel):
     forwarded_to_management_by_name: Optional[str] = None
     status: DefectStatus
     resolution: Optional[str] = None
-    resolved_by: Optional[str] = None
-    resolved_by_name: Optional[str] = None
+    replacement_by: Optional[str] = None
+    replacement_by_name: Optional[str] = None
     resolved_at: Optional[datetime] = None
+    defect_approved_by: Optional[str] = None
+    defect_approved_by_name: Optional[str] = None
+    defect_approved_at: Optional[datetime] = None
+    return_approved_by: Optional[str] = None
+    return_approved_by_name: Optional[str] = None
+    return_approved_at: Optional[datetime] = None
     return_amount: Optional[float] = 0
-    service_charge: Optional[float] = 0
     payment_bill_url: Optional[str] = None
     payment_confirmed: bool = False
     payment_confirmed_at: Optional[datetime] = None
