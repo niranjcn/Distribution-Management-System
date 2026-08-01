@@ -7,7 +7,7 @@ from app.db_models.return_device import Return
 from app.db_models.operator import Operator
 from app.db_models.notification import Notification
 from app.db_models.inventory import ExternalInventoryItem, InventoryPurchaseOrder, InventoryPoLine, InventoryReceipt, InventoryReceiptLine, InventoryStockMovement
-from app.db_models.digital_id import DigitalId
+from app.db_models.digital_id import DigitalIdentity
 from app.db_models.activity import ApiActivityLog
 
 __all__ = [
@@ -22,5 +22,5 @@ __all__ = [
     "ExternalInventoryItem", "InventoryPurchaseOrder", "InventoryPoLine",
     "InventoryReceipt", "InventoryReceiptLine", "InventoryStockMovement",
     "ApiActivityLog",
-    "DigitalId",
+    "DigitalIdentity",
 ]

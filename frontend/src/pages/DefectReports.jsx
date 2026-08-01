@@ -62,6 +62,8 @@ const TABLE_SEARCH_BY_OPTIONS = [
   { value: 'severity', label: 'Severity' },
   { value: 'status', label: 'Status' },
   { value: 'reported_by_name', label: 'Reported By' },
+  { value: 'digital_id', label: 'Digital ID' },
+  { value: 'broadband_id', label: 'Broadband ID' },
   { value: 'device_type', label: 'Device Type' },
 ];
 

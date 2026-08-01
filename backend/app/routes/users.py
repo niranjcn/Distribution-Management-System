@@ -104,12 +104,12 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
     if actor_role == MANAGER:
         if not write and target_role == MANAGER:
             if current_user.get("parent_id"):
-                return await _branch_contains_user(current_user["parent_id"], target_user.get("id"), db=db)
+                return await _branch_contains_user(current_user["parent_id"], target_user.get("id"), session=db)
             return True
         if not can_manage_user(actor_role, target_role):
             return False
         if current_user.get("parent_id"):
-            return await _branch_contains_user(current_user["parent_id"], target_user.get("id"), db=db)
+            return await _branch_contains_user(current_user["parent_id"], target_user.get("id"), session=db)
         return True
 
     if actor_role == SUB_DISTRIBUTION_MANAGER:
@@ -120,14 +120,14 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
         root_id = str(current_user.get("parent_id") or current_user.get("id"))
         if str(target_user.get("id")) == root_id:
             return True
-        return await _branch_contains_user(root_id, target_user.get("id"), db=db)
+        return await _branch_contains_user(root_id, target_user.get("id"), session=db)
 
     if actor_role == SUB_DISTRIBUTOR:
         if write:
             return False
         if target_role not in {CLUSTER, OPERATOR}:
             return False
-        return await _branch_contains_user(current_user.get("id"), target_user.get("id"), db=db)
+        return await _branch_contains_user(current_user.get("id"), target_user.get("id"), session=db)
 
     if actor_role == CLUSTER:
         if write:
@@ -212,7 +212,8 @@ async def get_users(
             sub_dist_manager_ids = [int(m["id"]) for m in sub_dist_manager_result["data"]]
             candidate_cluster_parent_ids = [int(current_user["id"])] + sub_dist_manager_ids
             clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=candidate_cluster_parent_ids, page_size=1_000_000)
-            parent_ids_in_filter = [int(c["id"]) for c in clusters_result["data"]]
+            cluster_ids = [int(c["id"]) for c in clusters_result["data"]]
+            parent_ids_in_filter = list(dict.fromkeys([int(current_user["id"])] + cluster_ids))
             parent_id_filter = None
     elif actor_role == CLUSTER:
         parent_id_filter = str(current_user["id"])
@@ -286,6 +287,14 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
     if target_role not in ALLOWED_CREATE_BY_ROLE[actor_role]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"You cannot create role '{target_role}'")
 
+    # Digital / broadband IDs are only applicable to sub_distributor, cluster, and operator.
+    if target_role not in {SUB_DISTRIBUTOR, CLUSTER, OPERATOR}:
+        if user_data.digital_id or user_data.broadband_id or user_data.additional_digital_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Digital ID and Broadband ID are only applicable to sub_distributor, cluster, or operator roles",
+            )
+
     if target_role == SUB_DISTRIBUTION_MANAGER:
         if actor_role == SUB_DISTRIBUTOR and not user_data.parent_id:
             user_data = user_data.model_copy(update={"parent_id": str(current_user["id"])})
@@ -328,21 +337,20 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
 
     if target_role == OPERATOR:
         if not user_data.parent_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must select a cluster parent for operator")
-        cluster = await user_service.get_user_by_id(user_data.parent_id)
-        if not cluster or normalize_role(cluster.get("role")) != CLUSTER:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cluster selected")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must select a cluster or subdistributor parent for operator")
+        parent = await user_service.get_user_by_id(user_data.parent_id)
+        if not parent or normalize_role(parent.get("role")) not in {CLUSTER, SUB_DISTRIBUTOR}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Operator parent must be a cluster or subdistributor")
 
-    if actor_role == SUB_DISTRIBUTOR:
-        if target_role == OPERATOR:
-            cluster = await user_service.get_user_by_id(user_data.parent_id)
-            if not cluster or not await _branch_contains_user(current_user.get("id"), cluster.get("id")):
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected cluster is outside your branch")
+    if actor_role == SUB_DISTRIBUTOR and target_role == OPERATOR:
+        parent = await user_service.get_user_by_id(user_data.parent_id)
+        if not parent or not await _branch_contains_user(current_user.get("id"), parent.get("id")):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected parent is outside your branch")
 
     if actor_role == SUB_DISTRIBUTION_MANAGER and target_role == OPERATOR:
-        cluster = await user_service.get_user_by_id(user_data.parent_id)
-        if not cluster or not await _branch_contains_user(current_user.get("id"), cluster.get("id")):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected cluster is outside your branch")
+        parent = await user_service.get_user_by_id(user_data.parent_id)
+        if not parent or not await _branch_contains_user(current_user.get("id"), parent.get("id")):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected parent is outside your branch")
 
     try:
         user = await user_service.create_user(user_data, creator_role=actor_role)
@@ -369,21 +377,27 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
 async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = Depends(get_current_user)):
     try:
         actor_role = normalize_role(current_user.get("role"))
-        if actor_role in {MD_DIRECTOR, SUB_DISTRIBUTION_MANAGER}:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This role has read-only access to users",
-            )
+        is_self = str(current_user.get("id")) == str(user_id)
 
         target_user = await user_service.get_user_by_id(user_id)
         if not target_user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-        if not await _can_access_user(current_user, target_user, write=True):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-
-        if actor_role in {MD_DIRECTOR, PDIC_STAFF} and str(current_user.get("id")) != str(user_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        if is_self:
+            restricted_fields = {"status", "permissions", "role"}
+            edited = set(user_data.model_dump(exclude_unset=True).keys())
+            if edited & restricted_fields:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot change status, permissions, or role")
+        else:
+            if actor_role in {MD_DIRECTOR, SUB_DISTRIBUTION_MANAGER}:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This role has read-only access to users",
+                )
+            if not await _can_access_user(current_user, target_user, write=True):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            if actor_role in {MD_DIRECTOR, PDIC_STAFF} and not is_self:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         user = await user_service.update_user(user_id, user_data)
         actor_name = current_user.get("name") or current_user.get("email") or "User"
@@ -511,10 +525,10 @@ async def reassign_user(
             detail="A cluster can only be reassigned to a sub-distributor",
         )
 
-    if target_role == OPERATOR and new_parent_role != CLUSTER:
+    if target_role == OPERATOR and new_parent_role not in {CLUSTER, SUB_DISTRIBUTOR}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="An operator can only be reassigned to a cluster",
+            detail="An operator can only be reassigned to a cluster or sub-distributor",
         )
 
     try:
@@ -718,11 +732,6 @@ async def admin_update_credentials(
                 raise HTTPException(status_code=404, detail="User not found")
             await session.commit()
 
-        # Recompute user_id_hash if email changed
-        if data.email:
-            from app.services.digital_id_service import recompute_hashes_for_user as _recompute_hashes
-            await _recompute_hashes(user_id, data.email.strip().lower(), target_user.get("phone"))
-
         updated = await user_service.get_user_by_id(user_id)
 
         audit_logger.info(
@@ -782,6 +791,8 @@ async def get_users_by_role(role: str, current_user: dict = Depends(get_current_
 async def bulk_upload_users(
     request: Request,
     file: UploadFile = File(...),
+    role: str = Query(..., description="Target role: sub_distributor, cluster, or operator"),
+    parent_id: Optional[str] = Query(None, description="Parent user ID for cluster/operator"),
     current_user: dict = Depends(get_current_user),
 ):
     if not file.filename:
@@ -790,6 +801,17 @@ async def bulk_upload_users(
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
     if ext not in {"csv", "xlsx", "xls"}:
         raise HTTPException(status_code=400, detail="Unsupported file format. Use .csv, .xlsx, or .xls")
+
+    target_role = normalize_role(role)
+    if not target_role or target_role not in {"sub_distributor", "cluster", "operator"}:
+        raise HTTPException(status_code=400, detail=f"Invalid target role '{role}'")
+
+    parent_id_int = None
+    if parent_id:
+        try:
+            parent_id_int = int(parent_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid parent_id")
 
     try:
         contents = await file.read()
@@ -805,4 +827,4 @@ async def bulk_upload_users(
     if not rows:
         raise HTTPException(status_code=400, detail="File is empty or has no data rows")
 
-    return await bulk_upload_service.process_bulk_user_upload(rows, current_user)
+    return await bulk_upload_service.process_bulk_user_upload(rows, current_user, target_role, parent_id_int)

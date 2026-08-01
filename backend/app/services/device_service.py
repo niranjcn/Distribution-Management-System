@@ -1033,6 +1033,20 @@ async def get_management_holder_insights() -> Dict[str, Any]:
                 cluster_map[cluster_id]["byType"][device_type] = cluster_map[cluster_id]["byType"].get(device_type, 0) + total
                 cluster_map[cluster_id]["name"] = cluster_name
 
+        entry_ids = sorted({int(sid) for sid in sub_map} | {int(cid) for cid in cluster_map})
+        digital_map = {}
+        if entry_ids:
+            ph = ",".join([f":di_{i}" for i in range(len(entry_ids))])
+            id_rows = (await session.execute(
+                text(f"SELECT user_id, digital_id, broadband_id FROM digital_identities WHERE user_id IN ({ph})"),
+                {f"di_{i}": v for i, v in enumerate(entry_ids)},
+            )).mappings().all()
+            for r in id_rows:
+                digital_map.setdefault(int(r["user_id"]), []).append({
+                    "digital_id": r["digital_id"],
+                    "broadband_id": r["broadband_id"],
+                })
+
         def to_entry(entry_id: str, entry: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 "id": entry_id,
@@ -1042,6 +1056,7 @@ async def get_management_holder_insights() -> Dict[str, Any]:
                     {"type": dtype, "count": count}
                     for dtype, count in sorted(entry["byType"].items(), key=lambda item: item[1], reverse=True)
                 ],
+                "digital_ids": digital_map.get(int(entry_id), []),
             }
 
         sub_summary = sorted(

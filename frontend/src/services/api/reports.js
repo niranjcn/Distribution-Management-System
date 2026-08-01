@@ -31,6 +31,21 @@ export const reportsAPI = {
     return response;
   },
 
+  getSubDistributionReport: async () => {
+    const response = await apiRequest('/reports/sub-distributions');
+    return response;
+  },
+
+  getClusterReport: async () => {
+    const response = await apiRequest('/reports/clusters');
+    return response;
+  },
+
+  getOperatorReport: async () => {
+    const response = await apiRequest('/reports/operators');
+    return response;
+  },
+
   getDeviceUtilizationReport: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
     const response = await apiRequest(`/reports/device-utilization?${queryString}`);

@@ -1,14 +1,46 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { authAPI, usersAPI, adminUpdateCredentials, digitalIdsAPI } from '../services/api';
+import { authAPI, usersAPI, adminUpdateCredentials } from '../services/api';
 import { updateStoredUser } from '../utils/authStorage';
 import { 
   User, Mail, Phone, Building, MapPin, Lock, 
   Save, Eye, EyeOff
 } from 'lucide-react';
+
+const fieldInputClass = 'w-full px-3.5 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-800 placeholder:text-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition-colors';
+const fieldReadOnlyClass = 'w-full px-3.5 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed text-sm';
+
+const FieldLabel = ({ label, icon: Icon }) => (
+  <label className="flex items-center gap-1.5 text-sm font-medium text-gray-600 mb-1.5">
+    {Icon && <Icon className="w-4 h-4 text-gray-400" />}
+    {label}
+  </label>
+);
+
+const AutoResizeTextarea = ({ value, onChange, className = '', ...props }) => {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={onChange}
+      rows={3}
+      className={`w-full px-3.5 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-800 placeholder:text-gray-400 text-sm leading-relaxed resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition-colors ${className}`}
+      {...props}
+    />
+  );
+};
 
 const Profile = () => {
   const { user, setUser, logout } = useAuth();
@@ -22,7 +54,8 @@ const Profile = () => {
   const [profileData, setProfileData] = useState({
     name: user?.name || '',
     designation: user?.designation || '',
-    location: user?.location || '',
+    address: user?.address || '',
+    pincode: user?.pincode || '',
   });
 
   const [passwordData, setPasswordData] = useState({
@@ -46,7 +79,8 @@ const Profile = () => {
       const payload = {
         name: profileData.name,
         designation: profileData.designation,
-        location: profileData.location,
+        address: profileData.address,
+        pincode: profileData.pincode,
       };
 
       const response = await usersAPI.updateUser(user.id, payload);
@@ -194,63 +228,73 @@ const Profile = () => {
 
       {/* Profile Tab */}
       {activeTab === 'profile' && (
-        <Card title="Profile Information">
-          <form onSubmit={handleProfileUpdate} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card
+          icon={User}
+          title="Profile Information"
+          subtitle="Your personal details as shown across the system"
+        >
+          <form onSubmit={handleProfileUpdate}>
+            <div className="space-y-6">
+              {/* Basic Details */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  <User className="w-4 h-4 inline mr-2" />Full Name
-                </label>
-                <input
-                  type="text"
-                  value={profileData.name}
-                  onChange={(e) => setProfileData({ ...profileData, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-4">
+                  Basic Details
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+                  <div>
+                    <FieldLabel label="Full Name" icon={User} />
+                    <input
+                      type="text"
+                      value={profileData.name}
+                      onChange={(e) => setProfileData({ ...profileData, name: e.target.value })}
+                      placeholder="Enter full name"
+                      className={fieldInputClass}
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel label="Designation" icon={Building} />
+                    <input
+                      type="text"
+                      value={profileData.designation}
+                      onChange={(e) => setProfileData({ ...profileData, designation: e.target.value })}
+                      placeholder="Enter designation"
+                      className={fieldInputClass}
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  <Mail className="w-4 h-4 inline mr-2" />Email Address
-                </label>
-                <input
-                  type="email"
-                  value={user?.email || ''}
-                  disabled
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
-                />
-                <p className="text-xs text-gray-400 mt-1">Email cannot be changed</p>
-              </div>
+              {/* Contact & Location */}
+              <div className="border-t border-gray-100 pt-6">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-4">
+                  Contact &amp; Location
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+                  <div className="md:col-span-2">
+                    <FieldLabel label="Address" icon={MapPin} />
+                    <AutoResizeTextarea
+                      value={profileData.address}
+                      onChange={(e) => setProfileData({ ...profileData, address: e.target.value })}
+                      placeholder="Enter address"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  <Building className="w-4 h-4 inline mr-2" />Designation
-                </label>
-                <input
-                  type="text"
-                  value={profileData.designation}
-                  onChange={(e) => setProfileData({ ...profileData, designation: e.target.value })}
-                  placeholder="Enter designation"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
+                  <div>
+                    <FieldLabel label="Pincode" icon={MapPin} />
+                    <input
+                      type="text"
+                      value={profileData.pincode}
+                      onChange={(e) => setProfileData({ ...profileData, pincode: e.target.value })}
+                      placeholder="Enter pincode"
+                      className={fieldInputClass}
+                    />
+                  </div>
+                </div>
               </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  <MapPin className="w-4 h-4 inline mr-2" />Location
-                </label>
-                <input
-                  type="text"
-                  value={profileData.location}
-                  onChange={(e) => setProfileData({ ...profileData, location: e.target.value })}
-                  placeholder="Enter location"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-
             </div>
 
-            <div className="flex justify-end pt-4 border-t">
+            <div className="flex justify-end pt-5 mt-6 border-t border-gray-200">
               <Button type="submit" icon={Save} disabled={saving}>
                 {saving ? 'Saving...' : 'Save Changes'}
               </Button>
@@ -262,136 +306,154 @@ const Profile = () => {
       {/* Security Tab */}
       {activeTab === 'security' && (
         <div className="space-y-6">
-          <Card title="Change Email">
-            <form onSubmit={handleEmailChange} className="space-y-4 max-w-md">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Current Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  <input
-                    type="email"
-                    value={user?.email || ''}
-                    disabled
-                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
-                  />
+          <Card
+            icon={Mail}
+            title="Email Address"
+            subtitle="Your email is used for signing in and receiving system notifications."
+          >
+            <form onSubmit={handleEmailChange}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+                <div>
+                  <FieldLabel label="Current Email" icon={Mail} />
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                    <input
+                      type="email"
+                      value={user?.email || ''}
+                      disabled
+                      className={`${fieldReadOnlyClass} pl-9`}
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">New Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <div>
+                  <FieldLabel label="New Email" icon={Mail} />
                   <input
                     type="email"
                     value={emailData.newEmail}
                     onChange={(e) => setEmailData({ newEmail: e.target.value })}
                     placeholder="Enter new email"
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className={fieldInputClass}
                     required
                   />
+                  <p className="text-xs text-gray-400 mt-1.5">Your email will be updated immediately when you save.</p>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Your email will be updated immediately when you save.</p>
               </div>
 
-              <Button type="submit" icon={Mail} disabled={saving}>
-                {saving ? 'Submitting...' : 'Change Email'}
-              </Button>
+              <div className="flex justify-end pt-5 mt-6 border-t border-gray-200">
+                <Button type="submit" icon={Mail} disabled={saving}>
+                  {saving ? 'Submitting...' : 'Change Email'}
+                </Button>
+              </div>
             </form>
           </Card>
 
-          <Card title="Change Phone Number">
-            <form onSubmit={handlePhoneChange} className="space-y-4 max-w-md">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Current Phone</label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  <input
-                    type="tel"
-                    value={user?.phone || ''}
-                    disabled
-                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
-                  />
+          <Card
+            icon={Phone}
+            title="Phone Number"
+            subtitle="Your phone number is used for contact and account recovery."
+          >
+            <form onSubmit={handlePhoneChange}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+                <div>
+                  <FieldLabel label="Current Phone" icon={Phone} />
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                    <input
+                      type="tel"
+                      value={user?.phone || ''}
+                      disabled
+                      className={`${fieldReadOnlyClass} pl-9`}
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">New Phone Number</label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <div>
+                  <FieldLabel label="New Phone Number" icon={Phone} />
                   <input
                     type="tel"
                     value={phoneData.newPhone}
                     onChange={(e) => setPhoneData({ newPhone: e.target.value })}
                     placeholder="Enter new phone number"
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className={fieldInputClass}
                     required
                     minLength={10}
                   />
+                  <p className="text-xs text-gray-400 mt-1.5">Your phone number will be updated immediately when you save.</p>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Your phone number will be updated immediately when you save.</p>
               </div>
 
-              <Button type="submit" icon={Phone} disabled={saving}>
-                {saving ? 'Submitting...' : 'Change Phone'}
-              </Button>
+              <div className="flex justify-end pt-5 mt-6 border-t border-gray-200">
+                <Button type="submit" icon={Phone} disabled={saving}>
+                  {saving ? 'Submitting...' : 'Change Phone'}
+                </Button>
+              </div>
             </form>
           </Card>
 
-          <Card title="Change Password">
-            <form onSubmit={handlePasswordChange} className="space-y-4 max-w-md">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type={showCurrentPassword ? 'text' : 'password'}
-                  value={passwordData.currentPassword}
-                  onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
-                  className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                />
-                <button type="button" onClick={() => setShowCurrentPassword(!showCurrentPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                  {showCurrentPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
+          <Card
+            icon={Lock}
+            title="Password"
+            subtitle="Use at least 6 characters. Choose something you don't use elsewhere."
+          >
+            <form onSubmit={handlePasswordChange}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+                <div className="md:col-span-2">
+                  <FieldLabel label="Current Password" icon={Lock} />
+                  <div className="relative max-w-md">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type={showCurrentPassword ? 'text' : 'password'}
+                      value={passwordData.currentPassword}
+                      onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                      className={`${fieldInputClass} pl-9 pr-10`}
+                      required
+                    />
+                    <button type="button" onClick={() => setShowCurrentPassword(!showCurrentPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type={showNewPassword ? 'text' : 'password'}
-                  value={passwordData.newPassword}
-                  onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
-                  className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                  minLength={6}
-                />
-                <button type="button" onClick={() => setShowNewPassword(!showNewPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                  {showNewPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">Must be at least 6 characters</p>
-            </div>
+                <div>
+                  <FieldLabel label="New Password" icon={Lock} />
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      value={passwordData.newPassword}
+                      onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                      className={`${fieldInputClass} pl-9 pr-10`}
+                      required
+                      minLength={6}
+                    />
+                    <button type="button" onClick={() => setShowNewPassword(!showNewPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1.5">Must be at least 6 characters</p>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type="password"
-                  value={passwordData.confirmPassword}
-                  onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                />
+                <div>
+                  <FieldLabel label="Confirm New Password" icon={Lock} />
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="password"
+                      value={passwordData.confirmPassword}
+                      onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                      className={`${fieldInputClass} pl-9`}
+                      required
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <Button type="submit" icon={Lock} disabled={saving}>
-              {saving ? 'Updating...' : 'Update Password'}
-            </Button>
+              <div className="flex justify-end pt-5 mt-6 border-t border-gray-200">
+                <Button type="submit" icon={Lock} disabled={saving}>
+                  {saving ? 'Updating...' : 'Update Password'}
+                </Button>
+              </div>
             </form>
           </Card>
         </div>

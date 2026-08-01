@@ -1,137 +1,182 @@
-import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete, text
 
 from app.database_sqlalchemy import async_session_factory
-from app.db_models.digital_id import DigitalId
-from app.models.digital_id import DigitalIdCreate, DigitalIdUpdate
+from app.db_models.digital_id import DigitalIdentity
+from app.models.digital_id import DigitalIdentityCreate
 
 logger = logging.getLogger(__name__)
 
 
-def compute_user_id_hash(email: str, phone: Optional[str]) -> str:
-    raw = f"{email.strip().lower()}{phone or ''}".encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+def _normalize(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
 
 
-async def create_digital_id(data: DigitalIdCreate) -> Optional[Dict[str, Any]]:
-    async with async_session_factory() as session:
-        from app.db_models.auth import User
-        user_q = select(User).where(User.id == int(data.user_id))
-        user_inst = (await session.execute(user_q)).scalar_one_or_none()
-        if not user_inst:
-            return None
-        user = user_inst.to_dict()
+def _identity_conflict_error(conflicts: Dict[str, List[str]]) -> str:
+    parts = []
+    if conflicts.get("digital"):
+        parts.append("Digital ID(s) already assigned to another user: " + ", ".join(conflicts["digital"]))
+    if conflicts.get("broadband"):
+        parts.append("Broadband ID(s) already assigned to another user: " + ", ".join(conflicts["broadband"]))
+    return "; ".join(parts)
 
-    user_id_hash = compute_user_id_hash(user["email"], user.get("phone"))
+
+async def check_identity_conflicts(
+    session,
+    digital_ids: List[Optional[str]],
+    broadband_ids: List[Optional[str]],
+    exclude_identity_id: Optional[int] = None,
+) -> Dict[str, List[str]]:
+    """Return {'digital': [...], 'broadband': [...]} values that are already taken.
+
+    Matching is case-insensitive to stay consistent with the MySQL unique index
+    (case-insensitive collation). Empty/blank values are ignored.
+    """
+    digital_values = sorted({d.strip() for d in (digital_ids or []) if d and d.strip()})
+    broadband_values = sorted({b.strip() for b in (broadband_ids or []) if b and b.strip()})
+
+    result: Dict[str, List[str]] = {"digital": [], "broadband": []}
+    if not digital_values and not broadband_values:
+        return result
+
+    conditions = []
+    params = {}
+    if digital_values:
+        conditions.append("LOWER(digital_id) IN ({})".format(",".join(f":di_{i}" for i in range(len(digital_values)))))
+        for i, v in enumerate(digital_values):
+            params[f"di_{i}"] = v.lower()
+    if broadband_values:
+        conditions.append("LOWER(broadband_id) IN ({})".format(",".join(f":bb_{i}" for i in range(len(broadband_values)))))
+        for i, v in enumerate(broadband_values):
+            params[f"bb_{i}"] = v.lower()
+
+    where_sql = " OR ".join(conditions)
+    if exclude_identity_id is not None:
+        where_sql = f"( {where_sql} ) AND id != :excl_id"
+        params["excl_id"] = exclude_identity_id
+
+    rows = (await session.execute(
+        text(f"SELECT id, digital_id, broadband_id FROM digital_identities WHERE {where_sql}"),
+        params,
+    )).mappings().all()
+
+    digital_lookup = {v.lower(): v for v in digital_values}
+    broadband_lookup = {v.lower(): v for v in broadband_values}
+    for row in rows:
+        if row["digital_id"]:
+            original = digital_lookup.get(str(row["digital_id"]).strip().lower())
+            if original and original not in result["digital"]:
+                result["digital"].append(original)
+        if row["broadband_id"]:
+            original = broadband_lookup.get(str(row["broadband_id"]).strip().lower())
+            if original and original not in result["broadband"]:
+                result["broadband"].append(original)
+
+    return result
+
+
+async def create_digital_identity(data: DigitalIdentityCreate) -> Optional[Dict[str, Any]]:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-
+    digital_id = _normalize(data.digital_id)
+    broadband_id = _normalize(data.broadband_id)
     async with async_session_factory() as session:
-        entry = DigitalId(
-            user_id=int(data.user_id),
-            user_id_hash=user_id_hash,
-            digital_id=data.digital_id,
-            broadband_id=data.broadband_id,
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(entry)
-        await session.commit()
-        await session.refresh(entry)
-        return _entry_to_dict(entry)
-
-
-async def get_digital_ids_by_user(user_id: str) -> List[Dict[str, Any]]:
-    async with async_session_factory() as session:
-        q = select(DigitalId).where(DigitalId.user_id == int(user_id)).order_by(DigitalId.created_at.desc())
-        rows = (await session.execute(q)).scalars().all()
-        return [_entry_to_dict(r) for r in rows]
-
-
-async def get_digital_id_by_id(entry_id: str) -> Optional[Dict[str, Any]]:
-    async with async_session_factory() as session:
-        inst = await session.get(DigitalId, int(entry_id))
-        if not inst:
-            return None
-        return _entry_to_dict(inst)
-
-
-async def create_digital_id_for_user(
-    user_id: str, email: str, phone: Optional[str],
-    digital_id: Optional[str] = None, broadband_id: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    user_id_hash = compute_user_id_hash(email, phone)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    async with async_session_factory() as session:
-        entry = DigitalId(
-            user_id=int(user_id),
-            user_id_hash=user_id_hash,
+        conflicts = await check_identity_conflicts(session, [digital_id], [broadband_id])
+        if conflicts["digital"] or conflicts["broadband"]:
+            raise ValueError(_identity_conflict_error(conflicts))
+        entry = DigitalIdentity(
+            user_id=data.user_id,
             digital_id=digital_id,
             broadband_id=broadband_id,
+            is_primary=data.is_primary,
             created_at=now,
-            updated_at=now,
         )
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
-        return _entry_to_dict(entry)
+        return _identity_to_dict(entry)
 
 
-async def recompute_hashes_for_user(user_id: str, email: str, phone: Optional[str]) -> None:
-    """Recompute user_id_hash for all digital ID entries of a user when email or phone changes."""
-    new_hash = compute_user_id_hash(email, phone)
+async def create_digital_identities_for_user(
+    user_id: int,
+    primary_digital_id: Optional[str] = None,
+    primary_broadband_id: Optional[str] = None,
+    additional_digital_ids: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    created = []
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    primary_digital_id = _normalize(primary_digital_id)
+    primary_broadband_id = _normalize(primary_broadband_id)
+    additional_digital_ids = [_normalize(d) for d in (additional_digital_ids or [])]
+    additional_digital_ids = [d for d in additional_digital_ids if d]
+
+    digital_values = ([primary_digital_id] if primary_digital_id else []) + additional_digital_ids
+    broadband_values = [primary_broadband_id] if primary_broadband_id else []
+
     async with async_session_factory() as session:
-        q = select(DigitalId).where(DigitalId.user_id == int(user_id))
+        conflicts = await check_identity_conflicts(session, digital_values, broadband_values)
+        if conflicts["digital"] or conflicts["broadband"]:
+            raise ValueError(_identity_conflict_error(conflicts))
+
+        entries = []
+        if primary_digital_id or primary_broadband_id:
+            entry = DigitalIdentity(
+                user_id=user_id,
+                digital_id=primary_digital_id,
+                broadband_id=primary_broadband_id,
+                is_primary=True,
+                created_at=now,
+            )
+            session.add(entry)
+            entries.append(entry)
+
+        for did in additional_digital_ids:
+            entry = DigitalIdentity(
+                user_id=user_id,
+                digital_id=did,
+                broadband_id=None,
+                is_primary=False,
+                created_at=now,
+            )
+            session.add(entry)
+            entries.append(entry)
+
+        await session.commit()
+        for entry in entries:
+            await session.refresh(entry)
+
+        return [_identity_to_dict(e) for e in entries]
+
+
+async def get_digital_identities_by_user(user_id: int) -> List[Dict[str, Any]]:
+    async with async_session_factory() as session:
+        q = (
+            select(DigitalIdentity)
+            .where(DigitalIdentity.user_id == user_id)
+            .order_by(DigitalIdentity.is_primary.desc(), DigitalIdentity.created_at.desc())
+        )
         rows = (await session.execute(q)).scalars().all()
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        for entry in rows:
-            entry.user_id_hash = new_hash
-            entry.updated_at = now
-        await session.commit()
+        return [_identity_to_dict(r) for r in rows]
 
 
-async def delete_digital_ids_by_user(user_id: str) -> None:
+async def delete_digital_identities_by_user(user_id: int) -> None:
     async with async_session_factory() as session:
-        from sqlalchemy import delete as sa_delete
-        await session.execute(sa_delete(DigitalId).where(DigitalId.user_id == int(user_id)))
+        await session.execute(sa_delete(DigitalIdentity).where(DigitalIdentity.user_id == user_id))
         await session.commit()
 
 
-async def update_digital_id(entry_id: str, data: DigitalIdUpdate) -> Optional[Dict[str, Any]]:
-    async with async_session_factory() as session:
-        inst = await session.get(DigitalId, int(entry_id))
-        if not inst:
-            return None
-        if data.digital_id is not None:
-            inst.digital_id = data.digital_id
-        if data.broadband_id is not None:
-            inst.broadband_id = data.broadband_id
-        inst.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        await session.commit()
-        await session.refresh(inst)
-        return _entry_to_dict(inst)
-
-
-async def delete_digital_id(entry_id: str) -> bool:
-    async with async_session_factory() as session:
-        inst = await session.get(DigitalId, int(entry_id))
-        if not inst:
-            return False
-        await session.delete(inst)
-        await session.commit()
-        return True
-
-
-def _entry_to_dict(entry: DigitalId) -> Dict[str, Any]:
+def _identity_to_dict(entry: DigitalIdentity) -> Dict[str, Any]:
     return {
-        "id": str(entry.id),
-        "user_id": str(entry.user_id),
-        "user_id_hash": entry.user_id_hash,
+        "id": entry.id,
+        "user_id": entry.user_id,
         "digital_id": entry.digital_id,
         "broadband_id": entry.broadband_id,
-        "created_at": entry.created_at,
-        "updated_at": entry.updated_at,
+        "is_primary": bool(entry.is_primary),
+        "created_at": entry.created_at.isoformat() if hasattr(entry.created_at, 'isoformat') else str(entry.created_at),
     }

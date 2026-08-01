@@ -147,40 +147,94 @@ async def fetch_user_parent_map(session, emails: Set[str], role: str) -> Dict[st
 async def process_bulk_user_upload(
     rows: list,
     current_user: dict,
+    target_role: Optional[str] = None,
+    parent_id: Optional[int] = None,
 ) -> dict:
     from app.utils.security import get_password_hash as _hash
 
     actor_role = normalize_role(current_user.get("role"))
-    if actor_role not in {"super_admin", "manager"}:
+    if actor_role not in {"super_admin", "manager", "sub_distributor", "cluster", "sub_distribution_manager"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     actor_name = current_user.get("name") or current_user.get("email") or "User"
+
+    if not target_role or target_role not in {"sub_distributor", "cluster", "operator"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid target role '{target_role}'")
+
+    # Permission matrix:
+    # - sub_distributor / cluster / sub_distribution_manager: can only upload operators
+    # - manager / super_admin: can upload any role
+    if actor_role in {"sub_distributor", "cluster", "sub_distribution_manager"} and target_role != "operator":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{actor_role} can only bulk-upload operators"
+        )
+
+    # Validate parent for roles that require one.
+    if target_role in {"cluster", "operator"}:
+        if not parent_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"A parent is required when bulk-uploading {target_role} users",
+            )
+        async with async_session_factory() as session:
+            parent_row = (
+                await session.execute(
+                    text("SELECT id, role FROM users WHERE id = :pid"), {"pid": parent_id}
+                )
+            ).mappings().first()
+        if not parent_row:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected parent does not exist")
+        parent_role = normalize_role(parent_row.get("role"))
+        if target_role == "cluster" and parent_role != "sub_distributor":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cluster parent must be a sub distributor",
+            )
+        if target_role == "operator" and parent_role not in {"sub_distributor", "cluster"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Operator parent must be a sub distributor or cluster",
+            )
+    elif target_role == "sub_distributor" and parent_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sub distributors cannot be assigned a parent",
+        )
 
     created: List[dict] = []
     errors: List[dict] = []
     skipped: List[dict] = []
     prepared_rows: List[dict] = []
     seen_emails: Set[str] = set()
+    seen_digital_keys: Set[str] = set()
+    seen_broadband_keys: Set[str] = set()
 
     for idx, row in enumerate(rows):
         row_num = idx + 2
-        role_val = str(row.get("role") or "").strip().lower()
         email = str(row.get("email") or "").strip().lower()
         password = str(row.get("password") or "")
         name = str(row.get("name") or "").strip()
         phone = str(row.get("phone") or "").strip() or None
-        location = str(row.get("location") or "").strip() or None
+
+        # digital_id may contain multiple ids separated by "|" (operators can
+        # have several digital ids). The first value is the primary id, the
+        # remaining values become additional ids.
+        raw_digital = str(row.get("digital_id") or "").strip()
+        digital_parts = [d.strip() for d in raw_digital.split("|") if d.strip()] if raw_digital else []
+        digital_id = digital_parts[0] if digital_parts else None
+        broadband_id = str(row.get("broadband_id") or "").strip() or None
+        additional_digital_ids = digital_parts[1:] if len(digital_parts) > 1 else None
+
+        # Backwards-compatible: also read a legacy additional_digital_ids column.
+        raw_additional = str(row.get("additional_digital_ids") or "").strip()
+        if raw_additional:
+            legacy_parts = [d.strip() for d in raw_additional.split("|") if d.strip()]
+            if legacy_parts:
+                additional_digital_ids = (additional_digital_ids or []) + legacy_parts
 
         if not email or not password or not name:
             errors.append({"row": row_num, "email": email, "error": "Missing required fields (email, password, name)"})
-            continue
-        if not role_val:
-            errors.append({"row": row_num, "email": email, "error": "Missing role"})
-            continue
-
-        normalized_role = normalize_role(role_val)
-        if not normalized_role or normalized_role not in {"sub_distributor", "sub_distribution_manager", "cluster", "operator"}:
-            errors.append({"row": row_num, "email": email, "error": f"Invalid role '{role_val}'. Allowed: sub_distributor, sub_distribution_manager, cluster, operator"})
             continue
 
         if email in seen_emails:
@@ -188,19 +242,29 @@ async def process_bulk_user_upload(
             continue
         seen_emails.add(email)
 
-        sd_email = str(row.get("sub_distributor_email") or "").strip().lower() or None
-        cluster_email = str(row.get("cluster_email") or "").strip().lower() or None
+        all_digital_values = ([digital_id] + (additional_digital_ids or []))
+        dup_digital = next((d for d in all_digital_values if d and d.strip().lower() in seen_digital_keys), None)
+        if dup_digital:
+            skipped.append({"row": row_num, "email": email, "reason": f"Digital ID '{dup_digital}' is duplicated within the file"})
+            continue
+        for d in all_digital_values:
+            if d and d.strip():
+                seen_digital_keys.add(d.strip().lower())
+        if broadband_id and broadband_id.strip().lower() in seen_broadband_keys:
+            skipped.append({"row": row_num, "email": email, "reason": f"Broadband ID '{broadband_id}' is duplicated within the file"})
+            continue
+        if broadband_id and broadband_id.strip():
+            seen_broadband_keys.add(broadband_id.strip().lower())
 
         prepared_rows.append({
             "row": row_num,
             "email": email,
             "password": password,
             "name": name,
-            "normalized_role": normalized_role,
+            "digital_id": digital_id,
+            "broadband_id": broadband_id,
+            "additional_digital_ids": additional_digital_ids,
             "phone": phone,
-            "location": location,
-            "sd_email": sd_email,
-            "cluster_email": cluster_email,
         })
 
     if not prepared_rows:
@@ -213,74 +277,67 @@ async def process_bulk_user_upload(
     for item, pw_hash in zip(prepared_rows, hashed):
         item["password_hash"] = pw_hash
 
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
     async with async_session_factory() as session:
         all_emails = [item["email"] for item in prepared_rows]
         existing_emails = await fetch_existing_values(session, "users", "email", all_emails)
-
-        sd_emails: Set[str] = set()
-        cluster_emails: Set[str] = set()
-        for item in prepared_rows:
-            if item["normalized_role"] in ("cluster", "sub_distribution_manager") and item["sd_email"]:
-                sd_emails.add(item["sd_email"])
-            if item["normalized_role"] == "operator" and item["cluster_email"]:
-                cluster_emails.add(item["cluster_email"])
-
-        sd_parent_map = await fetch_user_parent_map(session, sd_emails, "sub_distributor")
-        cluster_parent_map = await fetch_user_parent_map(session, cluster_emails, "cluster")
 
         insertable_rows = []
         for item in prepared_rows:
             if item["email"] in existing_emails:
                 skipped.append({"row": item["row"], "email": item["email"], "reason": "Email already exists"})
                 continue
-
-            parent_id = None
-            if item["normalized_role"] in ("cluster", "sub_distribution_manager"):
-                if not item["sd_email"]:
-                    errors.append({"row": item["row"], "email": email, "error": f"sub_distributor_email is required for role '{item['normalized_role']}'"})
-                    continue
-                parent_id = sd_parent_map.get(item["sd_email"])
-                if parent_id is None:
-                    errors.append({"row": item["row"], "email": email, "error": f"Sub-distributor with email '{item['sd_email']}' not found"})
-                    continue
-
-            if item["normalized_role"] == "operator":
-                if not item["cluster_email"]:
-                    errors.append({"row": item["row"], "email": email, "error": "cluster_email is required for role 'operator'"})
-                    continue
-                parent_id = cluster_parent_map.get(item["cluster_email"])
-                if parent_id is None:
-                    errors.append({"row": item["row"], "email": email, "error": f"Cluster with email '{item['cluster_email']}' not found"})
-                    continue
-
             item["parent_id"] = parent_id
             insertable_rows.append(item)
+
+        # Digital / broadband IDs must be unique across all users in the system.
+        if insertable_rows:
+            all_digital = []
+            all_broadband = []
+            for item in insertable_rows:
+                for d in ([item["digital_id"]] + (item["additional_digital_ids"] or [])):
+                    if d and d.strip():
+                        all_digital.append(d)
+                if item["broadband_id"] and item["broadband_id"].strip():
+                    all_broadband.append(item["broadband_id"])
+            existing_digital = await fetch_existing_values(session, "digital_identities", "digital_id", all_digital)
+            existing_broadband = await fetch_existing_values(session, "digital_identities", "broadband_id", all_broadband)
+
+            filtered_rows = []
+            for item in insertable_rows:
+                digital_ids = [d.strip() for d in ([item["digital_id"]] + (item["additional_digital_ids"] or [])) if d and d.strip()]
+                taken_digital = next((d for d in digital_ids if d.lower() in existing_digital), None)
+                if taken_digital:
+                    skipped.append({"row": item["row"], "email": item["email"], "reason": f"Digital ID '{taken_digital}' is already assigned to another user"})
+                    continue
+                if item["broadband_id"] and item["broadband_id"].strip().lower() in existing_broadband:
+                    skipped.append({"row": item["row"], "email": item["email"], "reason": f"Broadband ID '{item['broadband_id'].strip()}' is already assigned to another user"})
+                    continue
+                filtered_rows.append(item)
+            insertable_rows = filtered_rows
 
         if not insertable_rows:
             return _build_response(0, len(skipped), len(errors), created, skipped, errors)
 
         insert_sql = """INSERT INTO users (email, password_hash, name, role,
-            status, phone, location, parent_id,
-            is_verified, created_at, updated_at)
+            status, phone, designation, parent_id, created_at, updated_at)
         VALUES (:email, :password_hash, :name, :role,
-            :status, :phone, :location, :parent_id,
-            :is_verified, :created_at, :updated_at)"""
+            :status, :phone, :designation, :parent_id, :created_at, :updated_at)"""
 
         should_commit = True
         for batch in chunks(insertable_rows, 500):
             batch_payload = []
             for item in batch:
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 batch_payload.append({
                     "email": item["email"],
                     "password_hash": item["password_hash"],
                     "name": item["name"],
-                    "role": item["normalized_role"],
+                    "role": target_role,
                     "status": "active",
                     "phone": item["phone"],
-                    "location": item["location"],
+                    "designation": None,
                     "parent_id": item.get("parent_id"),
-                    "is_verified": 0,
                     "created_at": now,
                     "updated_at": now,
                 })
@@ -288,30 +345,28 @@ async def process_bulk_user_upload(
             try:
                 await session.execute(text(insert_sql), batch_payload)
                 for item in batch:
-                    created.append({"row": item["row"], "email": item["email"], "role": item["normalized_role"], "name": item["name"]})
+                    created.append({"row": item["row"], "email": item["email"], "role": target_role, "name": item["name"]})
             except Exception as batch_error:
                 for item in batch:
                     row_idx = item["row"]
                     email = item["email"]
                     try:
-                        now = datetime.now(timezone.utc).replace(tzinfo=None)
                         await session.execute(
                             text(insert_sql),
                             {
                                 "email": email,
                                 "password_hash": item["password_hash"],
                                 "name": item["name"],
-                                "role": item["normalized_role"],
+                                "role": target_role,
                                 "status": "active",
                                 "phone": item["phone"],
-                                "location": item["location"],
+                                "designation": None,
                                 "parent_id": item.get("parent_id"),
-                                "is_verified": 0,
                                 "created_at": now,
                                 "updated_at": now,
                             },
                         )
-                        created.append({"row": row_idx, "email": email, "role": item["normalized_role"], "name": item["name"]})
+                        created.append({"row": row_idx, "email": email, "role": target_role, "name": item["name"]})
                     except Exception as single_error:
                         lowered = str(single_error).lower()
                         if "duplicate" in lowered or "unique" in lowered:
@@ -338,6 +393,28 @@ async def process_bulk_user_upload(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."
             )
+
+    # Create digital identities for each created user
+    from app.services.digital_id_service import create_digital_identities_for_user as _create_identities
+    for item in created:
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    text("SELECT id FROM users WHERE email = :email"),
+                    {"email": item["email"]},
+                )
+                row = result.mappings().first()
+                if row:
+                    user_id = int(row["id"])
+                    matched = next((p for p in prepared_rows if p["email"] == item["email"]), None)
+                    await _create_identities(
+                        user_id=user_id,
+                        primary_digital_id=matched["digital_id"] if matched else None,
+                        primary_broadband_id=matched["broadband_id"] if matched else None,
+                        additional_digital_ids=matched.get("additional_digital_ids") if matched else None,
+                    )
+        except Exception as e:
+            logger.warning("Failed to create digital identities for %s: %s", item["email"], e)
 
     await log_business_activity(
         user=current_user,

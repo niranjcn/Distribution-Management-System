@@ -390,13 +390,19 @@ const Devices = () => {
     return [];
   }, [overview?.insights?.by_vendor]);
 
+  const holderOptionLabel = (item) => {
+    const identities = Array.isArray(item?.digital_ids) ? item.digital_ids : [];
+    const ids = identities.flatMap((di) => [di?.digital_id, di?.broadband_id]).filter(Boolean);
+    return ids.length ? `${item.name} (${ids.join(', ')})` : item.name;
+  };
+
   const filterOptions = useMemo(() => {
     const byType = Array.isArray(overview?.insights?.by_type) ? overview.insights.by_type : [];
     const byVendor = Array.isArray(overview?.insights?.by_vendor) ? overview.insights.by_vendor : [];
     const deviceTypes = [...new Set(byType.map((entry) => entry?.type).filter(Boolean))].sort();
     const manufacturers = [...new Set(byVendor.map((entry) => entry?.manufacturer).filter(Boolean))].sort();
-    const subDistributors = subDistributorSummary.map((item) => ({ id: item.id, name: item.name }));
-    const clusters = clusterSummary.map((item) => ({ id: item.id, name: item.name }));
+    const subDistributors = subDistributorSummary.map((item) => ({ id: item.id, name: holderOptionLabel(item) }));
+    const clusters = clusterSummary.map((item) => ({ id: item.id, name: holderOptionLabel(item) }));
 
     return { deviceTypes, manufacturers, subDistributors, clusters };
   }, [clusterSummary, overview?.insights?.by_type, overview?.insights?.by_vendor, subDistributorSummary]);

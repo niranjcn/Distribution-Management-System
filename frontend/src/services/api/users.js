@@ -51,12 +51,13 @@ export const usersAPI = {
     return response;
   },
 
-  bulkUpload: async (file) => {
+  bulkUpload: async (file, role, parentId) => {
     const formData = new FormData();
     const fileBuffer = await file.arrayBuffer();
     const fileSnapshot = new Blob([fileBuffer], { type: file.type || 'application/octet-stream' });
     formData.append('file', fileSnapshot, file.name || 'bulk-upload.csv');
-    const url = `${API_BASE_URL}/users/bulk-upload`;
+    let url = `${API_BASE_URL}/users/bulk-upload?role=${encodeURIComponent(role)}`;
+    if (parentId) url += `&parent_id=${encodeURIComponent(parentId)}`;
     const response = await fetch(url, {
       method: 'POST',
       credentials: 'include',

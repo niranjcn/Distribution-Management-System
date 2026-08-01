@@ -18,6 +18,116 @@ def _count_total_children(children: List[Dict[str, Any]]) -> int:
     return count
 
 
+def _flatten_child_ids(children: List[Dict[str, Any]]) -> List[int]:
+    """Collect every child user id (including nested ones) referenced by a request."""
+    ids = []
+    for c in children:
+        cid = c.get("id")
+        if cid is not None:
+            try:
+                ids.append(int(cid))
+            except (TypeError, ValueError):
+                pass
+        if c.get("children"):
+            ids.extend(_flatten_child_ids(c["children"]))
+    return ids
+
+
+def _prune_children(children: List[Dict[str, Any]], existing_ids: set) -> List[Dict[str, Any]]:
+    """Keep only children that still exist, recursing into nested children."""
+    pruned = []
+    for c in children:
+        cid = c.get("id")
+        if cid is None:
+            continue
+        try:
+            keep = int(cid) in existing_ids
+        except (TypeError, ValueError):
+            keep = False
+        if keep:
+            item = dict(c)
+            if c.get("children"):
+                item["children"] = _prune_children(c["children"], existing_ids)
+            pruned.append(item)
+    return pruned
+
+
+async def cleanup_stale_reassignment_requests() -> int:
+    """Take down pending reassignment requests whose users for reassignment no longer exist.
+
+    A request whose children were all deleted cannot be reassigned, so it is removed.
+    If the user scheduled for deletion still exists and currently has no children, the
+    deferred deletion is completed. Requests that lost only some children are pruned to
+    reference surviving users only. Returns the number of requests removed.
+    """
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text("SELECT * FROM reassignment_requests WHERE status = 'pending'")
+        )
+        rows = result.mappings().all()
+        if not rows:
+            return 0
+
+        removed = 0
+        now = datetime.now().replace(tzinfo=None)
+
+        for row in rows:
+            req = dict(row)
+            try:
+                children = json.loads(req.get("children_json") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                children = []
+
+            child_ids = _flatten_child_ids(children)
+            if not child_ids:
+                continue
+
+            placeholders = ",".join(f":id_{i}" for i in range(len(child_ids)))
+            params = {f"id_{i}": cid for i, cid in enumerate(child_ids)}
+            existing_res = await session.execute(
+                text(f"SELECT id FROM users WHERE id IN ({placeholders})"),
+                params,
+            )
+            existing_ids = {int(r[0]) for r in existing_res.all()}
+
+            if not existing_ids:
+                await session.execute(
+                    text("DELETE FROM reassignment_requests WHERE id = :id"),
+                    {"id": int(req["id"])},
+                )
+                removed += 1
+
+                deleted_user_id = req.get("deleted_user_id")
+                if deleted_user_id is not None:
+                    user_res = await session.execute(
+                        text("SELECT id FROM users WHERE id = :id"),
+                        {"id": int(deleted_user_id)},
+                    )
+                    if user_res.first():
+                        child_count = await session.execute(
+                            text("SELECT COUNT(*) FROM users WHERE parent_id = :pid"),
+                            {"pid": int(deleted_user_id)},
+                        )
+                        if (child_count.scalar() or 0) == 0:
+                            await session.execute(
+                                text("DELETE FROM users WHERE id = :id"),
+                                {"id": int(deleted_user_id)},
+                            )
+                            await session.execute(
+                                text("DELETE FROM digital_identities WHERE user_id = :uid"),
+                                {"uid": int(deleted_user_id)},
+                            )
+            elif len(existing_ids) < len(child_ids):
+                surviving = _prune_children(children, existing_ids)
+                await session.execute(
+                    text("UPDATE reassignment_requests SET children_json = :cj, updated_at = :updated_at WHERE id = :id"),
+                    {"cj": json.dumps(surviving), "updated_at": now, "id": int(req["id"])},
+                )
+
+        await session.commit()
+        return removed
+
+
 async def create_reassignment_request(
     deleted_user: Dict[str, Any],
     children: List[Dict[str, Any]],
@@ -53,8 +163,8 @@ async def create_reassignment_request(
         await session.commit()
 
         result = await session.execute(
-            text("SELECT * FROM reassignment_requests WHERE id = :id"),
-            {"id": result.inserted_primary_key[0]}
+            text("SELECT * FROM reassignment_requests WHERE request_id = :request_id"),
+            {"request_id": request_id}
         )
         row = result.mappings().first()
         return dict(row) if row else {"request_id": request_id, "status": "pending"}
@@ -65,6 +175,7 @@ async def get_reassignment_requests(
     page_size: int = 20,
     status: Optional[str] = None
 ) -> Dict[str, Any]:
+    cleaned_up = await cleanup_stale_reassignment_requests()
     async with async_session_factory() as session:
         conditions = []
         params = {}
@@ -97,7 +208,8 @@ async def get_reassignment_requests(
 
         return {
             "data": data,
-            "pagination": get_pagination(page, page_size, total)
+            "pagination": get_pagination(page, page_size, total),
+            "cleaned_up": cleaned_up
         }
 
 

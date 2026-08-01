@@ -180,7 +180,6 @@ const ViewAsDashboard = () => {
                   <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Name</th>
                   <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Email</th>
                   <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Status</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Location</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -190,7 +189,6 @@ const ViewAsDashboard = () => {
                     <td className="px-5 py-3 font-medium text-gray-900">{u.name || 'Unnamed'}</td>
                     <td className="px-5 py-3 text-gray-600">{u.email || '-'}</td>
                     <td className="px-5 py-3"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${u.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{u.status}</span></td>
-                    <td className="px-5 py-3 text-gray-600">{u.location || '-'}</td>
                   </tr>
                 ))}
               </tbody>

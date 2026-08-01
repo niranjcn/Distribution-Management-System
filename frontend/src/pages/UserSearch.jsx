@@ -41,11 +41,19 @@ const UserSearch = () => {
     setSearched(true);
     try {
       const q = query.trim().toLowerCase();
-      const filtered = users.filter(u =>
-        u.name?.toLowerCase().includes(q) ||
-        String(u.id).includes(q) ||
-        u.email?.toLowerCase().includes(q)
-      );
+      const filtered = users.filter(u => {
+        const identities = Array.isArray(u?.digital_ids) ? u.digital_ids : [];
+        const hasIdentity = identities.some(di =>
+          String(di?.digital_id || '').toLowerCase().includes(q) ||
+          String(di?.broadband_id || '').toLowerCase().includes(q),
+        );
+        return (
+          u.name?.toLowerCase().includes(q) ||
+          String(u.id).includes(q) ||
+          u.email?.toLowerCase().includes(q) ||
+          hasIdentity
+        );
+      });
       setResults(filtered);
     } catch {
       showToast('Search failed', 'error');
@@ -73,7 +81,7 @@ const UserSearch = () => {
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
           <input
             type="text"
-            placeholder="Search by name, ID, or email..."
+            placeholder="Search by name, digital ID, broadband ID, or email..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}

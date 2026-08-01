@@ -28,7 +28,8 @@ class UserBase(BaseModel):
     status: UserStatus = UserStatus.ACTIVE
     phone: str = Field(..., min_length=10)
     designation: Optional[str] = None
-    location: Optional[str] = None
+    address: Optional[str] = None
+    pincode: Optional[str] = None
     parent_id: Optional[str] = None
 
 
@@ -36,6 +37,7 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=128)
     digital_id: Optional[str] = None
     broadband_id: Optional[str] = None
+    additional_digital_ids: Optional[str] = None
 
     @field_validator("password")
     @classmethod
@@ -55,7 +57,8 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     designation: Optional[str] = None
-    location: Optional[str] = None
+    address: Optional[str] = None
+    pincode: Optional[str] = None
     status: Optional[UserStatus] = None
     digital_id: Optional[str] = None
     broadband_id: Optional[str] = None
@@ -69,9 +72,9 @@ class UserResponse(BaseModel):
     status: UserStatus
     phone: Optional[str] = None
     designation: Optional[str] = None
-    location: Optional[str] = None
+    address: Optional[str] = None
+    pincode: Optional[str] = None
     parent_id: Optional[str] = None
-    is_verified: bool
     created_at: datetime
     updated_at: datetime
     last_login: Optional[datetime] = None

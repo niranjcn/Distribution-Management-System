@@ -10,7 +10,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI, digitalIdsAPI } from '../services/api';
 import { 
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
-  Building, MapPin, Calendar, Users as UsersIcon, Loader2, Lock,
+  Building, Calendar, Users as UsersIcon, Loader2, Lock,
   Network, ChevronDown, ChevronRight, Filter, X, EyeOff, Search,
   AlertTriangle, Bell
 } from 'lucide-react';
@@ -44,11 +44,8 @@ const USER_SEARCH_BY_OPTIONS = [
   { value: 'status', label: 'Status' },
   { value: 'phone', label: 'Phone' },
   { value: 'designation', label: 'Designation' },
-  { value: 'location', label: 'Location' },
   { value: 'digital_id', label: 'Digital ID' },
   { value: 'broadband_id', label: 'Broadband ID' },
-  { value: 'cluster_id', label: 'Cluster ID' },
-  { value: 'operator_id', label: 'Operator ID' },
 ];
 
 const getRoleColor = (role) => {
@@ -70,14 +67,12 @@ const emptyForm = {
   email: '',
   password: '',
   role: 'operator',
-  digitalId: '',
-  broadbandId: '',
-  clusterId: '',
-  operatorId: '',
   phone: '',
   designation: '',
-  location: '',
   parentId: '',
+  digitalId: '',
+  broadbandId: '',
+  digitalIdRows: [{ digitalId: '', broadbandId: '' }],
 };
 
 const USERS_FETCH_PAGE_SIZE = 1000000;
@@ -115,6 +110,8 @@ const Users = () => {
   const [subDistributorOptions, setSubDistributorOptions] = useState([]);
   const [loadingParents, setLoadingParents] = useState(false);
   const [selectedOperatorSubDistId, setSelectedOperatorSubDistId] = useState('');
+  // How an operator should be placed: directly under a sub distributor, or under a cluster.
+  const [operatorPlacement, setOperatorPlacement] = useState('sub_distributor');
 
   // For admin detail modal: child users (clusters under sub_distributor, operators under cluster)
   const [detailChildren, setDetailChildren] = useState([]);
@@ -257,6 +254,7 @@ const Users = () => {
     );
     setFormData(prev => ({ ...prev, role: newRole, parentId: isAutoParent ? currentUser.id : '' }));
     setSelectedOperatorSubDistId('');
+    setOperatorPlacement('sub_distributor');
     if (['super_admin', 'manager'].includes(currentUser?.role)) {
       if (newRole === 'sub_distribution_manager' || newRole === 'cluster' || newRole === 'operator') {
         loadParentOptions(newRole);
@@ -266,13 +264,16 @@ const Users = () => {
       }
     } else if (currentUser?.role === 'sub_distributor') {
       if (newRole === 'operator') {
-        // Clusters are already in `users` state
-        setParentOptions(users.map(c => ({ ...c, groupLabel: 'Cluster' })));
+        // Operators can be placed directly under this sub distributor OR under one of its clusters.
+        setParentOptions([
+          { id: String(currentUser.id), name: currentUser.name, groupLabel: 'Directly under me (Sub Distributor)' },
+          ...users.filter((u) => u.role === 'cluster').map(c => ({ ...c, groupLabel: 'Cluster' })),
+        ]);
       } else {
         setParentOptions([]);
       }
     } else if (currentUser?.role === 'cluster') {
-      setParentOptions([]);
+      setParentOptions([{ id: String(currentUser.id), name: currentUser.name, groupLabel: 'Directly under me (Cluster)' }]);
     }
   };
 
@@ -423,19 +424,13 @@ const Users = () => {
         password: formData.password,
         role: formData.role,
       };
-      if (formData.role === 'sub_distributor') {
-        payload.digital_id = formData.digitalId || null;
-        payload.broadband_id = formData.broadbandId || null;
-      }
-      if (formData.role === 'cluster') {
-        payload.cluster_id = formData.clusterId || null;
-      }
-      if (formData.role === 'operator') {
-        payload.operator_id = formData.operatorId || null;
-      }
+      const primaryRow = formData.digitalIdRows?.[0];
+      if (primaryRow?.digitalId) payload.digital_id = primaryRow.digitalId;
+      if (primaryRow?.broadbandId) payload.broadband_id = primaryRow.broadbandId;
+      const extraIds = (formData.digitalIdRows || []).slice(1).map(r => r.digitalId).filter(Boolean);
+      if (extraIds.length > 0) payload.additional_digital_ids = extraIds.join('|');
       if (formData.phone)      payload.phone = formData.phone;
       if (formData.designation) payload.designation = formData.designation;
-      if (formData.location)   payload.location = formData.location;
       if (formData.parentId)   payload.parent_id = formData.parentId;
 
       await usersAPI.createUser(payload);
@@ -459,14 +454,12 @@ const Users = () => {
     setSubmitting(true);
     try {
       const payload = {};
-      if (formData.name)       payload.name = formData.name;
-      if (formData.phone)      payload.phone = formData.phone;
+      if (formData.name)        payload.name = formData.name;
+      if (formData.phone)       payload.phone = formData.phone;
       if (formData.designation) payload.designation = formData.designation;
-      if (formData.location)   payload.location = formData.location;
-      if (selectedUser?.role === 'sub_distributor') {
-        payload.digital_id = formData.digitalId || null;
-        payload.broadband_id = formData.broadbandId || null;
-      }
+      const editPrimaryRow = formData.digitalIdRows?.[0];
+      if (editPrimaryRow?.digitalId) payload.digital_id = editPrimaryRow.digitalId;
+      if (editPrimaryRow?.broadbandId) payload.broadband_id = editPrimaryRow.broadbandId;
 
       await usersAPI.updateUser(selectedUser._id || selectedUser.id, payload);
       showToast('User updated successfully', 'success');
@@ -511,8 +504,14 @@ const Users = () => {
         const res = await usersAPI.getUsers({ role: 'sub_distributor', page_size: USERS_FETCH_PAGE_SIZE });
         setReassignParentOptions(res.data || []);
       } else if (user.role === 'operator') {
-        const res = await usersAPI.getUsers({ role: 'cluster', page_size: USERS_FETCH_PAGE_SIZE });
-        setReassignParentOptions(res.data || []);
+        const [sdRes, clRes] = await Promise.all([
+          usersAPI.getUsers({ role: 'sub_distributor', page_size: USERS_FETCH_PAGE_SIZE }),
+          usersAPI.getUsers({ role: 'cluster', page_size: USERS_FETCH_PAGE_SIZE }),
+        ]);
+        setReassignParentOptions([
+          ...(sdRes.data || []).map(u => ({ ...u, groupLabel: 'Sub Distributor' })),
+          ...(clRes.data || []).map(u => ({ ...u, groupLabel: 'Cluster' })),
+        ]);
       }
     } catch (err) {
       showToast('Failed to load parent options', 'error');
@@ -620,11 +619,12 @@ const Users = () => {
       status: (row) => row?.status,
       phone: (row) => row?.phone,
       designation: (row) => row?.designation,
-      location: (row) => row?.location,
-      digital_id: (row) => row?.digital_id,
-      broadband_id: (row) => row?.broadband_id,
-      cluster_id: (row) => row?.cluster_id,
-      operator_id: (row) => row?.operator_id,
+      digital_id: (row) => Array.isArray(row?.digital_ids)
+        ? row.digital_ids.map((di) => di?.digital_id || '').join(' ')
+        : row?.digital_id,
+      broadband_id: (row) => Array.isArray(row?.digital_ids)
+        ? row.digital_ids.map((di) => di?.broadband_id || '').join(' ')
+        : row?.broadband_id,
     };
 
     const searchBy = String(appliedTableSearch.by || 'all');
@@ -1111,13 +1111,6 @@ const Users = () => {
                   <p className="font-medium text-gray-800">{selectedUser.designation || 'Not assigned'}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <MapPin className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-sm text-gray-500">Location</p>
-                  <p className="font-medium text-gray-800">{selectedUser.location || 'Not assigned'}</p>
-                </div>
-              </div>
 
               {/* ── Account ── */}
               <div className="flex items-center gap-3">
@@ -1180,24 +1173,6 @@ const Users = () => {
                   <div>
                     <p className="text-sm text-gray-500">Digital IDs</p>
                     <p className="font-medium text-gray-800">None</p>
-                  </div>
-                </div>
-              )}
-              {selectedUser.role === 'cluster' && (
-                <div className="flex items-center gap-3">
-                  <Building className="w-5 h-5 text-gray-400" />
-                  <div>
-                    <p className="text-sm text-gray-500">Cluster ID</p>
-                    <p className="font-medium text-gray-800">{selectedUser.cluster_id || 'Not provided'}</p>
-                  </div>
-                </div>
-              )}
-              {selectedUser.role === 'operator' && (
-                <div className="flex items-center gap-3">
-                  <Building className="w-5 h-5 text-gray-400" />
-                  <div>
-                    <p className="text-sm text-gray-500">Operator ID</p>
-                    <p className="font-medium text-gray-800">{selectedUser.operator_id || 'Not provided'}</p>
                   </div>
                 </div>
               )}
@@ -1376,7 +1351,7 @@ const Users = () => {
             </div>
 
             {/* Parent selector — shown when admin/manager creates sub-distributor/cluster/operator,
-                OR when sub_distributor creates an operator (must select a cluster) */}
+                OR when sub_distributor creates an operator (must select a parent), OR when cluster creates an operator */}
             {((isAdminOrManager) && (formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator')) ||
              (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ||
              (currentUser?.role === 'cluster' && formData.role === 'operator') ? (
@@ -1384,56 +1359,118 @@ const Users = () => {
                 {isAdminOrManager && formData.role === 'operator' ? (
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Select Sub Distribution <span className="text-red-500">*</span>
-                      </label>
-                      {loadingParents ? (
-                        <div className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
-                          <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
-                          <span className="text-sm text-gray-500">Loading options...</span>
-                        </div>
-                      ) : (
-                        <select
-                          value={selectedOperatorSubDistId}
-                          onChange={(e) => {
-                            setSelectedOperatorSubDistId(e.target.value);
-                            setFormData((prev) => ({ ...prev, parentId: '' }));
-                          }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          required
-                        >
-                          <option value="">Select Sub Distribution...</option>
-                          {subDistributorOptions.map((sd) => (
-                            <option key={sd.id} value={sd.id}>{sd.name}</option>
-                          ))}
-                        </select>
-                      )}
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Operator Placement</label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="radio"
+                            name="operatorPlacement"
+                            checked={operatorPlacement === 'sub_distributor'}
+                            onChange={() => {
+                              setOperatorPlacement('sub_distributor');
+                              setFormData((prev) => ({ ...prev, parentId: '' }));
+                              setSelectedOperatorSubDistId('');
+                            }}
+                            className="accent-blue-600"
+                          />
+                          Directly under a Sub Distributor
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="radio"
+                            name="operatorPlacement"
+                            checked={operatorPlacement === 'cluster'}
+                            onChange={() => {
+                              setOperatorPlacement('cluster');
+                              setFormData((prev) => ({ ...prev, parentId: '' }));
+                              setSelectedOperatorSubDistId('');
+                            }}
+                            className="accent-blue-600"
+                          />
+                          Under a Cluster
+                        </label>
+                      </div>
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Assign to Cluster <span className="text-red-500">*</span>
-                      </label>
-                      <select
-                        value={formData.parentId}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, parentId: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        required
-                        disabled={!selectedOperatorSubDistId}
-                      >
-                        <option value="">
-                          {selectedOperatorSubDistId ? 'Select Cluster...' : 'Select Sub Distribution first...'}
-                        </option>
-                        {filteredClusterParentOptions.map((cluster) => (
-                          <option key={cluster.id} value={cluster.id}>{cluster.name}</option>
-                        ))}
-                      </select>
-                    </div>
+                    {operatorPlacement === 'sub_distributor' ? (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Assign to Sub Distributor <span className="text-red-500">*</span>
+                        </label>
+                        {loadingParents ? (
+                          <div className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                            <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+                            <span className="text-sm text-gray-500">Loading options...</span>
+                          </div>
+                        ) : (
+                          <select
+                            value={formData.parentId}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, parentId: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          >
+                            <option value="">Select Sub Distributor...</option>
+                            {subDistributorOptions.map((sd) => (
+                              <option key={sd.id} value={sd.id}>{sd.name}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Select Sub Distribution <span className="text-red-500">*</span>
+                          </label>
+                          {loadingParents ? (
+                            <div className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                              <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+                              <span className="text-sm text-gray-500">Loading options...</span>
+                            </div>
+                          ) : (
+                            <select
+                              value={selectedOperatorSubDistId}
+                              onChange={(e) => {
+                                setSelectedOperatorSubDistId(e.target.value);
+                                setFormData((prev) => ({ ...prev, parentId: '' }));
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              required
+                            >
+                              <option value="">Select Sub Distribution...</option>
+                              {subDistributorOptions.map((sd) => (
+                                <option key={sd.id} value={sd.id}>{sd.name}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Assign to Cluster <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            value={formData.parentId}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, parentId: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                            disabled={!selectedOperatorSubDistId}
+                          >
+                            <option value="">
+                              {selectedOperatorSubDistId ? 'Select Cluster...' : 'Select Sub Distribution first...'}
+                            </option>
+                            {filteredClusterParentOptions.map((cluster) => (
+                              <option key={cluster.id} value={cluster.id}>{cluster.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Distribution' : 'Assign to Cluster'}
+                      {formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Distribution' : 'Assign to Parent'}
                       <span className="text-red-500"> *</span>
                     </label>
                     {loadingParents ? (
@@ -1449,9 +1486,9 @@ const Users = () => {
                         required
                       >
                         <option value="">
-                          Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Distribution' : 'Cluster'}...
+                          Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Distribution' : 'Parent'}...
                         </option>
-                        {(currentUser?.role === 'sub_distributor' ? users : parentOptions).map(p => (
+                        {parentOptions.map(p => (
                           <option key={p.id} value={p.id}>
                             {p.groupLabel ? `[${p.groupLabel}] ${p.name}` : p.name}
                           </option>
@@ -1463,54 +1500,54 @@ const Users = () => {
               </div>
             ) : null}
 
-            {formData.role === 'sub_distributor' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID</label>
-                  <input
-                    type="text"
-                    value={formData.digitalId}
-                    onChange={(e) => setFormData({ ...formData, digitalId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Enter digital ID"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID</label>
-                  <input
-                    type="text"
-                    value={formData.broadbandId}
-                    onChange={(e) => setFormData({ ...formData, broadbandId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Enter broadband ID"
-                  />
-                </div>
-              </div>
-            )}
-
-            {formData.role === 'cluster' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Cluster ID</label>
-                <input
-                  type="text"
-                  value={formData.clusterId}
-                  onChange={(e) => setFormData({ ...formData, clusterId: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter cluster ID"
-                />
-              </div>
-            )}
-
-            {formData.role === 'operator' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Operator ID</label>
-                <input
-                  type="text"
-                  value={formData.operatorId}
-                  onChange={(e) => setFormData({ ...formData, operatorId: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter operator ID"
-                />
+            {['sub_distributor', 'cluster', 'operator'].includes(formData.role) && (
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Digital Identities</label>
+                {formData.digitalIdRows.map((row, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={row.digitalId}
+                        onChange={(e) => {
+                          const copy = [...formData.digitalIdRows];
+                          copy[idx] = { ...copy[idx], digitalId: e.target.value };
+                          setFormData({ ...formData, digitalIdRows: copy });
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={idx === 0 ? 'Digital ID (primary)' : `Additional Digital ID ${idx + 1}`}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={row.broadbandId}
+                        onChange={(e) => {
+                          const copy = [...formData.digitalIdRows];
+                          copy[idx] = { ...copy[idx], broadbandId: e.target.value };
+                          setFormData({ ...formData, digitalIdRows: copy });
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={idx === 0 ? 'Broadband ID (primary)' : 'Broadband ID'}
+                      />
+                    </div>
+                    {idx === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, digitalIdRows: [...formData.digitalIdRows, { digitalId: '', broadbandId: '' }] })}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg shrink-0 mt-1"
+                        title="Add another digital identity"
+                      >+</button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, digitalIdRows: formData.digitalIdRows.filter((_, i) => i !== idx) })}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg shrink-0 mt-1"
+                        title="Remove"
+                      >×</button>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1536,16 +1573,6 @@ const Users = () => {
                 onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="e.g., IT"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
-              <input
-                type="text"
-                value={formData.location}
-                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="e.g., Dhaka"
               />
             </div>
           </div>
@@ -1610,36 +1637,59 @@ const Users = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
-              <input
-                type="text"
-                value={formData.location}
-                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            {selectedUser?.role === 'sub_distributor' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Digital ID</label>
-                  <input
-                    type="text"
-                    value={formData.digitalId || ''}
-                    onChange={(e) => setFormData({ ...formData, digitalId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Broadband ID</label>
-                  <input
-                    type="text"
-                    value={formData.broadbandId || ''}
-                    onChange={(e) => setFormData({ ...formData, broadbandId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-              </>
+            {['sub_distributor', 'cluster', 'operator'].includes(selectedUser?.role) && (
+              <div className="col-span-2 space-y-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Digital Identities</label>
+                {(formData.digitalIdRows || [{ digitalId: '', broadbandId: '' }]).map((row, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={row.digitalId || ''}
+                        onChange={(e) => {
+                          const copy = [...(formData.digitalIdRows || [{ digitalId: '', broadbandId: '' }])];
+                          copy[idx] = { ...copy[idx], digitalId: e.target.value };
+                          setFormData({ ...formData, digitalIdRows: copy });
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={idx === 0 ? 'Digital ID (primary)' : `Additional Digital ID ${idx + 1}`}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={row.broadbandId || ''}
+                        onChange={(e) => {
+                          const copy = [...(formData.digitalIdRows || [{ digitalId: '', broadbandId: '' }])];
+                          copy[idx] = { ...copy[idx], broadbandId: e.target.value };
+                          setFormData({ ...formData, digitalIdRows: copy });
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={idx === 0 ? 'Broadband ID (primary)' : 'Broadband ID'}
+                      />
+                    </div>
+                    {idx === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({
+                          ...formData,
+                          digitalIdRows: [...(formData.digitalIdRows || [{ digitalId: '', broadbandId: '' }]), { digitalId: '', broadbandId: '' }]
+                        })}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg shrink-0 mt-1"
+                      >+</button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({
+                          ...formData,
+                          digitalIdRows: (formData.digitalIdRows || []).filter((_, i) => i !== idx)
+                        })}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg shrink-0 mt-1"
+                      >×</button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
           <div className="flex justify-end gap-3 pt-2">
@@ -1718,13 +1768,13 @@ const Users = () => {
                 Reassigning <strong>{reassignTarget.name}</strong> ({reassignTarget.role === 'cluster' ? 'Cluster' : 'Operator'})
                 {reassignTarget.role === 'cluster'
                   ? ' will move all operators under this cluster along with it.'
-                  : ' to a different cluster.'}
+                  : ' to a different sub distributor or cluster.'}
               </p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {reassignTarget.role === 'cluster' ? 'New Sub-Distributor' : 'New Cluster'}
+                {reassignTarget.role === 'cluster' ? 'New Sub-Distributor' : 'New Sub-Distributor or Cluster'}
                 <span className="text-red-500"> *</span>
               </label>
               <select
@@ -1734,12 +1784,14 @@ const Users = () => {
                 required
               >
                 <option value="">
-                  Select {reassignTarget.role === 'cluster' ? 'Sub-Distributor' : 'Cluster'}...
+                  Select {reassignTarget.role === 'cluster' ? 'Sub-Distributor' : 'Sub-Distributor / Cluster'}...
                 </option>
                 {reassignParentOptions
                   .filter(p => String(p.id) !== String(reassignTarget.parent_id))
                   .map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                    <option key={p.id} value={p.id}>
+                      {p.groupLabel ? `[${p.groupLabel}] ${p.name}` : p.name}
+                    </option>
                   ))}
               </select>
               {reassignParentOptions.length === 0 && (
@@ -1809,7 +1861,6 @@ const Users = () => {
                 { key: 'email', label: 'Email' },
                 { key: 'phone', label: 'Phone' },
                 { key: 'designation', label: 'Designation' },
-                { key: 'location', label: 'Location' },
               ].map(({ key, label }) => (
                 <div key={key}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
@@ -1820,7 +1871,7 @@ const Users = () => {
                   />
                 </div>
               ))}
-              {detailUser.role === 'sub_distributor' && (
+              {['sub_distributor', 'cluster', 'operator'].includes(detailUser.role) && (
                 <div className="p-3 bg-gray-50 rounded-lg">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Digital IDs</label>
                   <div className="space-y-2">
@@ -1864,28 +1915,6 @@ const Users = () => {
                   </button>
                 </div>
               )}
-              {detailUser.role === 'cluster' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Cluster ID</label>
-                  <input
-                    value={detailForm.cluster_id || ''}
-                    onChange={e => setDetailForm(p => ({ ...p, cluster_id: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="Enter cluster ID"
-                  />
-                </div>
-              )}
-              {detailUser.role === 'operator' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Operator ID</label>
-                  <input
-                    value={detailForm.operator_id || ''}
-                    onChange={e => setDetailForm(p => ({ ...p, operator_id: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="Enter operator ID"
-                  />
-                </div>
-              )}
               <div className="text-sm text-gray-500">
                 <span className="font-medium">Role:</span> {detailUser.role} &nbsp;|&nbsp;
                 <span className="font-medium">Created:</span> {new Date(detailUser.created_at).toLocaleDateString()}
@@ -1900,37 +1929,39 @@ const Users = () => {
                       name: detailForm.name,
                       phone: detailForm.phone,
                       designation: detailForm.designation,
-                      location: detailForm.location,
                     };
-                    if (detailUser.role === 'cluster') {
-                      updatePayload.cluster_id = detailForm.cluster_id || null;
-                    }
-                    if (detailUser.role === 'operator') {
-                      updatePayload.operator_id = detailForm.operator_id || null;
-                    }
                     await usersAPI.updateUser(detailUser.id, updatePayload);
                     if (detailForm.email && detailForm.email !== detailUser.email) {
                       await adminUpdateCredentials(detailUser.id, { email: detailForm.email });
                     }
-                    // Save digital IDs
-                    if (detailUser.role === 'sub_distributor') {
+                    // Save digital IDs for sub_distributor, cluster, operator
+                    if (['sub_distributor', 'cluster', 'operator'].includes(detailUser.role)) {
                       const origIds = origDigitalIdIds.current || [];
-                      const currentIds = detailDigitalIds.map(e => e.id).filter(Boolean);
+                      const currentIds = detailDigitalIds.map(e => String(e.id)).filter(Boolean);
                       const removedIds = origIds.filter(id => !currentIds.includes(String(id)));
                       for (const id of removedIds) {
                         await digitalIdsAPI.delete(id);
                       }
                       for (const entry of detailDigitalIds) {
+                        const dig = (entry.digital_id || '').trim();
+                        const bb = (entry.broadband_id || '').trim();
+                        if (!dig && !bb) {
+                          if (entry.id) {
+                            await digitalIdsAPI.delete(entry.id);
+                          }
+                          continue;
+                        }
                         if (entry.id) {
                           await digitalIdsAPI.update(entry.id, {
-                            digital_id: entry.digital_id || null,
-                            broadband_id: entry.broadband_id || null,
+                            user_id: detailUser.id,
+                            digital_id: dig || null,
+                            broadband_id: bb || null,
                           });
                         } else {
                           await digitalIdsAPI.create({
                             user_id: detailUser.id,
-                            digital_id: entry.digital_id || null,
-                            broadband_id: entry.broadband_id || null,
+                            digital_id: dig || null,
+                            broadband_id: bb || null,
                           });
                         }
                       }

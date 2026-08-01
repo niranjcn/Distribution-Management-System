@@ -23,6 +23,8 @@ const SEARCH_BY_OPTIONS = [
   { value: 'distribution_id', label: 'Distribution ID' },
   { value: 'from_user_name', label: 'From' },
   { value: 'to_user_name', label: 'To' },
+  { value: 'digital_id', label: 'Digital ID' },
+  { value: 'broadband_id', label: 'Broadband ID' },
   { value: 'status', label: 'Status' },
   { value: 'approved_by_name', label: 'Approved By' },
 ];

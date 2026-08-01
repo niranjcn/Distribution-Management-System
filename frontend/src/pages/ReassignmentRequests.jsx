@@ -32,6 +32,12 @@ const ReassignmentRequests = () => {
     try {
       const res = await reassignmentRequestsAPI.getRequests({ page_size: 100 });
       setRequests(res.data || []);
+      if (res.cleaned_up > 0) {
+        showToast(
+          `${res.cleaned_up} stale reassignment request${res.cleaned_up > 1 ? 's' : ''} removed (users no longer exist)`,
+          'info'
+        );
+      }
     } catch (err) {
       showToast(err.message || 'Failed to load requests', 'error');
     } finally {

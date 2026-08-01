@@ -30,7 +30,7 @@ async def get_view_as_dashboard(
 
         if role in ("sub_distributor",):
             rows = (await session.execute(
-                text("""SELECT id, name, email, role, status, phone, location FROM users
+                text("""SELECT id, name, email, role, status, phone FROM users
                 WHERE role = 'operator' AND parent_id IN (
                     SELECT id FROM users WHERE role = 'cluster' AND parent_id IN (
                         SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = :uid

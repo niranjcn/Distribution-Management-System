@@ -6,7 +6,7 @@ import io
 from openpyxl import Workbook
 
 from app.database_sqlalchemy import async_session_factory
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 
 
 ALLOWED_REPORT_TABLES = {
@@ -643,4 +643,477 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         defects_rows,
         file_format,
     )
+
+
+def _canonical_device_type(value) -> str:
+    """Return a canonical lowercase key for a stored device_type string."""
+    return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _is_sb_device_type(value) -> bool:
+    return _canonical_device_type(value) in {"sb", "stb", "set top box", "settopbox"}
+
+
+def _is_ont_device_type(value) -> bool:
+    return _canonical_device_type(value) == "ont"
+
+
+async def get_sub_distribution_report() -> Dict[str, Any]:
+    """Build the sub-distribution hierarchy report.
+
+    Returns one row per sub-distributor with hierarchy rollups (operators,
+    clusters), identity columns (digital id / broadband id), and device
+    counts broken into SB / ONT / other plus per-vendor SB and ONT counts.
+    """
+    sub_tree = """
+        WITH RECURSIVE hierarchy AS (
+            SELECT id, role, id AS sub_id
+            FROM users WHERE role = 'sub_distributor'
+            UNION ALL
+            SELECT u.id, u.role, h.sub_id
+            FROM users u
+            INNER JOIN hierarchy h ON u.parent_id = h.id
+        )
+    """
+
+    async with async_session_factory() as session:
+        sub_result = await session.execute(text("""
+            SELECT u.id, u.name, u.email, u.phone
+            FROM users u
+            WHERE u.role = 'sub_distributor'
+            ORDER BY u.name
+        """))
+        sub_rows = sub_result.mappings().all()
+        sub_ids = [int(r["id"]) for r in sub_rows]
+
+        sub_identities = {
+            int(r["id"]): {"digital_id": None, "broadband_id": None, "digital_ids": []}
+            for r in sub_rows
+        }
+
+        if sub_ids:
+            identity_result = await session.execute(
+                text("""
+                    SELECT di.id, di.user_id, di.digital_id, di.broadband_id, di.is_primary, di.created_at
+                    FROM digital_identities di
+                    WHERE di.user_id IN :sub_ids
+                    ORDER BY di.is_primary DESC, di.id ASC
+                """).bindparams(bindparam("sub_ids", expanding=True)),
+                {"sub_ids": sub_ids},
+            )
+            for row in identity_result.mappings().all():
+                entry = sub_identities[int(row["user_id"])]
+                digital = str(row["digital_id"] or "").strip() or None
+                broadband = str(row["broadband_id"] or "").strip() or None
+                if digital and entry["digital_id"] is None:
+                    entry["digital_id"] = digital
+                if broadband and entry["broadband_id"] is None:
+                    entry["broadband_id"] = broadband
+                entry["digital_ids"].append({
+                    "id": row["id"],
+                    "user_id": row["user_id"],
+                    "digital_id": digital,
+                    "broadband_id": broadband,
+                    "is_primary": bool(row["is_primary"]),
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                })
+
+        member_counts = {
+            int(r["id"]): {"operators": set(), "clusters": 0}
+            for r in sub_rows
+        }
+        operator_identities = {
+            int(r["id"]): {"with_digital": set(), "with_broadband": set()}
+            for r in sub_rows
+        }
+        device_totals = {
+            int(r["id"]): {
+                "total": 0,
+                "sb": 0,
+                "ont": 0,
+                "other": 0,
+                "sb_by_vendor": {},
+                "ont_by_vendor": {},
+            }
+            for r in sub_rows
+        }
+
+        if sub_ids:
+            member_result = await session.execute(text(f"""
+                {sub_tree}
+                SELECT sub_id, id AS user_id, role FROM hierarchy
+            """))
+            for row in member_result.mappings().all():
+                sub_id = int(row["sub_id"])
+                role = str(row["role"] or "")
+                if role == "operator":
+                    member_counts[sub_id]["operators"].add(int(row["user_id"]))
+                elif role == "cluster":
+                    member_counts[sub_id]["clusters"] += 1
+
+            identity_result = await session.execute(text(f"""
+                {sub_tree}
+                SELECT h.sub_id, di.user_id,
+                       MAX(CASE WHEN TRIM(COALESCE(di.digital_id, '')) != '' THEN 1 ELSE 0 END) AS has_digital,
+                       MAX(CASE WHEN TRIM(COALESCE(di.broadband_id, '')) != '' THEN 1 ELSE 0 END) AS has_broadband
+                FROM hierarchy h
+                INNER JOIN digital_identities di ON di.user_id = h.id
+                WHERE h.role = 'operator'
+                GROUP BY h.sub_id, di.user_id
+            """))
+            for row in identity_result.mappings().all():
+                sub_id = int(row["sub_id"])
+                if row["has_digital"]:
+                    operator_identities[sub_id]["with_digital"].add(int(row["user_id"]))
+                if row["has_broadband"]:
+                    operator_identities[sub_id]["with_broadband"].add(int(row["user_id"]))
+
+            device_result = await session.execute(text(f"""
+                {sub_tree}
+                SELECT h.sub_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
+                FROM hierarchy h
+                INNER JOIN devices d ON CAST(d.current_holder_id AS CHAR) = CAST(h.id AS CHAR)
+                WHERE d.current_holder_id IS NOT NULL
+                  AND TRIM(CAST(d.current_holder_id AS CHAR)) != ''
+                GROUP BY h.sub_id, d.device_type, d.manufacturer
+            """))
+            for row in device_result.mappings().all():
+                sub_id = int(row["sub_id"])
+                device_type = str(row["device_type"] or "")
+                vendor = str(row["manufacturer"] or "").strip() or "Unknown"
+                count = int(row["cnt"])
+                bucket = device_totals[sub_id]
+                bucket["total"] += count
+                if _is_sb_device_type(device_type):
+                    bucket["sb"] += count
+                    bucket["sb_by_vendor"][vendor] = bucket["sb_by_vendor"].get(vendor, 0) + count
+                elif _is_ont_device_type(device_type):
+                    bucket["ont"] += count
+                    bucket["ont_by_vendor"][vendor] = bucket["ont_by_vendor"].get(vendor, 0) + count
+                else:
+                    bucket["other"] += count
+
+        rows = []
+        for sub_row in sub_rows:
+            sub_id = int(sub_row["id"])
+            identity = sub_identities[sub_id]
+            members = member_counts[sub_id]
+            op_ids = operator_identities[sub_id]
+            devices = device_totals[sub_id]
+            rows.append({
+                "sub_id": sub_id,
+                "sub_name": str(sub_row["name"] or ""),
+                "email": str(sub_row["email"] or ""),
+                "phone": str(sub_row["phone"] or ""),
+                "digital_id": identity["digital_id"],
+                "broadband_id": identity["broadband_id"],
+                "digital_ids": identity["digital_ids"],
+                "total_operators": len(members["operators"]),
+                "operators_with_digital_id": len(op_ids["with_digital"]),
+                "operators_with_broadband_id": len(op_ids["with_broadband"]),
+                "total_clusters": members["clusters"],
+                "device_count": devices["total"],
+                "sb_device_count": devices["sb"],
+                "ont_device_count": devices["ont"],
+                "other_device_count": devices["other"],
+                "sb_by_vendor": dict(devices["sb_by_vendor"]),
+                "ont_by_vendor": dict(devices["ont_by_vendor"]),
+            })
+
+        return {
+            "sub_distributions": rows,
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat(),
+        }
+
+
+async def get_cluster_report() -> Dict[str, Any]:
+    """Build the cluster hierarchy report.
+
+    Returns one row per cluster with its parent sub-distribution, hierarchy
+    rollups (operators), identity columns (digital id / broadband id), and
+    device counts broken into SB / ONT / other plus per-vendor SB and ONT
+    counts. Mirrors the sub-distribution report.
+    """
+    cluster_tree = """
+        WITH RECURSIVE hierarchy AS (
+            SELECT id, role, id AS cluster_id
+            FROM users WHERE role = 'cluster'
+            UNION ALL
+            SELECT u.id, u.role, h.cluster_id
+            FROM users u
+            INNER JOIN hierarchy h ON u.parent_id = h.id
+        )
+    """
+
+    async with async_session_factory() as session:
+        cluster_result = await session.execute(text("""
+            SELECT c.id, c.name, c.email, c.phone, p.id AS sub_id, p.name AS sub_name
+            FROM users c
+            LEFT JOIN users p ON p.id = c.parent_id
+            WHERE c.role = 'cluster'
+            ORDER BY p.name, c.name
+        """))
+        cluster_rows = cluster_result.mappings().all()
+        cluster_ids = [int(r["id"]) for r in cluster_rows]
+
+        cluster_identities = {
+            int(r["id"]): {"digital_id": None, "broadband_id": None, "digital_ids": []}
+            for r in cluster_rows
+        }
+
+        if cluster_ids:
+            identity_result = await session.execute(
+                text("""
+                    SELECT di.id, di.user_id, di.digital_id, di.broadband_id, di.is_primary, di.created_at
+                    FROM digital_identities di
+                    WHERE di.user_id IN :cluster_ids
+                    ORDER BY di.is_primary DESC, di.id ASC
+                """).bindparams(bindparam("cluster_ids", expanding=True)),
+                {"cluster_ids": cluster_ids},
+            )
+            for row in identity_result.mappings().all():
+                entry = cluster_identities[int(row["user_id"])]
+                digital = str(row["digital_id"] or "").strip() or None
+                broadband = str(row["broadband_id"] or "").strip() or None
+                if digital and entry["digital_id"] is None:
+                    entry["digital_id"] = digital
+                if broadband and entry["broadband_id"] is None:
+                    entry["broadband_id"] = broadband
+                entry["digital_ids"].append({
+                    "id": row["id"],
+                    "user_id": row["user_id"],
+                    "digital_id": digital,
+                    "broadband_id": broadband,
+                    "is_primary": bool(row["is_primary"]),
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                })
+
+        member_counts = {
+            int(r["id"]): {"operators": set()}
+            for r in cluster_rows
+        }
+        operator_identities = {
+            int(r["id"]): {"with_digital": set(), "with_broadband": set()}
+            for r in cluster_rows
+        }
+        device_totals = {
+            int(r["id"]): {
+                "total": 0,
+                "sb": 0,
+                "ont": 0,
+                "other": 0,
+                "sb_by_vendor": {},
+                "ont_by_vendor": {},
+            }
+            for r in cluster_rows
+        }
+
+        if cluster_ids:
+            member_result = await session.execute(text(f"""
+                {cluster_tree}
+                SELECT cluster_id, id AS user_id, role FROM hierarchy
+            """))
+            for row in member_result.mappings().all():
+                cluster_id = int(row["cluster_id"])
+                role = str(row["role"] or "")
+                if role == "operator":
+                    member_counts[cluster_id]["operators"].add(int(row["user_id"]))
+
+            identity_result = await session.execute(text(f"""
+                {cluster_tree}
+                SELECT h.cluster_id, di.user_id,
+                       MAX(CASE WHEN TRIM(COALESCE(di.digital_id, '')) != '' THEN 1 ELSE 0 END) AS has_digital,
+                       MAX(CASE WHEN TRIM(COALESCE(di.broadband_id, '')) != '' THEN 1 ELSE 0 END) AS has_broadband
+                FROM hierarchy h
+                INNER JOIN digital_identities di ON di.user_id = h.id
+                WHERE h.role = 'operator'
+                GROUP BY h.cluster_id, di.user_id
+            """))
+            for row in identity_result.mappings().all():
+                cluster_id = int(row["cluster_id"])
+                if row["has_digital"]:
+                    operator_identities[cluster_id]["with_digital"].add(int(row["user_id"]))
+                if row["has_broadband"]:
+                    operator_identities[cluster_id]["with_broadband"].add(int(row["user_id"]))
+
+            device_result = await session.execute(text(f"""
+                {cluster_tree}
+                SELECT h.cluster_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
+                FROM hierarchy h
+                INNER JOIN devices d ON d.current_holder_id = h.id
+                WHERE d.current_holder_id IS NOT NULL
+                GROUP BY h.cluster_id, d.device_type, d.manufacturer
+            """))
+            for row in device_result.mappings().all():
+                cluster_id = int(row["cluster_id"])
+                device_type = str(row["device_type"] or "")
+                vendor = str(row["manufacturer"] or "").strip() or "Unknown"
+                count = int(row["cnt"])
+                bucket = device_totals[cluster_id]
+                bucket["total"] += count
+                if _is_sb_device_type(device_type):
+                    bucket["sb"] += count
+                    bucket["sb_by_vendor"][vendor] = bucket["sb_by_vendor"].get(vendor, 0) + count
+                elif _is_ont_device_type(device_type):
+                    bucket["ont"] += count
+                    bucket["ont_by_vendor"][vendor] = bucket["ont_by_vendor"].get(vendor, 0) + count
+                else:
+                    bucket["other"] += count
+
+        rows = []
+        for cluster_row in cluster_rows:
+            cluster_id = int(cluster_row["id"])
+            identity = cluster_identities[cluster_id]
+            members = member_counts[cluster_id]
+            op_ids = operator_identities[cluster_id]
+            devices = device_totals[cluster_id]
+            rows.append({
+                "cluster_id": cluster_id,
+                "cluster_name": str(cluster_row["name"] or ""),
+                "email": str(cluster_row["email"] or ""),
+                "phone": str(cluster_row["phone"] or ""),
+                "sub_id": int(cluster_row["sub_id"]) if cluster_row["sub_id"] else None,
+                "sub_name": str(cluster_row["sub_name"] or ""),
+                "digital_id": identity["digital_id"],
+                "broadband_id": identity["broadband_id"],
+                "digital_ids": identity["digital_ids"],
+                "total_operators": len(members["operators"]),
+                "operators_with_digital_id": len(op_ids["with_digital"]),
+                "operators_with_broadband_id": len(op_ids["with_broadband"]),
+                "device_count": devices["total"],
+                "sb_device_count": devices["sb"],
+                "ont_device_count": devices["ont"],
+                "other_device_count": devices["other"],
+                "sb_by_vendor": dict(devices["sb_by_vendor"]),
+                "ont_by_vendor": dict(devices["ont_by_vendor"]),
+            })
+
+        return {
+            "clusters": rows,
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat(),
+        }
+
+
+async def get_operator_report() -> Dict[str, Any]:
+    """Build the operator hierarchy report.
+
+    Returns one row per operator with its parent sub-distribution and cluster
+    (if any), identity columns (digital id / broadband id), and device counts
+    broken into SB / ONT / other plus per-vendor SB and ONT counts.
+    """
+    async with async_session_factory() as session:
+        operator_result = await session.execute(text("""
+            SELECT o.id, o.name, o.email, o.phone,
+                   p.id AS parent_id, p.name AS parent_name, p.role AS parent_role,
+                   g.id AS sub_id, g.name AS sub_name
+            FROM users o
+            LEFT JOIN users p ON p.id = o.parent_id
+            LEFT JOIN users g ON g.id = CASE WHEN p.role = 'cluster' THEN p.parent_id ELSE p.id END
+            WHERE o.role = 'operator'
+            ORDER BY g.name, p.name, o.name
+        """))
+        operator_rows = operator_result.mappings().all()
+        operator_ids = [int(r["id"]) for r in operator_rows]
+
+        operator_identities = {
+            int(r["id"]): {"digital_id": None, "broadband_id": None, "digital_ids": []}
+            for r in operator_rows
+        }
+        device_totals = {
+            int(r["id"]): {
+                "total": 0,
+                "sb": 0,
+                "ont": 0,
+                "other": 0,
+                "sb_by_vendor": {},
+                "ont_by_vendor": {},
+            }
+            for r in operator_rows
+        }
+
+        if operator_ids:
+            identity_result = await session.execute(
+                text("""
+                    SELECT di.id, di.user_id, di.digital_id, di.broadband_id, di.is_primary, di.created_at
+                    FROM digital_identities di
+                    WHERE di.user_id IN :operator_ids
+                    ORDER BY di.is_primary DESC, di.id ASC
+                """).bindparams(bindparam("operator_ids", expanding=True)),
+                {"operator_ids": operator_ids},
+            )
+            for row in identity_result.mappings().all():
+                entry = operator_identities[int(row["user_id"])]
+                digital = str(row["digital_id"] or "").strip() or None
+                broadband = str(row["broadband_id"] or "").strip() or None
+                if digital and entry["digital_id"] is None:
+                    entry["digital_id"] = digital
+                if broadband and entry["broadband_id"] is None:
+                    entry["broadband_id"] = broadband
+                entry["digital_ids"].append({
+                    "id": row["id"],
+                    "user_id": row["user_id"],
+                    "digital_id": digital,
+                    "broadband_id": broadband,
+                    "is_primary": bool(row["is_primary"]),
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                })
+
+            device_result = await session.execute(
+                text("""
+                    SELECT d.current_holder_id AS user_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
+                    FROM devices d
+                    WHERE d.current_holder_id IS NOT NULL
+                      AND d.current_holder_id IN :operator_ids
+                    GROUP BY d.current_holder_id, d.device_type, d.manufacturer
+                """).bindparams(bindparam("operator_ids", expanding=True)),
+                {"operator_ids": operator_ids},
+            )
+            for row in device_result.mappings().all():
+                user_id = int(row["user_id"])
+                device_type = str(row["device_type"] or "")
+                vendor = str(row["manufacturer"] or "").strip() or "Unknown"
+                count = int(row["cnt"])
+                bucket = device_totals[user_id]
+                bucket["total"] += count
+                if _is_sb_device_type(device_type):
+                    bucket["sb"] += count
+                    bucket["sb_by_vendor"][vendor] = bucket["sb_by_vendor"].get(vendor, 0) + count
+                elif _is_ont_device_type(device_type):
+                    bucket["ont"] += count
+                    bucket["ont_by_vendor"][vendor] = bucket["ont_by_vendor"].get(vendor, 0) + count
+                else:
+                    bucket["other"] += count
+
+        rows = []
+        for operator_row in operator_rows:
+            operator_id = int(operator_row["id"])
+            identity = operator_identities[operator_id]
+            devices = device_totals[operator_id]
+            parent_role = str(operator_row["parent_role"] or "")
+            cluster_id = int(operator_row["parent_id"]) if parent_role == "cluster" and operator_row["parent_id"] else None
+            cluster_name = str(operator_row["parent_name"] or "") if cluster_id else None
+            rows.append({
+                "operator_id": operator_id,
+                "operator_name": str(operator_row["name"] or ""),
+                "email": str(operator_row["email"] or ""),
+                "phone": str(operator_row["phone"] or ""),
+                "sub_id": int(operator_row["sub_id"]) if operator_row["sub_id"] else None,
+                "sub_name": str(operator_row["sub_name"] or ""),
+                "cluster_id": cluster_id,
+                "cluster_name": cluster_name,
+                "digital_id": identity["digital_id"],
+                "broadband_id": identity["broadband_id"],
+                "digital_ids": identity["digital_ids"],
+                "device_count": devices["total"],
+                "sb_device_count": devices["sb"],
+                "ont_device_count": devices["ont"],
+                "other_device_count": devices["other"],
+                "sb_by_vendor": dict(devices["sb_by_vendor"]),
+                "ont_by_vendor": dict(devices["ont_by_vendor"]),
+            })
+
+        return {
+            "operators": rows,
+            "generated_at": datetime.now().replace(tzinfo=None).isoformat(),
+        }
 
