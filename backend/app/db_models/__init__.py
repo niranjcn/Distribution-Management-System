@@ -1,4 +1,5 @@
 from app.db_models.base import Base
+from app.db_models.cache_version import CacheVersion
 from app.db_models.auth import User, TokenBlacklist, ChangeRequest, ReassignmentRequest
 from app.db_models.device import Device, DeviceHistory
 from app.db_models.distribution import Distribution, DistributionDevice
@@ -12,6 +13,7 @@ from app.db_models.activity import ApiActivityLog
 
 __all__ = [
     "Base",
+    "CacheVersion",
     "User", "TokenBlacklist", "ChangeRequest", "ReassignmentRequest",
     "Device", "DeviceHistory",
     "Distribution", "DistributionDevice",

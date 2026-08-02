@@ -102,10 +102,6 @@ const apiRequest = async (endpoint, options = {}) => {
       headers,
     };
 
-    if (method === 'GET' || method === 'HEAD') {
-      fetchOptions.cache = 'no-store';
-    }
-
     const response = await fetch(url, fetchOptions);
 
     log('[API] Response received:', {

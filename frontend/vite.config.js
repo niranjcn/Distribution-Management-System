@@ -12,7 +12,10 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt',
+      // autoUpdate: the new service worker calls skipWaiting() on install so a
+      // stale worker never keeps intercepting /api after a deploy. (With
+      // 'prompt', old workers stayed active and bypassed the HTTP cache.)
+      registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'logo.png'],
       manifest: {
         name: 'KannurVision PDIC — Distribution Management',
@@ -48,6 +51,12 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
         navigateFallback: '/index.html',
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        // NOTE: API requests are deliberately NOT cached by the service worker.
+        // Letting them fall through to the browser's native HTTP cache lets the
+        // backend's ETag / 304 conditional caching work directly (browser sends
+        // If-None-Match, backend returns 304 without running the endpoint).
+        // This drops offline API support in exchange for a faster online
+        // experience. See backend app/middleware/conditional_cache.py.
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -58,18 +67,6 @@ export default defineConfig({
                 maxEntries: 10,
                 maxAgeSeconds: 60 * 60 * 24 * 365,
               },
-            },
-          },
-          {
-            urlPattern: /^https?:\/\/.*\/api\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60,
-              },
-              networkTimeoutSeconds: 10,
             },
           },
         ],

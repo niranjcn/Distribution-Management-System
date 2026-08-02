@@ -19,8 +19,10 @@ export const devicesAPI = {
     return response;
   },
 
-  getAvailableDevices: async () => {
-    const response = await apiRequest('/devices/available');
+  getAvailableDevices: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const endpoint = queryString ? `/devices/available?${queryString}` : '/devices/available';
+    const response = await apiRequest(endpoint);
     return response;
   },
 

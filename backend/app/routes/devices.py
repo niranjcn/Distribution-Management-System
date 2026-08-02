@@ -9,6 +9,7 @@ from app.models.device import DeviceCreate, DeviceUpdate, DeviceType, DeviceEdit
 from app.services import device_service, notification_service, defect_service
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager,require_management
 from app.core.activity_logger import build_field_change_summary, log_business_activity
+from app.core.cache_version import bump_cache_version
 from app.utils.roles import normalize_role
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
@@ -251,23 +252,41 @@ async def get_devices_for_replacement(
 
 @router.get("/available", summary="Get devices available to distribute for the current user.")
 async def get_available_devices(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=1000),
+    search: Optional[str] = None,
+    search_by: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
     """Get devices available to distribute for the current user.
     - admin/manager/staff: PDIC stock (status='available')
-    - sub_distributor/cluster/operator: all devices they currently hold"""
+    - sub_distributor/cluster/operator: all devices they currently hold
+    Supports pagination and server-side search across all matching devices."""
     try:
         role = current_user["role"]
         if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
-            devices = await device_service.get_available_devices(holder_id=None)
+            result = await device_service.get_available_devices(
+                holder_id=None,
+                page=page,
+                page_size=page_size,
+                search=search,
+                search_by=search_by,
+            )
         else:
             # Sub-level roles can redistribute any device they hold
-            devices = await device_service.get_held_devices(holder_id=current_user["id"])
+            result = await device_service.get_held_devices(
+                holder_id=current_user["id"],
+                page=page,
+                page_size=page_size,
+                search=search,
+                search_by=search_by,
+            )
 
         return {
             "success": True,
             "message": "Available devices retrieved successfully",
-            "data": devices
+            "data": result["data"],
+            "pagination": result["pagination"],
         }
     except HTTPException:
         raise
@@ -604,6 +623,7 @@ async def request_device_edit(
             result = await session.execute(text("SELECT id FROM users WHERE role IN ('super_admin', 'manager') AND status = 'active'"))
             reviewer_rows = result.mappings().all()
             reviewer_ids = [int(row["id"]) for row in reviewer_rows]
+            await bump_cache_version(session)
             await session.commit()
 
         proposer_name = current_user.get("name") or current_user.get("email", "pdic_staff")
@@ -1168,6 +1188,7 @@ async def bulk_upload_devices(
                 await asyncio.sleep(0)
 
             if should_commit:
+                await bump_cache_version(session)
                 await session.commit()
             else:
                 await session.rollback()

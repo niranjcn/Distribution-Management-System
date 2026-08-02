@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -9,6 +9,9 @@ import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { devicesAPI, usersAPI, distributionsAPI } from '../services/api';
 import { Truck, Save, X, Plus, Trash2, Search, Loader2, ChevronRight } from 'lucide-react';
+
+const DEVICES_PAGE_SIZE = 100;
+const SEARCH_DEBOUNCE_MS = 300;
 
 const ROLE_LABELS = {
   sub_distributor: 'Sub Distributor',
@@ -32,9 +35,15 @@ const CreateDistribution = () => {
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedDevices, setSelectedDevices] = useState([]);
   const [availableDevices, setAvailableDevices] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [devicePage, setDevicePage] = useState(1);
+  const [hasMoreDevices, setHasMoreDevices] = useState(false);
+  const hasLoadedAllDevicesRef = useRef(false);
+  const deviceRequestIdRef = useRef(0);
   const [selectionMode, setSelectionMode] = useState('manual');
   const [registeredDate, setRegisteredDate] = useState('');
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
@@ -59,10 +68,6 @@ const CreateDistribution = () => {
     const fetchData = async () => {
       try {
         setLoadingData(true);
-        // Devices: management sees PDIC stock; others see devices they currently hold
-        const devicesRes = await devicesAPI.getAvailableDevices().catch(err => { console.error('Failed to load available devices:', err); showToast('Failed to load available devices', 'error'); return { data: [] }; });
-        setAvailableDevices(devicesRes.data || []);
-
         if (isManagement) {
           const [sdRes, clRes, opRes] = await Promise.all([
             usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 10000000000 }).catch(err => { console.error('Failed to load sub distributors:', err); showToast('Failed to load sub distributors', 'error'); return { data: [] }; }),
@@ -95,6 +100,61 @@ const CreateDistribution = () => {
     };
     if (role) fetchData();
   }, [role]);
+
+  const fetchDevicesPage = async (page, requestId, { reset = false, search = '' } = {}) => {
+    setLoadingDevices(true);
+    try {
+      const params = { page, page_size: DEVICES_PAGE_SIZE };
+      if (search) params.search = search;
+      const res = await devicesAPI.getAvailableDevices(params);
+      if (requestId !== deviceRequestIdRef.current) return;
+
+      const rows = Array.isArray(res?.data) ? res.data : [];
+      const pagination = res?.pagination || {};
+      setAvailableDevices((prev) => (reset ? rows : [...prev, ...rows]));
+      setDevicePage(page);
+      setHasMoreDevices(Boolean(pagination.has_next));
+      if (!search) {
+        hasLoadedAllDevicesRef.current = !pagination.has_next;
+      }
+    } catch (error) {
+      console.error('Failed to load available devices:', error);
+      if (requestId === deviceRequestIdRef.current && reset) {
+        setAvailableDevices([]);
+        setHasMoreDevices(false);
+      }
+    } finally {
+      if (requestId === deviceRequestIdRef.current) {
+        setLoadingDevices(false);
+      }
+    }
+  };
+
+  const handleLoadMoreDevices = () => {
+    if (!hasMoreDevices || loadingDevices) return;
+    fetchDevicesPage(devicePage + 1, deviceRequestIdRef.current, { reset: false, search: debouncedSearch });
+  };
+
+  // Debounce the search box so server-side search only fires after the user pauses typing.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Load the first page of devices (or search results). When every matching device is
+  // already in the browser, filter client-side instead of hitting the backend.
+  useEffect(() => {
+    if (!role) return;
+    const requestId = ++deviceRequestIdRef.current;
+    if (hasLoadedAllDevicesRef.current) {
+      setHasMoreDevices(false);
+      setLoadingDevices(false);
+      return;
+    }
+    fetchDevicesPage(1, requestId, { reset: true, search: debouncedSearch });
+  }, [role, debouncedSearch]);
 
   const handleRecipientTypeChange = (type) => {
     setRecipientType(type);
@@ -181,12 +241,17 @@ const CreateDistribution = () => {
   };
 
   const filteredDevices = availableDevices.filter((d) => {
-    const matchesSearch =
+    const clientSearchMatches =
       (d.mac_address || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (d.model || d.device_type || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (d.serial_number || '').toLowerCase().includes(searchQuery.toLowerCase());
 
-    if (!matchesSearch) return false;
+    // When a server-side search is active, the backend has already matched the query
+    // against the whole database; only apply the client predicate when the full set is
+    // already loaded in the browser.
+    const searchFilterMatches = (debouncedSearch && !hasLoadedAllDevicesRef.current) ? true : clientSearchMatches;
+
+    if (!searchFilterMatches) return false;
     if (selectionMode === 'manual') return true;
     if (selectionMode === 'registered_date' || selectionMode === 'date_range') return inDateFilters(d);
     if (selectionMode === 'serial_range') return inSerialRange(d.serial_number);
@@ -392,32 +457,46 @@ const CreateDistribution = () => {
                 </Button>
               </div>
               <div className="max-h-80 overflow-y-auto space-y-2">
-                {loadingData ? (
+                {(loadingData || loadingDevices) && availableDevices.length === 0 ? (
                   <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /></div>
                 ) : filteredDevices.length === 0 ? (
                   <p className="text-center text-gray-500 py-4">
                     {isManagement ? 'No devices available in PDIC stock' : 'You have no devices in your possession'}
                   </p>
                 ) : (
-                  filteredDevices.map(device => (
-                    <div
-                      key={device._id || device.id}
-                      className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors ${
-                        selectedDevices.find(d => (d._id || d.id) === (device._id || device.id))
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200 hover:border-blue-300'
-                      }`}
-                      onClick={() => handleAddDevice(device)}
-                    >
-                      <DeviceIdentity device={device} />
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status={device.status} size="sm" />
-                        <button type="button" onClick={(e) => { e.stopPropagation(); handleAddDevice(device); }} className="p-1 text-blue-600 hover:bg-blue-100 rounded">
-                          <Plus className="w-4 h-4" />
-                        </button>
+                  <>
+                    {filteredDevices.map(device => (
+                      <div
+                        key={device._id || device.id}
+                        className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors ${
+                          selectedDevices.find(d => (d._id || d.id) === (device._id || device.id))
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-gray-200 hover:border-blue-300'
+                        }`}
+                        onClick={() => handleAddDevice(device)}
+                      >
+                        <DeviceIdentity device={device} />
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={device.status} size="sm" />
+                          <button type="button" onClick={(e) => { e.stopPropagation(); handleAddDevice(device); }} className="p-1 text-blue-600 hover:bg-blue-100 rounded">
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                    {hasMoreDevices && !loadingDevices && (
+                      <button
+                        type="button"
+                        onClick={handleLoadMoreDevices}
+                        className="w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 font-medium border border-gray-200 rounded-lg"
+                      >
+                        Load More Devices
+                      </button>
+                    )}
+                    {loadingDevices && availableDevices.length > 0 && (
+                      <div className="px-3 py-2 text-sm text-gray-400 text-center">Loading...</div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

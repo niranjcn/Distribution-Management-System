@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from app.core.activity_logger import build_field_change_summary, log_business_activity
+from app.core.cache_version import bump_cache_version
 
 from app.middleware.auth_middleware import require_any_role, require_management
 from app.models.inventory import (
@@ -442,6 +443,7 @@ async def bulk_upload_external_inventory_items(
                             })
                     logger.warning("External inventory bulk insert fallback triggered: %s", str(batch_error))
 
+            await bump_cache_version(session)
             await session.commit()
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"

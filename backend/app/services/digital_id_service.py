@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select, delete as sa_delete, text
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.digital_id import DigitalIdentity
 from app.models.digital_id import DigitalIdentityCreate
@@ -97,6 +98,7 @@ async def create_digital_identity(data: DigitalIdentityCreate) -> Optional[Dict[
             created_at=now,
         )
         session.add(entry)
+        await bump_cache_version(session)
         await session.commit()
         await session.refresh(entry)
         return _identity_to_dict(entry)
@@ -147,6 +149,7 @@ async def create_digital_identities_for_user(
             session.add(entry)
             entries.append(entry)
 
+        await bump_cache_version(session)
         await session.commit()
         for entry in entries:
             await session.refresh(entry)
@@ -168,6 +171,7 @@ async def get_digital_identities_by_user(user_id: int) -> List[Dict[str, Any]]:
 async def delete_digital_identities_by_user(user_id: int) -> None:
     async with async_session_factory() as session:
         await session.execute(sa_delete(DigitalIdentity).where(DigitalIdentity.user_id == user_id))
+        await bump_cache_version(session)
         await session.commit()
 
 

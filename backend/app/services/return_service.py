@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any, Set
 
 from sqlalchemy import text
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.models.return_device import ReturnCreate, ReturnUpdate, ReturnStatus, ReturnReason
 from app.models.device import DeviceStatus
@@ -208,6 +209,7 @@ async def create_return(return_data: ReturnCreate, requester: Dict[str, Any]) ->
         )
         return_row_id = result.lastrowid
 
+        await bump_cache_version(session)
         await session.commit()
 
     enabled_roles = ["super_admin", "manager", "pdic_staff"]
@@ -324,6 +326,7 @@ async def update_return_status(
                 {"status": status, "now": now, "id": int(return_id)}
             )
 
+        await bump_cache_version(session)
         await session.commit()
 
     if status == ReturnStatus.RECEIVED.value:
@@ -424,6 +427,7 @@ async def cancel_return(return_id: str, user_id: int) -> bool:
             text("UPDATE returns SET status = :status, updated_at = :now WHERE id = :id"),
             {"status": ReturnStatus.CANCELLED.value, "now": now, "id": int(return_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
         return True
 
@@ -532,6 +536,7 @@ async def auto_create_defect_return(
         )
         return_row_id = result.lastrowid
 
+        await bump_cache_version(session)
         await session.commit()
 
     enabled_roles = ["super_admin", "manager", "pdic_staff"]

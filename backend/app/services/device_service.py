@@ -4,6 +4,7 @@ import json
 
 from sqlalchemy import select, func, and_, or_, text, String
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.device import Device, DeviceHistory
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceStatus, HolderType
@@ -202,6 +203,7 @@ async def create_device(device_data: DeviceCreate, created_by: int, created_by_n
         await _add_device_history(session, new_id, "registered", performed_by=created_by,
                                   performed_by_name=created_by_name, status_after=DeviceStatus.AVAILABLE.value,
                                   location="PDIC", notes="Device registered in system")
+        await bump_cache_version(session)
         await session.commit()
 
         # Read back using same session
@@ -318,6 +320,7 @@ async def update_device(device_id: str, device_data: DeviceUpdate) -> Optional[D
 
         inst.device_metadata = json.dumps(base_metadata) if base_metadata else None
         inst.updated_at = datetime.now().replace(tzinfo=None)
+        await bump_cache_version(session)
         await session.commit()
 
         return await get_device_by_id(device_id)
@@ -331,6 +334,7 @@ async def delete_device(device_id: str) -> bool:
             return False
         await session.delete(inst)
         await session.execute(text("DELETE FROM device_history WHERE device_id = :did"), {"did": int(device_id)})
+        await bump_cache_version(session)
         await session.commit()
         return True
 
@@ -352,6 +356,7 @@ async def bulk_delete_devices(device_ids: List[str]) -> Dict[str, Any]:
             await session.delete(inst)
             await session.execute(text("DELETE FROM device_history WHERE device_id = :did"), {"did": int(device_id)})
             deleted.append(int(device_id))
+        await bump_cache_version(session)
         await session.commit()
 
     return {"deleted": deleted, "not_found": not_found}
@@ -388,6 +393,7 @@ async def update_device_status(
                                   status_before=old_status, status_after=status,
                                   location=device.get("current_location"),
                                   notes=notes or f"Status changed from {old_status} to {status}")
+        await bump_cache_version(session)
         await session.commit()
 
         return await get_device_by_id(device_id)
@@ -428,6 +434,7 @@ async def _update_device_holder_impl(
                               performed_by=performed_by, performed_by_name=performed_by_name,
                               status_before=old_status, status_after=status,
                               location=location, notes=notes)
+    await bump_cache_version(session)
     await session.commit()
 
     return await get_device_by_id(device_id)
@@ -462,20 +469,69 @@ async def update_device_holder(
     )
 
 
-async def get_available_devices(holder_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Get available devices for distribution (PDIC stock only)"""
+async def get_available_devices(
+    holder_id: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 100,
+    search: Optional[str] = None,
+    search_by: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get available devices for distribution (PDIC stock only) with pagination and search."""
     async with async_session_factory() as session:
-        q = select(Device).where(Device.status == DeviceStatus.AVAILABLE.value)
+        conditions = [Device.status == DeviceStatus.AVAILABLE.value]
         if holder_id:
-            q = q.where(Device.current_holder_id == int(holder_id))
-        q = q.order_by(Device.created_at.desc()).limit(2000)
+            conditions.append(Device.current_holder_id == int(holder_id))
+
+        if search:
+            pattern = f"%{str(search).strip()}%"
+            search_field_map = {
+                "nuid": Device.nuid, "mac": Device.mac_address, "mac_address": Device.mac_address,
+                "serial": Device.serial_number, "serial_number": Device.serial_number,
+                "vendor": Device.manufacturer, "manufacturer": Device.manufacturer,
+                "type": Device.device_type, "device_type": Device.device_type,
+                "device_id": Device.device_id, "model": Device.model,
+            }
+            normalized_search_by = str(search_by or "").strip().lower()
+            selected_column = search_field_map.get(normalized_search_by)
+
+            if selected_column:
+                conditions.append(selected_column.cast(String).like(pattern))
+            else:
+                conditions.append(or_(
+                    Device.device_id.cast(String).like(pattern),
+                    Device.serial_number.cast(String).like(pattern),
+                    Device.mac_address.cast(String).like(pattern),
+                    Device.model.cast(String).like(pattern),
+                    Device.nuid.cast(String).like(pattern),
+                    Device.manufacturer.cast(String).like(pattern),
+                    Device.device_type.cast(String).like(pattern),
+                ))
+
+        where = and_(*conditions) if conditions else True
+
+        count_q = select(func.count()).select_from(Device).where(where)
+        total = (await session.execute(count_q)).scalar()
+
+        offset = (page - 1) * page_size
+        q = (
+            select(Device)
+            .where(where)
+            .order_by(Device.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
         rows = (await session.execute(q)).scalars().all()
         locked_ids = await _get_locked_distribution_device_ids(session)
-        return [
+
+        devices = [
             _augment_device_record(r.to_dict())
             for r in rows
             if r.id not in locked_ids
         ]
+        return {
+            "data": devices,
+            "pagination": get_pagination(page, page_size, total),
+        }
 
 
 def _normalize_device_type_filter(device_type: str) -> str:
@@ -550,18 +606,67 @@ async def get_devices_for_replacement(
         }
 
 
-async def get_held_devices(holder_id: str) -> List[Dict[str, Any]]:
-    """Get all devices currently held by a user (any status) — for sub-level redistribution"""
+async def get_held_devices(
+    holder_id: str,
+    page: int = 1,
+    page_size: int = 100,
+    search: Optional[str] = None,
+    search_by: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get all devices currently held by a user (any status) — for sub-level redistribution, paginated."""
     async with async_session_factory() as session:
-        q = (select(Device).where(Device.current_holder_id == int(holder_id))
-             .order_by(Device.updated_at.desc()).limit(2000))
+        conditions = [Device.current_holder_id == int(holder_id)]
+
+        if search:
+            pattern = f"%{str(search).strip()}%"
+            search_field_map = {
+                "nuid": Device.nuid, "mac": Device.mac_address, "mac_address": Device.mac_address,
+                "serial": Device.serial_number, "serial_number": Device.serial_number,
+                "vendor": Device.manufacturer, "manufacturer": Device.manufacturer,
+                "type": Device.device_type, "device_type": Device.device_type,
+                "device_id": Device.device_id, "model": Device.model,
+            }
+            normalized_search_by = str(search_by or "").strip().lower()
+            selected_column = search_field_map.get(normalized_search_by)
+
+            if selected_column:
+                conditions.append(selected_column.cast(String).like(pattern))
+            else:
+                conditions.append(or_(
+                    Device.device_id.cast(String).like(pattern),
+                    Device.serial_number.cast(String).like(pattern),
+                    Device.mac_address.cast(String).like(pattern),
+                    Device.model.cast(String).like(pattern),
+                    Device.nuid.cast(String).like(pattern),
+                    Device.manufacturer.cast(String).like(pattern),
+                    Device.device_type.cast(String).like(pattern),
+                ))
+
+        where = and_(*conditions) if conditions else True
+
+        count_q = select(func.count()).select_from(Device).where(where)
+        total = (await session.execute(count_q)).scalar()
+
+        offset = (page - 1) * page_size
+        q = (
+            select(Device)
+            .where(where)
+            .order_by(Device.updated_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
         rows = (await session.execute(q)).scalars().all()
         locked_ids = await _get_locked_distribution_device_ids(session)
-        return [
+
+        devices = [
             _augment_device_record(r.to_dict())
             for r in rows
             if r.id not in locked_ids
         ]
+        return {
+            "data": devices,
+            "pagination": get_pagination(page, page_size, total),
+        }
 
 
 async def get_user_device_overview(user_id: str, user_role: str, limit: int = 100) -> Dict[str, Any]:
@@ -874,6 +979,7 @@ async def repair_device_holder_from_history(device_id: str) -> Optional[Dict[str
         inst.current_location = to_user_name
         inst.status = device_status
         inst.updated_at = now
+        await bump_cache_version(session)
         await session.commit()
 
     return await get_device_by_id(device_id)

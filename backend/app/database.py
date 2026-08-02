@@ -7,6 +7,7 @@ from sqlalchemy import text
 from app.database_sqlalchemy import async_session_factory, run_alembic_migrations
 from app.config import settings
 from app.utils.security import get_password_hash
+from app.core.cache_version import bump_cache_version, ensure_cache_version_row
 
 
 def _looks_like_bcrypt_hash(value: Optional[str]) -> bool:
@@ -20,6 +21,9 @@ async def init_db():
     await run_alembic_migrations()
 
     async with async_session_factory() as session:
+        # Ensure the cache_version single-row marker exists for HTTP caching.
+        await ensure_cache_version_row(session)
+
         for stmt in [
             "UPDATE external_inventory_items SET item_id = inventory_id WHERE item_id IS NULL OR item_id = ''",
             "UPDATE external_inventory_items SET serial_number = '' WHERE serial_number IS NULL",
@@ -63,6 +67,9 @@ async def init_db():
                 {"pw": get_password_hash(password_value), "id": row.id},
             )
 
+        # These startup fixes modify application data, so bump the cache version
+        # in the same transaction to keep any previously cached responses current.
+        await bump_cache_version(session)
         await session.commit()
 
     print(

@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 
 from sqlalchemy import select, func, or_, and_, update, delete
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.operator import Operator
 from app.db_models.device import Device
@@ -86,6 +87,7 @@ async def create_operator(operator_data: OperatorCreate, created_by: Dict[str, A
         )
         session.add(op)
         await session.flush()
+        await bump_cache_version(session)
         await session.commit()
         return op.to_dict()
 
@@ -112,6 +114,7 @@ async def update_operator(operator_id: str, operator_data: OperatorUpdate) -> Op
         for k, v in update_dict.items():
             setattr(inst, k, v)
 
+        await bump_cache_version(session)
         await session.commit()
         return inst.to_dict()
 
@@ -123,6 +126,7 @@ async def delete_operator(operator_id: str) -> bool:
         if not inst:
             return False
         await session.delete(inst)
+        await bump_cache_version(session)
         await session.commit()
         return True
 
@@ -150,6 +154,7 @@ async def update_operator_device_count(operator_id: str) -> None:
         if inst:
             inst.device_count = count
             inst.updated_at = now
+            await bump_cache_version(session)
             await session.commit()
 
 

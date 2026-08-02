@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 
 from sqlalchemy import select, func, and_, insert
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.notification import Notification
 from app.utils.helpers import get_pagination
@@ -109,6 +110,7 @@ async def create_notification(
         )
         session.add(n)
         await session.flush()
+        await bump_cache_version(session)
         await session.commit()
         return _parse_notification_metadata(n.to_dict())
 
@@ -141,6 +143,7 @@ async def bulk_create_notifications(
     async with async_session_factory() as session:
         stmt = insert(Notification)
         await session.execute(stmt, values)
+        await bump_cache_version(session)
         await session.commit()
 
 
@@ -156,6 +159,7 @@ async def mark_as_read(notification_id: str, user_id: int) -> bool:
         if not n:
             return False
         n.is_read = 1
+        await bump_cache_version(session)
         await session.commit()
         return True
 
@@ -170,6 +174,7 @@ async def mark_all_as_read(user_id: int) -> int:
         count = len(rows)
         for n in rows:
             n.is_read = 1
+        await bump_cache_version(session)
         await session.commit()
         return count
 
@@ -186,6 +191,7 @@ async def delete_notification(notification_id: str, user_id: int) -> bool:
         if not n:
             return False
         await session.delete(n)
+        await bump_cache_version(session)
         await session.commit()
         return True
 
@@ -199,6 +205,7 @@ async def delete_old_notifications(days: int = 30) -> int:
         count = len(rows)
         for n in rows:
             await session.delete(n)
+        await bump_cache_version(session)
         await session.commit()
         return count
 

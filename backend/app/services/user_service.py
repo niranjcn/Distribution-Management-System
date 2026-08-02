@@ -4,6 +4,7 @@ import json
 
 from sqlalchemy import select, func, and_, or_
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.auth import User
 from app.db_models.digital_id import DigitalIdentity
@@ -255,6 +256,7 @@ async def create_user(user_data: UserCreate, creator_id: Optional[int] = None) -
         )
         session.add(u)
         await session.flush()
+        await bump_cache_version(session)
         await session.commit()
 
         created_id = u.id
@@ -322,6 +324,7 @@ async def update_user(user_id: str, user_data: UserUpdate) -> Optional[Dict[str,
             return await _attach_digital_ids(int(user_id), _strip_user(inst.to_dict()))
 
         inst.updated_at = datetime.now().replace(tzinfo=None)
+        await bump_cache_version(session)
         await session.commit()
         return await _attach_digital_ids(int(user_id), _strip_user(inst.to_dict()))
 
@@ -333,6 +336,7 @@ async def delete_user(user_id: str) -> bool:
         if not inst:
             return False
         await session.delete(inst)
+        await bump_cache_version(session)
         await session.commit()
     await delete_digital_identities_by_user(int(user_id))
     return True
@@ -382,6 +386,7 @@ async def reassign_user(
         if inst:
             inst.parent_id = int(new_parent_id)
             inst.updated_at = now
+            await bump_cache_version(session)
             await session.commit()
 
     target_role = normalize_role(target_user.get("role"))

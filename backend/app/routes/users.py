@@ -9,6 +9,7 @@ from app.services import user_service, reassignment_request_service, notificatio
 from app.middleware.auth_middleware import get_current_user, require_admin_or_manager_or_md
 from app.core.audit import audit_logger
 from app.core.activity_logger import build_field_change_summary, log_business_activity
+from app.core.cache_version import bump_cache_version
 from app.utils.roles import (
     SUPER_ADMIN,
     MD_DIRECTOR,
@@ -781,6 +782,7 @@ async def admin_update_credentials(
             result = await session.execute(text(f"UPDATE users SET {', '.join(update_fields)} WHERE id = :user_id"), params)
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="User not found")
+            await bump_cache_version(session)
             await session.commit()
 
         updated = await user_service.get_user_by_id(user_id)
