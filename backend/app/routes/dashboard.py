@@ -208,9 +208,9 @@ async def get_advanced_dashboard_metrics(
 async def get_distribution_device_analytics(
     start_date: str = Query(None),
     end_date: str = Query(None),
-    current_user: dict = Depends(require_admin_or_md)
+    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
-    """Get distribution device analytics for admin/manager dashboards."""
+    """Get distribution device analytics for admin/manager/staff dashboards."""
     try:
         data = await dashboard_service.get_distribution_device_analytics(start_date, end_date)
         return {

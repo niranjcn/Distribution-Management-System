@@ -148,3 +148,48 @@ class TestDashboardAdvancedMetrics:
         test_app.dependency_overrides.pop(get_current_user, None)
         resp = client.get(self.METRICS_URL)
         assert resp.status_code == 401
+
+
+class TestDashboardDistributionDeviceAnalytics:
+    ANALYTICS_URL = "/api/dashboard/distribution-device-analytics"
+
+    def test_returns_analytics(self, client, mock_dashboard_services):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_distribution_device_analytics = AsyncMock(
+            return_value={
+                "sent_by_type": [{"device_type": "ONT", "total": 10}],
+                "total_sent": 10,
+                "remaining_available": 5,
+            }
+        )
+
+        resp = client.get(self.ANALYTICS_URL)
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["total_sent"] == 10
+
+    def test_manager_can_access(self, client, mock_dashboard_services, set_role):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_distribution_device_analytics = AsyncMock(
+            return_value={"total_sent": 3}
+        )
+        set_role("manager")
+
+        resp = client.get(self.ANALYTICS_URL)
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["total_sent"] == 3
+
+    def test_operator_forbidden(self, client, mock_dashboard_services, set_role):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_distribution_device_analytics = AsyncMock(
+            return_value={"total_sent": 3}
+        )
+        set_role("operator")
+
+        resp = client.get(self.ANALYTICS_URL)
+
+        assert resp.status_code == 403

@@ -24,8 +24,8 @@ const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
 
 const TEMPLATE = {
   filename: 'user-bulk-upload-template.csv',
-  headers: ['email', 'password', 'name', 'digital_id', 'broadband_id', 'phone', 'address', 'pincode'],
-  sample: 'user1@example.com,Pass@123,John Doe,SD001|DIG002|DIG003,BB001,+8801234567890,Dhaka,1212',
+  headers: ['email', 'password', 'name', 'digital_id', 'broadband_id', 'phone'],
+  sample: 'user1@example.com,Pass@123,John Doe,SD001|DIG002|DIG003,BB001,+8801234567890',
 };
 
 const BulkUploadUsers = () => {

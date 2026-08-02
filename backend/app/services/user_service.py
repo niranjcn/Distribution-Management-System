@@ -55,6 +55,35 @@ async def _attach_digital_ids_bulk(session, users: List[Dict[str, Any]]) -> List
     return users
 
 
+async def _attach_creator_info_bulk(session, users: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Attach created_by_name / created_by_email to each user record (single query)."""
+    if not users:
+        return users
+    creator_ids = {u["created_by"] for u in users if u.get("created_by")}
+    by_id: Dict[str, Dict[str, Any]] = {}
+    if creator_ids:
+        rows = (await session.execute(
+            select(User).where(User.id.in_(list(creator_ids)))
+        )).scalars().all()
+        for entry in rows:
+            by_id[str(entry.id)] = {
+                "name": entry.name,
+                "email": entry.email,
+                "role": normalize_role(entry.role),
+            }
+    for u in users:
+        creator = by_id.get(str(u.get("created_by") or ""))
+        if creator:
+            u["created_by_name"] = creator["name"]
+            u["created_by_email"] = creator["email"]
+            u["created_by_role"] = creator["role"]
+        else:
+            u["created_by_name"] = None
+            u["created_by_email"] = None
+            u["created_by_role"] = None
+    return users
+
+
 async def get_users(
     page: int = 1,
     page_size: int = 20,
@@ -142,6 +171,7 @@ async def get_users(
 
         users = [_strip_user(r.to_dict()) for r in rows]
         await _attach_digital_ids_bulk(session, users)
+        await _attach_creator_info_bulk(session, users)
 
         return {
             "data": users,
@@ -157,6 +187,8 @@ async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
             return None
         user = _strip_user(inst.to_dict())
     user["digital_ids"] = await get_digital_identities_by_user(int(user_id))
+    async with async_session_factory() as session:
+        await _attach_creator_info_bulk(session, [user])
     return user
 
 

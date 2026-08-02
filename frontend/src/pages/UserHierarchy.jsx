@@ -19,6 +19,8 @@ import {
   X,
   Building2,
   Shield,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 // ─── colour palette per role ─────────────────────────────────────────────────
@@ -51,7 +53,7 @@ const ALLOWED_ROLES_BY_CREATOR = {
   cluster: ['operator'],
 };
 
-const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', designation: '', parentId: '', digitalIdRows: [{ digitalId: '', broadbandId: '' }] };
+const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', designation: '', address: '', pincode: '', parentId: '', digitalIdRows: [{ digitalId: '', broadbandId: '' }] };
 
 // ─── avatar initials helper ────────────────────────────────────────────────────
 const initials = (name) =>
@@ -140,17 +142,37 @@ const UserHierarchy = () => {
   const [formData, setFormData] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [parentOptions, setParentOptions] = useState([]);
+  const [subDistributorOptions, setSubDistributorOptions] = useState([]);
   const [loadingParents, setLoadingParents] = useState(false);
+  const [selectedOperatorSubDistId, setSelectedOperatorSubDistId] = useState('');
+  const [operatorPlacement, setOperatorPlacement] = useState('sub_distributor');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showCreateConfirmPassword, setShowCreateConfirmPassword] = useState(false);
 
   const creatableRoles = ALLOWED_ROLES_BY_CREATOR[currentUser?.role] || [];
   const isManager = currentUser?.role === 'manager';
   const isMdDirector = currentUser?.role === 'md_director';
+  const isAdminOrManager = ['super_admin', 'manager'].includes(currentUser?.role);
 
   const visibleUsers = useMemo(() => {
     if (isMdDirector) return allUsers.filter((u) => u.role !== 'super_admin');
     if (!isManager) return allUsers;
     return allUsers.filter((u) => u.role !== 'super_admin');
   }, [allUsers, isManager, isMdDirector]);
+
+  const filteredClusterParentOptions = useMemo(() => {
+    if (!isAdminOrManager || formData.role !== 'operator') return parentOptions;
+    if (!selectedOperatorSubDistId) return [];
+    const managerIdsInSelectedSubDistribution = visibleUsers
+      .filter((u) => u.role === 'sub_distribution_manager' && String(u.parent_id) === String(selectedOperatorSubDistId))
+      .map((u) => String(u.id));
+
+    return parentOptions.filter((cluster) => (
+      String(cluster.parent_id) === String(selectedOperatorSubDistId)
+      || managerIdsInSelectedSubDistribution.includes(String(cluster.parent_id))
+    ));
+  }, [isAdminOrManager, formData.role, parentOptions, selectedOperatorSubDistId, visibleUsers]);
 
   const visibleRoleEntries = useMemo(() => {
     if (isMdDirector) return Object.entries(ROLE_LABELS).filter(([role]) => role !== 'super_admin');
@@ -273,6 +295,7 @@ const UserHierarchy = () => {
   const loadParentOptions = useCallback(async (role) => {
     setLoadingParents(true);
     setParentOptions([]);
+    setSubDistributorOptions([]);
     try {
       if (role === 'sub_distribution_manager') {
         const r = await usersAPI.getUsers({ role: 'sub_distributor', page_size: HIERARCHY_PAGE_SIZE });
@@ -293,16 +316,14 @@ const UserHierarchy = () => {
             { id: String(currentUser.id), name: currentUser.name, groupLabel: 'Directly under me (Sub Distributor)' },
             ...visibleUsers.filter(u => u.role === 'cluster').map(u => ({ ...u, groupLabel: 'Cluster' })),
           ]);
-        } else {
-          // admin / manager: show sub distributors and clusters
+        } else if (isAdminOrManager) {
+          // admin / manager: two-placement flow — sub distributors and clusters fetched separately
           const [sdRes, clRes] = await Promise.all([
             usersAPI.getUsers({ role: 'sub_distributor', page_size: HIERARCHY_PAGE_SIZE }),
             usersAPI.getUsers({ role: 'cluster', page_size: HIERARCHY_PAGE_SIZE }),
           ]);
-          setParentOptions([
-            ...(sdRes.data || []).map(u => ({ ...u, groupLabel: 'Sub Distributor' })),
-            ...(clRes.data || []).map(u => ({ ...u, groupLabel: 'Cluster' })),
-          ]);
+          setSubDistributorOptions(sdRes.data || []);
+          setParentOptions(clRes.data || []);
         }
       }
     } catch (err) {
@@ -310,24 +331,36 @@ const UserHierarchy = () => {
     } finally {
       setLoadingParents(false);
     }
-  }, [currentUser, visibleUsers]);
+  }, [currentUser, visibleUsers, isAdminOrManager]);
 
   const handleRoleChange = (role) => {
     setFormData(prev => ({ ...prev, role, parentId: '' }));
+    setSelectedOperatorSubDistId('');
+    setOperatorPlacement('sub_distributor');
     if (role === 'sub_distribution_manager' || role === 'cluster' || role === 'operator') loadParentOptions(role);
-    else setParentOptions([]);
+    else { setParentOptions([]); setSubDistributorOptions([]); }
   };
 
   const openAdd = () => {
     const defaultRole = creatableRoles[0] || 'cluster';
     setFormData({ ...emptyForm, role: defaultRole });
     setParentOptions([]);
+    setSubDistributorOptions([]);
+    setSelectedOperatorSubDistId('');
+    setOperatorPlacement('sub_distributor');
+    setConfirmPassword('');
+    setShowCreatePassword(false);
+    setShowCreateConfirmPassword(false);
     if (defaultRole === 'sub_distribution_manager' || defaultRole === 'cluster' || defaultRole === 'operator') loadParentOptions(defaultRole);
     setShowAdd(true);
   };
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (formData.password !== confirmPassword) {
+      showToast('Password and confirm password do not match', 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = {
@@ -338,6 +371,8 @@ const UserHierarchy = () => {
       };
       if (formData.phone) payload.phone = formData.phone;
       if (formData.designation) payload.designation = formData.designation;
+      if (formData.address) payload.address = formData.address;
+      if (formData.pincode) payload.pincode = formData.pincode;
       if (formData.parentId) payload.parent_id = formData.parentId;
       const primaryRow = formData.digitalIdRows?.[0];
       if (primaryRow?.digitalId) payload.digital_id = primaryRow.digitalId;
@@ -348,6 +383,9 @@ const UserHierarchy = () => {
       showToast('User created successfully', 'success');
       setShowAdd(false);
       setFormData(emptyForm);
+      setConfirmPassword('');
+      setShowCreatePassword(false);
+      setShowCreateConfirmPassword(false);
       fetchAll();
     } catch (err) {
       showToast(err.message || 'Failed to create user', 'error');
@@ -517,7 +555,7 @@ const UserHierarchy = () => {
       {/* Add user modal */}
       <Modal
         isOpen={showAdd}
-        onClose={() => { setShowAdd(false); setFormData(emptyForm); setParentOptions([]); }}
+        onClose={() => { setShowAdd(false); setFormData(emptyForm); setParentOptions([]); setConfirmPassword(''); setShowCreatePassword(false); setShowCreateConfirmPassword(false); }}
         title="Add New User"
         size="md"
       >
@@ -549,15 +587,51 @@ const UserHierarchy = () => {
 
             {/* Password */}
             <Field label={<span className="flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Password</span>} required>
-              <input
-                type="password"
-                value={formData.password}
-                onChange={e => setFormData(p => ({ ...p, password: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Min. 6 characters"
-                minLength={6}
-                required
-              />
+              <div className="relative">
+                <input
+                  type={showCreatePassword ? 'text' : 'password'}
+                  value={formData.password}
+                  onChange={e => setFormData(p => ({ ...p, password: e.target.value }))}
+                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Min. 6 characters"
+                  minLength={6}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCreatePassword(prev => !prev)}
+                  className="absolute inset-y-0 right-2 flex items-center text-gray-500 hover:text-gray-700"
+                  aria-label={showCreatePassword ? 'Hide password' : 'Show password'}
+                >
+                  {showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </Field>
+
+            {/* Confirm Password */}
+            <Field label={<span className="flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Confirm Password</span>} required>
+              <div className="relative">
+                <input
+                  type={showCreateConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Retype password"
+                  minLength={6}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCreateConfirmPassword(prev => !prev)}
+                  className="absolute inset-y-0 right-2 flex items-center text-gray-500 hover:text-gray-700"
+                  aria-label={showCreateConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                >
+                  {showCreateConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {confirmPassword && formData.password !== confirmPassword && (
+                <p className="text-xs text-red-600 mt-1">Passwords do not match</p>
+              )}
             </Field>
 
             {/* Role */}
@@ -576,109 +650,239 @@ const UserHierarchy = () => {
 
             {/* Parent assignment */}
             {(formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator') && (
-              <Field
-                label={formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Dist. Manager' : 'Assign to Sub Distributor or Cluster'}
-                required
-              >
-                {loadingParents ? (
-                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg">
-                    <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-                    <span className="text-sm text-gray-500">Loading…</span>
-                  </div>
+              <div className="space-y-3">
+                {isAdminOrManager && formData.role === 'operator' ? (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Operator Placement</label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="radio"
+                            name="operatorPlacement"
+                            checked={operatorPlacement === 'sub_distributor'}
+                            onChange={() => {
+                              setOperatorPlacement('sub_distributor');
+                              setFormData(p => ({ ...p, parentId: '' }));
+                              setSelectedOperatorSubDistId('');
+                            }}
+                            className="accent-blue-600"
+                          />
+                          Directly under a Sub Distributor
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="radio"
+                            name="operatorPlacement"
+                            checked={operatorPlacement === 'cluster'}
+                            onChange={() => {
+                              setOperatorPlacement('cluster');
+                              setFormData(p => ({ ...p, parentId: '' }));
+                              setSelectedOperatorSubDistId('');
+                            }}
+                            className="accent-blue-600"
+                          />
+                          Under a Cluster
+                        </label>
+                      </div>
+                    </div>
+
+                    {operatorPlacement === 'sub_distributor' ? (
+                      <Field label="Assign to Sub Distributor" required>
+                        {loadingParents ? (
+                          <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg">
+                            <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                            <span className="text-sm text-gray-500">Loading…</span>
+                          </div>
+                        ) : (
+                          <select
+                            value={formData.parentId}
+                            onChange={e => setFormData(p => ({ ...p, parentId: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          >
+                            <option value="">Select Sub Distributor…</option>
+                            {subDistributorOptions.map(sd => (
+                              <option key={sd.id} value={sd.id}>{sd.name}</option>
+                            ))}
+                          </select>
+                        )}
+                      </Field>
+                    ) : (
+                      <>
+                        <Field label="Select Sub Distribution" required>
+                          {loadingParents ? (
+                            <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg">
+                              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                              <span className="text-sm text-gray-500">Loading…</span>
+                            </div>
+                          ) : (
+                            <select
+                              value={selectedOperatorSubDistId}
+                              onChange={e => {
+                                setSelectedOperatorSubDistId(e.target.value);
+                                setFormData(p => ({ ...p, parentId: '' }));
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              required
+                            >
+                              <option value="">Select Sub Distribution…</option>
+                              {subDistributorOptions.map(sd => (
+                                <option key={sd.id} value={sd.id}>{sd.name}</option>
+                              ))}
+                            </select>
+                          )}
+                        </Field>
+
+                        <Field label="Assign to Cluster" required>
+                          <select
+                            value={formData.parentId}
+                            onChange={e => setFormData(p => ({ ...p, parentId: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                            disabled={!selectedOperatorSubDistId}
+                          >
+                            <option value="">
+                              {selectedOperatorSubDistId ? 'Select Cluster…' : 'Select Sub Distribution first…'}
+                            </option>
+                            {filteredClusterParentOptions.map(cluster => (
+                              <option key={cluster.id} value={cluster.id}>{cluster.name}</option>
+                            ))}
+                          </select>
+                        </Field>
+                      </>
+                    )}
+                  </>
                 ) : (
-                  <select
-                    value={formData.parentId}
-                    onChange={e => setFormData(p => ({ ...p, parentId: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  <Field
+                    label={formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Dist. Manager' : 'Assign to Sub Distributor or Cluster'}
                     required
                   >
-                    <option value="">Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Dist. Manager' : 'Sub Distributor / Cluster'}…</option>
-                    {parentOptions.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.groupLabel ? `[${p.groupLabel}] ${p.name}` : p.name}
-                      </option>
-                    ))}
-                  </select>
+                    {loadingParents ? (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg">
+                        <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                        <span className="text-sm text-gray-500">Loading…</span>
+                      </div>
+                    ) : (
+                      <select
+                        value={formData.parentId}
+                        onChange={e => setFormData(p => ({ ...p, parentId: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        required
+                      >
+                        <option value="">Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Dist. Manager' : 'Sub Distributor / Cluster'}…</option>
+                        {parentOptions.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.groupLabel ? `[${p.groupLabel}] ${p.name}` : p.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </Field>
                 )}
-              </Field>
+              </div>
             )}
-          </div>
 
-          <p className="text-xs text-gray-400">Optional — user can fill in later</p>
-          <div className="grid grid-cols-2 gap-4">
+            {/* Digital Identities */}
+            {['sub_distributor', 'cluster', 'operator'].includes(formData.role) && (
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">Digital Identities</label>
+                {formData.digitalIdRows.map((row, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={row.digitalId}
+                        onChange={e => {
+                          const copy = [...formData.digitalIdRows];
+                          copy[idx] = { ...copy[idx], digitalId: e.target.value };
+                          setFormData(p => ({ ...p, digitalIdRows: copy }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={idx === 0 ? 'Digital ID (primary)' : `Additional Digital ID ${idx + 1}`}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={row.broadbandId}
+                        onChange={e => {
+                          const copy = [...formData.digitalIdRows];
+                          copy[idx] = { ...copy[idx], broadbandId: e.target.value };
+                          setFormData(p => ({ ...p, digitalIdRows: copy }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={idx === 0 ? 'Broadband ID (primary)' : 'Broadband ID'}
+                      />
+                    </div>
+                    {idx === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setFormData(p => ({ ...p, digitalIdRows: [...p.digitalIdRows, { digitalId: '', broadbandId: '' }] }))}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg shrink-0 mt-1"
+                        title="Add another digital identity"
+                      >+</button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setFormData(p => ({ ...p, digitalIdRows: p.digitalIdRows.filter((_, i) => i !== idx) }))}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg shrink-0 mt-1"
+                        title="Remove"
+                      >×</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Phone */}
             <Field label="Phone">
               <input
                 type="tel"
                 value={formData.phone}
                 onChange={e => setFormData(p => ({ ...p, phone: e.target.value }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="+880…"
+                placeholder="+880..."
               />
             </Field>
+          </div>
+
+          <p className="text-xs text-gray-400 pt-1">Optional — user can fill these in later</p>
+          <div className="grid grid-cols-2 gap-4">
             <Field label="Designation">
               <input
                 type="text"
                 value={formData.designation}
                 onChange={e => setFormData(p => ({ ...p, designation: e.target.value }))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="e.g. IT"
+                placeholder="e.g., IT"
               />
             </Field>
           </div>
 
-          {['sub_distributor', 'cluster', 'operator'].includes(formData.role) && (
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">Digital Identities</label>
-              {formData.digitalIdRows.map((row, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={row.digitalId}
-                      onChange={e => {
-                        const copy = [...formData.digitalIdRows];
-                        copy[idx] = { ...copy[idx], digitalId: e.target.value };
-                        setFormData(p => ({ ...p, digitalIdRows: copy }));
-                      }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder={idx === 0 ? 'Digital ID (primary)' : `Additional Digital ID ${idx + 1}`}
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={row.broadbandId}
-                      onChange={e => {
-                        const copy = [...formData.digitalIdRows];
-                        copy[idx] = { ...copy[idx], broadbandId: e.target.value };
-                        setFormData(p => ({ ...p, digitalIdRows: copy }));
-                      }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder={idx === 0 ? 'Broadband ID (primary)' : 'Broadband ID'}
-                    />
-                  </div>
-                  {idx === 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => setFormData(p => ({ ...p, digitalIdRows: [...p.digitalIdRows, { digitalId: '', broadbandId: '' }] }))}
-                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg shrink-0 mt-1"
-                      title="Add another digital identity"
-                    >+</button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setFormData(p => ({ ...p, digitalIdRows: p.digitalIdRows.filter((_, i) => i !== idx) }))}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg shrink-0 mt-1"
-                      title="Remove"
-                    >×</button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Address">
+              <input
+                type="text"
+                value={formData.address}
+                onChange={e => setFormData(p => ({ ...p, address: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter address"
+              />
+            </Field>
+            <Field label="Pincode">
+              <input
+                type="text"
+                value={formData.pincode}
+                onChange={e => setFormData(p => ({ ...p, pincode: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter pincode"
+              />
+            </Field>
+          </div>
 
           <div className="flex justify-end gap-3 pt-2">
-            <Button type="button" variant="outline" onClick={() => { setShowAdd(false); setFormData(emptyForm); setParentOptions([]); }}>
+            <Button type="button" variant="outline" onClick={() => { setShowAdd(false); setFormData(emptyForm); setParentOptions([]); setSubDistributorOptions([]); setSelectedOperatorSubDistId(''); setOperatorPlacement('sub_distributor'); setConfirmPassword(''); setShowCreatePassword(false); setShowCreateConfirmPassword(false); }}>
               Cancel
             </Button>
             <Button type="submit" disabled={submitting}>

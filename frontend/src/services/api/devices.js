@@ -83,6 +83,14 @@ export const devicesAPI = {
     return response;
   },
 
+  bulkDeleteDevices: async (deviceIds) => {
+    const response = await apiRequest('/devices/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ device_ids: deviceIds }),
+    });
+    return response;
+  },
+
   updateDeviceStatus: async (deviceId, status, notes) => {
     const response = await apiRequest(`/devices/${deviceId}/status`, {
       method: 'PATCH',

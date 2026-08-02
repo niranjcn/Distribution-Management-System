@@ -5,7 +5,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
-import { devicesAPI, defectsAPI } from '../services/api';
+import { devicesAPI, defectsAPI, changeRequestsAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -56,6 +56,10 @@ const Devices = () => {
   const [showModal, setShowModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [bulkDeleteReason, setBulkDeleteReason] = useState('');
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [overview, setOverview] = useState(null);
   const [holderInsights, setHolderInsights] = useState({ sub_distributors: [], clusters: [] });
   const [tableRows, setTableRows] = useState([]);
@@ -637,6 +641,32 @@ const Devices = () => {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (bulkSelectedIds.length === 0) return;
+    if (isStaff && !bulkDeleteReason.trim()) {
+      showToast('A reason is required for staff delete requests', 'error');
+      return;
+    }
+    setBulkDeleting(true);
+    try {
+      if (isStaff) {
+        await changeRequestsAPI.submitDeviceDeleteRequest(bulkSelectedIds, bulkDeleteReason.trim());
+        showToast(`Delete request submitted for ${bulkSelectedIds.length} device(s). A manager or admin will review.`, 'success');
+      } else {
+        const res = await devicesAPI.bulkDeleteDevices(bulkSelectedIds);
+        showToast(res.message || `${res?.data?.deleted?.length || bulkSelectedIds.length} device(s) deleted successfully`, 'success');
+      }
+      setShowBulkDeleteModal(false);
+      setBulkSelectedIds([]);
+      setBulkDeleteReason('');
+      window.dispatchEvent(new Event('appDataMutation'));
+    } catch (error) {
+      showToast(error.message || 'Failed to delete devices', 'error');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   // Get the defect linked to the selected device (if any)
   const linkedDefect = selectedDevice
     ? replacementMap.defectByDeviceId[String(selectedDevice.id)]
@@ -1063,12 +1093,37 @@ const Devices = () => {
             onPageChange={handleTablePageChange}
             getExportRows={getExportRows}
             selectable={canRegister}
+            onSelectionChange={setBulkSelectedIds}
             getRowClassName={getRowClassName}
             onRowClick={(row) => {
               setSelectedDevice(row);
               setShowModal(true);
             }}
           />
+          {bulkSelectedIds.length > 0 && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-blue-800">
+                    {bulkSelectedIds.length} device(s) selected
+                  </p>
+                  <p className="text-xs text-blue-600">
+                    {isStaff
+                      ? 'Deletion requires manager/admin approval and will be submitted as a request.'
+                      : 'Your changes will be applied immediately without approval.'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => setBulkSelectedIds([])}>
+                    Clear Selection
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => setShowBulkDeleteModal(true)}>
+                    {isStaff ? 'Request Delete' : 'Delete Selected'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -1509,6 +1564,51 @@ const Devices = () => {
           Are you sure you want to delete device <span className="font-medium">{selectedDevice?.mac_address}</span>? 
           This action cannot be undone.
         </p>
+      </Modal>
+
+      {/* Bulk Delete Confirmation Modal */}
+      <Modal
+        isOpen={showBulkDeleteModal}
+        onClose={() => setShowBulkDeleteModal(false)}
+        title={isStaff ? 'Request Device Deletion' : 'Bulk Delete Devices'}
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowBulkDeleteModal(false)}>Cancel</Button>
+            <Button variant="danger" onClick={handleBulkDelete} disabled={bulkDeleting}>
+              {bulkDeleting ? 'Processing...' : isStaff ? 'Submit Request' : `Delete ${bulkSelectedIds.length} Device(s)`}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            {isStaff ? (
+              <>
+                You are requesting deletion of <span className="font-medium">{bulkSelectedIds.length} device(s)</span>.
+                A manager or admin must approve this request before the devices are deleted.
+              </>
+            ) : (
+              <>
+                Are you sure you want to delete <span className="font-medium">{bulkSelectedIds.length} device(s)</span>?
+                This action cannot be undone.
+              </>
+            )}
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reason {isStaff && <span className="text-red-500">*</span>}
+            </label>
+            <textarea
+              value={bulkDeleteReason}
+              onChange={(e) => setBulkDeleteReason(e.target.value)}
+              rows={3}
+              required={isStaff}
+              placeholder={isStaff ? 'Explain why these devices should be deleted' : 'Optional reason for deletion'}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
       </Modal>
     </div>
   );

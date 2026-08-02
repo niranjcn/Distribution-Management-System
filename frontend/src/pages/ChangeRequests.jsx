@@ -18,6 +18,7 @@ const TYPE_LABELS = {
   both: 'Email & Password',
   device_status_change: 'Device Status Change',
   device_edit_change: 'Device Edit Change',
+  device_delete_change: 'Device Delete Request',
   replacement_transfer_fix: 'Replacement Transfer Fix',
 };
 
@@ -35,6 +36,20 @@ const parseDeviceEditChanges = (reason) => {
     return null;
   }
   return null;
+};
+
+const parseDeleteDeviceIds = (rawDeviceId) => {
+  if (!rawDeviceId) return [];
+  try {
+    const parsed = JSON.parse(rawDeviceId);
+    if (Array.isArray(parsed)) return parsed.map(String);
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.device_ids)) {
+      return parsed.device_ids.map(String);
+    }
+  } catch {
+    return rawDeviceId ? [String(rawDeviceId)] : [];
+  }
+  return [];
 };
 
 const ChangeRequests = ({ mode = 'password' }) => {
@@ -101,11 +116,11 @@ const ChangeRequests = ({ mode = 'password' }) => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">{isEditMode ? 'Edit Requests' : 'Password Change Requests'}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">{isEditMode ? 'Edit Requests' : 'Change Requests'}</h1>
           <p className="text-gray-500 mt-1 text-sm">
             {isEditMode
               ? 'Review and approve device update requests'
-              : 'Review and approve account/password change requests'}
+              : 'Review and approve account, device status, and device delete requests'}
           </p>
         </div>
         <Button variant="outline" icon={RefreshCw} onClick={fetchRequests}>Refresh</Button>
@@ -173,6 +188,13 @@ const ChangeRequests = ({ mode = 'password' }) => {
                         <div>
                           <div>Defect ID: {req.device_id || '—'}</div>
                           <div>Action: <span className="font-medium">Transfer fix request</span></div>
+                        </div>
+                      ) : req.request_type === 'device_delete_change' ? (
+                        <div>
+                          <div>{parseDeleteDeviceIds(req.device_id).length} device(s) to delete</div>
+                          <div className="text-xs text-gray-500 mt-1 max-w-[220px] truncate">
+                            IDs: {parseDeleteDeviceIds(req.device_id).join(', ')}
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -249,7 +271,21 @@ const ChangeRequests = ({ mode = 'password' }) => {
                   <p className="text-blue-600 mt-1">Approving will apply the requested device field updates.</p>
                 </div>
               )}
-              {reviewing.action === 'approve' && reviewing.req.request_type !== 'device_status_change' && reviewing.req.request_type !== 'device_edit_change' && reviewing.req.request_type !== 'replacement_transfer_fix' && (
+              {reviewing.action === 'approve' && reviewing.req.request_type === 'device_delete_change' && (
+                <div className="p-3 bg-red-50 rounded-lg text-sm">
+                  <p className="font-medium text-red-800 mb-1">Device Delete Request</p>
+                  <p className="text-red-700">
+                    {parseDeleteDeviceIds(reviewing.req.device_id).length} device(s) to delete:
+                  </p>
+                  <p className="text-red-700 text-xs mt-1 max-h-24 overflow-y-auto">
+                    {parseDeleteDeviceIds(reviewing.req.device_id).join(', ')}
+                  </p>
+                  <p className="text-red-600 mt-1 font-medium">
+                    Approving will permanently delete these devices. This cannot be undone.
+                  </p>
+                </div>
+              )}
+              {reviewing.action === 'approve' && reviewing.req.request_type !== 'device_status_change' && reviewing.req.request_type !== 'device_edit_change' && reviewing.req.request_type !== 'replacement_transfer_fix' && reviewing.req.request_type !== 'device_delete_change' && (
                 <>
                   <p className="text-sm text-gray-600">You can override the requested values before approving:</p>
                   {reviewing.req.request_type !== 'password_reset' && (

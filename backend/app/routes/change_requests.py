@@ -1,7 +1,7 @@
 import logging
 import json
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
@@ -26,10 +26,11 @@ def _looks_like_bcrypt_hash(value: Optional[str]) -> bool:
 
 
 class ChangeRequestCreate(BaseModel):
-    request_type: str  # 'email_change', 'password_reset', 'both', 'device_status_change', 'device_edit_change', 'replacement_transfer_fix'
+    request_type: str  # 'email_change', 'password_reset', 'both', 'device_status_change', 'device_edit_change', 'device_delete_change', 'replacement_transfer_fix'
     new_email: Optional[str] = None
     new_password: Optional[str] = None
     device_id: Optional[str] = None
+    device_ids: Optional[List[str]] = None
     requested_status: Optional[str] = None
     reason: Optional[str] = None
 
@@ -91,7 +92,7 @@ async def submit_change_request(
     current_user: dict = Depends(get_current_user)
 ):
     """Submit a change request"""
-    VALID_TYPES = ["email_change", "password_reset", "both", "device_status_change", "device_edit_change", "replacement_transfer_fix"]
+    VALID_TYPES = ["email_change", "password_reset", "both", "device_status_change", "device_edit_change", "device_delete_change", "replacement_transfer_fix"]
     if data.request_type not in VALID_TYPES:
         raise HTTPException(status_code=400, detail="Invalid request_type")
 
@@ -100,6 +101,13 @@ async def submit_change_request(
             raise HTTPException(status_code=403, detail="Only operators can submit replacement transfer fix requests")
         if not data.device_id:
             raise HTTPException(status_code=400, detail="defect_id is required in device_id for replacement_transfer_fix")
+    elif data.request_type == "device_delete_change":
+        if current_user["role"] not in ["pdic_staff"]:
+            raise HTTPException(status_code=403, detail="Only staff can submit device delete requests")
+        if not data.device_ids:
+            raise HTTPException(status_code=400, detail="device_ids required for device_delete_change")
+        if not data.reason:
+            raise HTTPException(status_code=400, detail="reason required for device_delete_change")
     elif data.request_type == "device_status_change":
         if current_user["role"] not in ["pdic_staff", "manager"]:
             raise HTTPException(status_code=403, detail="Only staff and managers can submit device status change requests")
@@ -161,7 +169,11 @@ async def submit_change_request(
                     "request_type": data.request_type,
                     "new_email": data.new_email,
                     "new_password": hashed_new_password,
-                    "device_id": data.device_id,
+                    "device_id": (
+                        json.dumps({"device_ids": [str(i) for i in data.device_ids]})
+                        if data.request_type == "device_delete_change"
+                        else data.device_id
+                    ),
                     "requested_status": data.requested_status if data.request_type != "replacement_transfer_fix" else "transfer_fix",
                     "reason": data.reason,
                     "now": now,
@@ -218,6 +230,31 @@ async def submit_change_request(
                                 "operator_id": str(current_user["id"]),
                                 "operator_name": current_user["name"],
                                 "notes": data.reason,
+                            },
+                        }
+                    )
+            elif data.request_type == "device_delete_change":
+                result = await session.execute(text("SELECT id FROM users WHERE role IN ('super_admin', 'manager') AND status = 'active'"))
+                reviewers = result.mappings().all()
+                for row in reviewers:
+                    manager_id = int(row["id"])
+                    manager_notification_payloads.append(
+                        {
+                            "user_id": manager_id,
+                            "title": "Device Delete Request Pending",
+                            "message": (
+                                f"Staff {current_user['name']} requested deletion of "
+                                f"{len(data.device_ids)} device(s) (ID: {request_id})."
+                            ),
+                            "notification_type": "warning",
+                            "category": "approval",
+                            "link": "/change-requests",
+                            "metadata": {
+                                "action": "device_delete_change",
+                                "request_id": request_id,
+                                "device_ids": [str(i) for i in data.device_ids],
+                                "requested_by": str(current_user.get("id") or ""),
+                                "requested_by_role": str(current_user.get("role") or ""),
                             },
                         }
                     )
@@ -412,6 +449,25 @@ async def review_change_request(
                     )
                     if not updated_device:
                         raise HTTPException(status_code=404, detail="Device not found for edit approval")
+                elif req["request_type"] == "device_delete_change":
+                    raw_device_ids = req.get("device_id")
+                    device_ids: List[str] = []
+                    if raw_device_ids:
+                        try:
+                            parsed = json.loads(raw_device_ids)
+                            if isinstance(parsed, dict) and isinstance(parsed.get("device_ids"), list):
+                                device_ids = [str(i) for i in parsed["device_ids"]]
+                            elif isinstance(parsed, list):
+                                device_ids = [str(i) for i in parsed]
+                        except Exception:
+                            raise HTTPException(status_code=400, detail="Invalid device delete payload stored in request")
+
+                    if not device_ids:
+                        raise HTTPException(status_code=400, detail="No device ids found in request")
+
+                    delete_result = await device_service.bulk_delete_devices(device_ids)
+                    if not delete_result["deleted"]:
+                        raise HTTPException(status_code=404, detail="No devices found to delete")
                 elif req["request_type"] in ["email_change", "password_reset", "both"]:
                     # Use override values if provided, else use original request values
                     email_to_set = review.new_email or req.get("new_email")

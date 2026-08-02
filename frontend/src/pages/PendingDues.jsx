@@ -34,7 +34,7 @@ const PendingDues = () => {
   const role = String(user?.role || '').toLowerCase();
   const isOperatorView = role === 'operator';
   const isHierarchyView = !isOperatorView;
-  const canConfirmPayment = ['super_admin', 'manager'].includes(role);
+  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(role);
 
   const fetchUsers = async () => {
     try {

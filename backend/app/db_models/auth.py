@@ -46,7 +46,7 @@ class ChangeRequest(Base):
     request_type = Column(String(64), nullable=False)
     new_email = Column(String(255))
     new_password = Column(String(255))
-    device_id = Column(String(64))
+    device_id = Column(Text)
     requested_status = Column(String(64))
     reason = Column(String(500))
     status = Column(String(32), default="pending")
