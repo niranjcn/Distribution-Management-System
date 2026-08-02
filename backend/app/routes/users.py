@@ -80,6 +80,27 @@ async def _get_descendant_ids(root_user_id: str) -> set:
         return descendants
 
 
+async def _notify_super_admins(message: str, *, title: str, category: str = "user",
+                              link: str = "/users", metadata: Optional[dict] = None) -> None:
+    """Send an in-app notification to all active super admins."""
+    try:
+        super_admins = await user_service.get_users(role=SUPER_ADMIN, page_size=10000)
+        await notification_service.bulk_create_notifications([
+            {
+                "user_id": sa["id"],
+                "title": title,
+                "message": message,
+                "notification_type": "warning",
+                "category": category,
+                "link": link,
+                "metadata": metadata or {},
+            }
+            for sa in super_admins["data"]
+        ])
+    except Exception:
+        logger.exception("Failed to notify super admins")
+
+
 async def _can_access_user(current_user: dict, target_user: dict, *, write: bool, db=None) -> bool:
     actor_role = normalize_role(current_user.get("role"))
     target_role = normalize_role(target_user.get("role"))
@@ -498,8 +519,8 @@ async def reassign_user(
     current_user: dict = Depends(get_current_user),
 ):
     actor_role = normalize_role(current_user.get("role"))
-    if actor_role != SUPER_ADMIN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super admins can reassign users")
+    if actor_role not in {SUPER_ADMIN, MANAGER}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super admins and managers can reassign users")
 
     new_parent_id = body.get("new_parent_id")
     if not new_parent_id:
@@ -516,6 +537,12 @@ async def reassign_user(
     new_parent = await user_service.get_user_by_id(new_parent_id)
     if not new_parent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="New parent not found")
+
+    if actor_role == MANAGER:
+        if not await _can_access_user(current_user, target_user, write=True):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions to reassign this user")
+        if not await _can_access_user(current_user, new_parent, write=False):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected new parent is outside your branch")
 
     new_parent_role = normalize_role(new_parent.get("role"))
 
@@ -550,6 +577,15 @@ async def reassign_user(
             ),
         )
 
+        if actor_role == MANAGER:
+            await _notify_super_admins(
+                f"Manager {actor_name} reassigned {target_role} {target_user.get('name') or target_user.get('email')} "
+                f"to {new_parent_role} {new_parent.get('name') or new_parent.get('email')}.",
+                title="User Reassigned by Manager",
+                link="/users",
+                metadata={"action": "manager_user_reassign", "target_user_id": user_id, "actor_id": current_user.get("id")},
+            )
+
         return {"success": True, "message": result["message"], "data": result.get("data")}
     except HTTPException:
         raise
@@ -562,7 +598,7 @@ async def reassign_user(
 async def delete_user(request: Request, user_id: str, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
 
-    if actor_role not in {SUPER_ADMIN}:
+    if actor_role not in {SUPER_ADMIN, MANAGER}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     if str(current_user.get("id")) == str(user_id):
@@ -604,6 +640,13 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
                     user_id,
                     request.client.host if request.client else "unknown",
                 )
+                if actor_role == MANAGER:
+                    await _notify_super_admins(
+                        f"Manager {actor_name} deleted {target_role} {target_name}.",
+                        title="User Deleted by Manager",
+                        link="/users",
+                        metadata={"action": "manager_user_delete", "target_user_id": user_id, "actor_id": current_user.get("id")},
+                    )
                 return {"success": True, "message": "User deleted successfully"}
             except HTTPException:
                 raise
@@ -664,6 +707,14 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
             user_id,
             request.client.host if request.client else "unknown",
         )
+
+        if actor_role == MANAGER:
+            await _notify_super_admins(
+                f"Manager {actor_name} deleted {target_role} {target_name}.",
+                title="User Deleted by Manager",
+                link="/users",
+                metadata={"action": "manager_user_delete", "target_user_id": user_id, "actor_id": current_user.get("id")},
+            )
 
         return {"success": True, "message": "User deleted successfully"}
     except HTTPException:

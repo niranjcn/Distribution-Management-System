@@ -603,7 +603,7 @@ async def request_device_edit(
 
             result = await session.execute(text("SELECT id FROM users WHERE role IN ('super_admin', 'manager') AND status = 'active'"))
             reviewer_rows = result.mappings().all()
-            reviewer_ids = [int(row[0]) for row in reviewer_rows]
+            reviewer_ids = [int(row["id"]) for row in reviewer_rows]
             await session.commit()
 
         proposer_name = current_user.get("name") or current_user.get("email", "pdic_staff")
@@ -1341,6 +1341,43 @@ async def delete_device(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
+@router.post("/bulk-delete", summary="Bulk delete devices (super admin / manager only)")
+async def bulk_delete_devices(
+    payload: Dict[str, Any],
+    current_user: dict = Depends(require_admin_or_manager),
+):
+    """Delete multiple devices at once. Staff must use the approval flow instead."""
+    device_ids = payload.get("device_ids") or []
+    if not device_ids or not isinstance(device_ids, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="device_ids is required")
+
+    try:
+        result = await device_service.bulk_delete_devices([str(i) for i in device_ids])
+
+        deleted_count = len(result["deleted"])
+        if deleted_count > 0:
+            actor_name = current_user.get("name") or current_user.get("email") or "User"
+            await log_business_activity(
+                user=current_user,
+                path="/activity/devices/bulk-delete",
+                description=f"{actor_name} bulk deleted {deleted_count} device(s)",
+            )
+
+        return {
+            "success": True,
+            "message": f"{deleted_count} device(s) deleted successfully",
+            "data": result,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unhandled route exception")
         raise HTTPException(

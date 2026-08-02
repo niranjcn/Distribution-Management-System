@@ -335,6 +335,28 @@ async def delete_device(device_id: str) -> bool:
         return True
 
 
+async def bulk_delete_devices(device_ids: List[str]) -> Dict[str, Any]:
+    """Delete multiple devices. Returns deleted count and any missing IDs."""
+    deleted: List[int] = []
+    not_found: List[str] = []
+
+    async with async_session_factory() as session:
+        for device_id in device_ids:
+            if not str(device_id).isdigit():
+                not_found.append(str(device_id))
+                continue
+            inst = await session.get(Device, int(device_id))
+            if not inst:
+                not_found.append(str(device_id))
+                continue
+            await session.delete(inst)
+            await session.execute(text("DELETE FROM device_history WHERE device_id = :did"), {"did": int(device_id)})
+            deleted.append(int(device_id))
+        await session.commit()
+
+    return {"deleted": deleted, "not_found": not_found}
+
+
 async def update_device_status(
     device_id: str,
     status: str,

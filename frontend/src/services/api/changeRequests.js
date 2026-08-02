@@ -11,6 +11,15 @@ export const changeRequestsAPI = {
         reason: notes || undefined,
       }),
     }),
+  submitDeviceDeleteRequest: (deviceIds, reason = '') =>
+    apiRequest('/change-requests', {
+      method: 'POST',
+      body: JSON.stringify({
+        request_type: 'device_delete_change',
+        device_ids: (deviceIds || []).map(String),
+        reason: reason || undefined,
+      }),
+    }),
   getRequests: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return apiRequest(`/change-requests?${qs}`);

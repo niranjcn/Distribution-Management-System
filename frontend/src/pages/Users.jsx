@@ -360,7 +360,7 @@ const Users = () => {
           >
             <Eye className="w-4 h-4 text-gray-500" />
           </button>
-          {['super_admin'].includes(currentUser?.role) && (row.role !== 'super_admin' || String(row.id) === String(currentUser.id)) && (
+          {canEditUser(row) && (
             <button
               onClick={async () => {
                 try {
@@ -385,27 +385,23 @@ const Users = () => {
               <Edit className="w-4 h-4" />
             </button>
           )}
-          {['super_admin'].includes(currentUser?.role) && (
-            <>
-              {(row.role === 'cluster' || row.role === 'operator') && (
-                <button
-                  onClick={() => openReassignModal(row)}
-                  className="p-1 hover:bg-gray-100 rounded"
-                  title="Reassign"
-                >
-                  <Network className="w-4 h-4 text-amber-500" />
-                </button>
-              )}
-              {String(row.id) !== String(currentUser.id) && row.role !== 'super_admin' && (
-                <button
-                  onClick={() => { setSelectedUser(row); setShowDeleteModal(true); }}
-                  className="p-1 hover:bg-gray-100 rounded"
-                  title="Delete"
-                >
-                  <Trash2 className="w-4 h-4 text-red-500" />
-                </button>
-              )}
-            </>
+          {canReassignUser(row) && (
+            <button
+              onClick={() => openReassignModal(row)}
+              className="p-1 hover:bg-gray-100 rounded"
+              title="Reassign"
+            >
+              <Network className="w-4 h-4 text-amber-500" />
+            </button>
+          )}
+          {canDeleteUser(row) && (
+            <button
+              onClick={() => { setSelectedUser(row); setShowDeleteModal(true); }}
+              className="p-1 hover:bg-gray-100 rounded"
+              title="Delete"
+            >
+              <Trash2 className="w-4 h-4 text-red-500" />
+            </button>
           )}
         </div>
       )
@@ -546,6 +542,25 @@ const Users = () => {
   const isMdDirector = currentUser?.role === 'md_director';
   const isManager  = currentUser?.role === 'manager';
   const isAdminOrManager = ['super_admin', 'manager'].includes(currentUser?.role);
+
+  const canEditUser = (row) => {
+    if (isAdmin) return row.role !== 'super_admin' || String(row.id) === String(currentUser.id);
+    if (isManager) return !['super_admin', 'md_director', 'manager'].includes(row.role);
+    return false;
+  };
+
+  const canDeleteUser = (row) => {
+    if (isAdmin) return row.role !== 'super_admin' && String(row.id) !== String(currentUser.id);
+    if (isManager) return !['super_admin', 'md_director', 'manager'].includes(row.role) && String(row.id) !== String(currentUser.id);
+    return false;
+  };
+
+  const canReassignUser = (row) => {
+    if (!['super_admin', 'manager'].includes(currentUser?.role)) return false;
+    if (row.role !== 'cluster' && row.role !== 'operator') return false;
+    if (isManager && ['super_admin', 'md_director', 'manager'].includes(row.role)) return false;
+    return true;
+  };
 
   const visibleUsers = useMemo(() => {
     if (isMdDirector) return users.filter((u) => u.role !== 'super_admin');
@@ -1203,8 +1218,11 @@ const Users = () => {
                     <p className="text-sm text-gray-500">Created By</p>
                     <p className="font-medium text-gray-800">
                       {(() => {
+                        if (selectedUser.created_by_name) {
+                          return `${selectedUser.created_by_name}${selectedUser.created_by_email ? ` (${selectedUser.created_by_email})` : ''}`;
+                        }
                         const creator = users.find(u => String(u.id) === String(selectedUser.created_by));
-                        return creator ? `${creator.name} (${creator.email})` : `User #${selectedUser.created_by}`;
+                        return creator ? `${creator.name} (${creator.email})` : (selectedUser.created_by ? `User #${selectedUser.created_by}` : 'N/A');
                       })()}
                     </p>
                   </div>
@@ -1366,21 +1384,6 @@ const Users = () => {
                   <option key={r} value={r}>{ROLE_LABELS[r]}</option>
                 ))}
               </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Phone <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="tel"
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="+880..."
-                minLength={10}
-                required
-              />
             </div>
 
             {/* Parent selector — shown when admin/manager creates sub-distributor/cluster/operator,
@@ -1583,6 +1586,17 @@ const Users = () => {
                 ))}
               </div>
             )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <input
+                type="tel"
+                value={formData.phone}
+                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="+880..."
+              />
+            </div>
           </div>
 
           {/* Optional fields */}
@@ -1873,33 +1887,35 @@ const Users = () => {
             </div>
             <div className="p-6 space-y-4">
               {/* Status toggle */}
-              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-800">Account Status</p>
-                  <p className={`text-sm ${detailForm.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>
-                    {detailForm.status === 'active' ? 'Active' : 'Inactive'}
-                  </p>
+              {isAdmin && (
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div>
+                    <p className="font-medium text-gray-800">Account Status</p>
+                    <p className={`text-sm ${detailForm.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>
+                      {detailForm.status === 'active' ? 'Active' : 'Inactive'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const newStatus = detailForm.status === 'active' ? 'inactive' : 'active';
+                      try {
+                        await usersAPI.updateUserStatus(detailUser.id, newStatus);
+                        setDetailForm(p => ({ ...p, status: newStatus }));
+                        showToast(`User ${newStatus === 'active' ? 'activated' : 'deactivated'}`, 'success');
+                      } catch (err) {
+                        showToast(err.message || 'Failed to update status', 'error');
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      detailForm.status === 'active'
+                        ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                        : 'bg-green-100 text-green-700 hover:bg-green-200'
+                    }`}
+                  >
+                    {detailForm.status === 'active' ? 'Deactivate' : 'Activate'}
+                  </button>
                 </div>
-                <button
-                  onClick={async () => {
-                    const newStatus = detailForm.status === 'active' ? 'inactive' : 'active';
-                    try {
-                      await usersAPI.updateUserStatus(detailUser.id, newStatus);
-                      setDetailForm(p => ({ ...p, status: newStatus }));
-                      showToast(`User ${newStatus === 'active' ? 'activated' : 'deactivated'}`, 'success');
-                    } catch (err) {
-                      showToast(err.message || 'Failed to update status', 'error');
-                    }
-                  }}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    detailForm.status === 'active'
-                      ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                      : 'bg-green-100 text-green-700 hover:bg-green-200'
-                  }`}
-                >
-                  {detailForm.status === 'active' ? 'Deactivate' : 'Activate'}
-                </button>
-              </div>
+              )}
 
               {/* Basic info fields */}
               {[
@@ -1915,7 +1931,8 @@ const Users = () => {
                   <input
                     value={detailForm[key] || ''}
                     onChange={e => setDetailForm(p => ({ ...p, [key]: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    disabled={key === 'email' && !isAdmin}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 ${key === 'email' && !isAdmin ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                   />
                 </div>
               ))}
@@ -1981,7 +1998,7 @@ const Users = () => {
                       pincode: detailForm.pincode,
                     };
                     await usersAPI.updateUser(detailUser.id, updatePayload);
-                    if (detailForm.email && detailForm.email !== detailUser.email) {
+                    if (isAdmin && detailForm.email && detailForm.email !== detailUser.email) {
                       await adminUpdateCredentials(detailUser.id, { email: detailForm.email });
                     }
                     // Save digital IDs for sub_distributor, cluster, operator
@@ -2028,6 +2045,7 @@ const Users = () => {
               </Button>
 
               {/* Password reset */}
+              {isAdmin && (
               <div className="border-t pt-4 mt-4">
                 <p className="font-medium text-gray-800 mb-3 flex items-center gap-2">
                   <Lock className="w-4 h-4" /> Reset Password
@@ -2095,6 +2113,7 @@ const Users = () => {
                   Reset Password
                 </Button>
               </div>
+              )}
 
               {/* Assigned children: clusters under sub_distributor, operators under cluster */}
               {['sub_distributor', 'cluster'].includes(detailUser.role) && (

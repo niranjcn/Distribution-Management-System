@@ -10,7 +10,7 @@ class Notification(Base):
     user_id = Column(Integer, nullable=False)
     title = Column(String(255), nullable=False)
     message = Column(String(500), nullable=False)
-    type = Column(String(16), default="info")
+    type = Column(String(32), default="info")
     category = Column(String(32), nullable=False)
     is_read = Column(SqlBool, default=False)
     link = Column(String(255))

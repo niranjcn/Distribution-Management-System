@@ -129,7 +129,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/users', label: 'All Users' },
             { path: '/users/hierarchy', label: 'User Hierarchy' },
             { path: '/users/bulk-upload', label: 'Bulk Upload' },
-            { path: '/change-requests', label: 'Password Change Requests' },
+            { path: '/change-requests', label: 'Change Requests' },
             { path: '/reassignment-requests', label: 'Reassignment Requests' },
           ]
         },
@@ -194,7 +194,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/users', label: 'Assign Users' },
             { path: '/users/hierarchy', label: 'User Hierarchy' },
             { path: '/users/bulk-upload', label: 'Bulk Upload' },
-            { path: '/change-requests', label: 'Password Change Requests' },
+            { path: '/change-requests', label: 'Change Requests' },
           ]
         },
         {
@@ -245,12 +245,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
           ]
         },
-        { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        { path: '/pending-dues', icon: DollarSign, label: 'Pending Dues' },
-        { path: '/returns', icon: RotateCcw, label: 'Returns' },
-        { path: '/approvals', icon: CheckSquare, label: 'Approvals' },
+        defectMenu,
         { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
       ],
       [ROLES.SUB_DISTRIBUTION_MANAGER]: [

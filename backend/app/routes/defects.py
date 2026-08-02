@@ -610,7 +610,7 @@ async def update_defect_status(
 async def upload_defect_payment_bill(
     defect_id: str,
     file: UploadFile = File(...),
-    current_user: dict = Depends(require_admin_or_manager),
+    current_user: dict = Depends(require_management),
 ):
     """Upload bill/proof file for a defect-related payment due."""
     _ensure_not_md_director(current_user)
@@ -663,7 +663,7 @@ async def upload_defect_payment_bill(
 async def confirm_defect_payment(
     defect_id: str,
     payload: DefectPaymentConfirmRequest,
-    current_user: dict = Depends(require_admin_or_manager),
+    current_user: dict = Depends(require_management),
 ):
     """Confirm that user payment for defective return has been received."""
     _ensure_not_md_director(current_user)

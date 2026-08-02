@@ -281,7 +281,7 @@ const DefectReports = () => {
 
   const canReport = ['operator', 'sub_distributor', 'cluster'].includes(user?.role);
   const canReview = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
-  const canConfirmPayment = ['super_admin', 'manager'].includes(user?.role);
+  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canForwardToManagement = user?.role === 'sub_distributor';
   const canReplace = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canConfirmReplacement = ['operator', 'cluster', 'sub_distributor'].includes(user?.role);

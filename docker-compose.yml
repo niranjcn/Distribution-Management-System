@@ -32,8 +32,8 @@ services:
       test: ["CMD", "mysqladmin", "ping", "--silent"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 120s
+      retries: 30
+      start_period: 300s
     networks:
       dms_net:
         ipv4_address: 172.20.0.2
@@ -61,8 +61,8 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 10s
       timeout: 5s
-      retries: 15
-      start_period: 60s
+      retries: 30
+      start_period: 300s
     env_file:
       - ./backend/.env
     environment:
