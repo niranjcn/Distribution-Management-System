@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth_middleware import get_current_user
+from app.core.cache_version import bump_cache_version
 from app.models.digital_id import DigitalIdentityCreate
 from app.services.digital_id_service import (
     create_digital_identity,
@@ -83,6 +84,7 @@ async def update_digital_identity_endpoint(identity_id: str, data: DigitalIdenti
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_identity_conflict_error(conflicts))
             entry.digital_id = digital_id
             entry.broadband_id = broadband_id
+            await bump_cache_version(session)
             await session.commit()
             await session.refresh(entry)
             return {"success": True, "message": "Digital identity updated", "data": _identity_to_dict(entry)}
@@ -106,6 +108,7 @@ async def delete_single_digital_identity_endpoint(identity_id: str, current_user
             if not entry:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Digital identity not found")
             await session.execute(sa_delete(DigitalIdentity).where(DigitalIdentity.id == int(identity_id)))
+            await bump_cache_version(session)
             await session.commit()
         return {"success": True, "message": "Digital identity deleted"}
     except HTTPException:

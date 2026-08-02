@@ -15,6 +15,7 @@ from starlette_csrf import CSRFMiddleware
 
 from app.config import settings
 from app.database import init_db
+from app.core.cache_version_manager import cache_version_manager
 from app.routes import (
     auth, users, devices, distributions, 
     defects, returns, operators,
@@ -26,6 +27,7 @@ from app.middleware.auth_middleware import get_current_user, require_admin
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.https_enforcement import HttpsEnforcementMiddleware
 from app.middleware.api_activity_logging import ApiActivityLoggingMiddleware
+from app.middleware.conditional_cache import ConditionalCacheMiddleware
 from app.core.rate_limiter import limiter
 from app.core.audit import audit_logger
 from app.core.metrics import MetricsMiddleware, metrics_endpoint
@@ -87,7 +89,12 @@ async def lifespan(app: FastAPI):
                         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
     _setup_logging()
     await init_db()
-    
+
+    # Load the current cache_version into memory for ETag generation. Fails
+    # startup if the cache_version row does not exist. See cache_version_manager
+    # for the single-worker assumption behind this in-memory optimization.
+    await cache_version_manager.load_from_db()
+
     # Seed initial data
     from app.services.seed_service import seed_initial_data
     from app.services.backup_scheduler import monthly_backup_scheduler_loop
@@ -162,7 +169,15 @@ app.add_middleware(
     exempt_urls=[re.compile(r"^/api/auth/login$"), re.compile(r"^/metrics$")],
 )
 
+# HTTP conditional caching (ETag / 304) for GET endpoints. Added after CSRF
+# and before SecurityHeaders so the wrap order is:
+#   CORS -> ActivityLogging -> HTTPS -> SecurityHeaders -> ConditionalCache -> CSRF
+# i.e. 304 short-circuits still receive CORS, activity-logging, HTTPS and
+# security headers while skipping CSRF checks and the endpoint entirely.
+app.add_middleware(ConditionalCacheMiddleware)
+
 app.add_middleware(SecurityHeadersMiddleware)
+
 app.add_middleware(HttpsEnforcementMiddleware)
 app.add_middleware(ApiActivityLoggingMiddleware)
 

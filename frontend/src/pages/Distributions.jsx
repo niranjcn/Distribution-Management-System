@@ -5,7 +5,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
-import { distributionsAPI, devicesAPI } from '../services/api';
+import { distributionsAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -17,6 +17,7 @@ const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
 const EXPORT_PAGE_SIZE = 1000;
+const DEVICES_PAGE_SIZE = 100;
 
 const SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -63,6 +64,8 @@ const Distributions = () => {
   const [showModal, setShowModal] = useState(false);
   const [distributionDevices, setDistributionDevices] = useState([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
+  const [devicePage, setDevicePage] = useState(1);
+  const [hasMoreDevices, setHasMoreDevices] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptSubmitting, setReceiptSubmitting] = useState(false);
@@ -241,49 +244,41 @@ const Distributions = () => {
     }
   };
 
-  const parseDeviceIds = (rawDeviceIds) => {
-    if (!rawDeviceIds) return [];
-    if (Array.isArray(rawDeviceIds)) return rawDeviceIds.map((id) => String(id)).filter(Boolean);
-    if (typeof rawDeviceIds === 'string') {
-      try {
-        const parsed = JSON.parse(rawDeviceIds);
-        if (Array.isArray(parsed)) return parsed.map((id) => String(id)).filter(Boolean);
-      } catch {
-        return rawDeviceIds.split(',').map((id) => String(id).trim()).filter(Boolean);
-      }
-    }
-    return [];
-  };
+  const devicesRequestIdRef = useRef(0);
 
-  const fetchDistributionDevices = async (rawDeviceIds) => {
-    const deviceIds = parseDeviceIds(rawDeviceIds);
-    if (!deviceIds.length) {
-      setDistributionDevices([]);
-      return;
-    }
+  const fetchDistributionDevicesPage = async (page, requestId, { reset = false } = {}) => {
+    const distributionId = selectedDist?._id || selectedDist?.id;
+    if (!distributionId) return;
 
     try {
       setLoadingDevices(true);
-      const devices = [];
-      const chunkSize = 100;
+      const response = await distributionsAPI.getDistributionDevices(distributionId, {
+        page,
+        page_size: DEVICES_PAGE_SIZE,
+      });
+      if (requestId !== devicesRequestIdRef.current) return;
 
-      for (let i = 0; i < deviceIds.length; i += chunkSize) {
-        const chunk = deviceIds.slice(i, i + chunkSize);
-        const settled = await Promise.allSettled(chunk.map((id) => devicesAPI.getDevice(id)));
-        settled.forEach((result) => {
-          if (result.status === 'fulfilled' && result.value?.data) {
-            devices.push(result.value.data);
-          }
-        });
-      }
-
-      setDistributionDevices(devices);
+      const fetchedDevices = Array.isArray(response?.data) ? response.data : [];
+      const pagination = response?.pagination || {};
+      setDistributionDevices((prev) => (reset ? fetchedDevices : [...prev, ...fetchedDevices]));
+      setDevicePage(page);
+      setHasMoreDevices(Boolean(pagination.has_next));
     } catch (error) {
       console.error('Failed to fetch distribution devices:', error);
-      setDistributionDevices([]);
+      if (requestId === devicesRequestIdRef.current && reset) {
+        setDistributionDevices([]);
+        setHasMoreDevices(false);
+      }
     } finally {
-      setLoadingDevices(false);
+      if (requestId === devicesRequestIdRef.current) {
+        setLoadingDevices(false);
+      }
     }
+  };
+
+  const handleLoadMoreDevices = () => {
+    if (!hasMoreDevices || loadingDevices) return;
+    fetchDistributionDevicesPage(devicePage + 1, devicesRequestIdRef.current, { reset: false });
   };
 
   useEffect(() => {
@@ -302,7 +297,11 @@ const Distributions = () => {
 
   useEffect(() => {
     if (showModal && selectedDist) {
-      fetchDistributionDevices(selectedDist.device_ids);
+      const requestId = ++devicesRequestIdRef.current;
+      setDistributionDevices([]);
+      setDevicePage(1);
+      setHasMoreDevices(false);
+      fetchDistributionDevicesPage(1, requestId, { reset: true });
     }
   }, [showModal, selectedDist]);
 
@@ -634,9 +633,12 @@ const Distributions = () => {
       <Modal
         isOpen={showModal}
         onClose={() => {
+          devicesRequestIdRef.current += 1;
           setShowModal(false);
           setSelectedDist(null);
           setDistributionDevices([]);
+          setDevicePage(1);
+          setHasMoreDevices(false);
         }}
         title="Distribution Details"
         size="lg"
@@ -778,40 +780,56 @@ const Distributions = () => {
             {/* Devices List */}
             <div>
               <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Device Details</label>
-              {loadingDevices ? (
+              {loadingDevices && distributionDevices.length === 0 ? (
                 <div className="flex items-center justify-center py-4">
                   <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
                   <span className="ml-2 text-gray-500">Loading devices...</span>
                 </div>
               ) : distributionDevices.length > 0 ? (
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {distributionDevices.map((device, index) => (
-                    <div key={device._id || device.id || index} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-800">{device.model || device.device_type}</p>
-                          {isSetupBoxType(device.device_type) ? (
-                            <p className="text-sm text-gray-500 font-mono">NUID: {device.nuid || 'N/A'}</p>
-                          ) : (
-                            <>
-                              <p className="text-sm text-gray-500 font-mono">{device.serial_number}</p>
-                              <p className="text-xs text-gray-400">{device.mac_address || 'No MAC'}</p>
-                            </>
-                          )}
-                          <div className="mt-1 flex flex-wrap gap-2">
-                            <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                              Type: {toDisplayLabel(device.device_type)}
-                            </span>
-                            <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
-                              Vendor: {toDisplayLabel(device.manufacturer)}
-                            </span>
+                <>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {distributionDevices.map((device, index) => (
+                      <div key={device._id || device.id || index} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-800">{device.model || device.device_type}</p>
+                            {isSetupBoxType(device.device_type) ? (
+                              <p className="text-sm text-gray-500 font-mono">NUID: {device.nuid || 'N/A'}</p>
+                            ) : (
+                              <>
+                                <p className="text-sm text-gray-500 font-mono">{device.serial_number}</p>
+                                <p className="text-xs text-gray-400">{device.mac_address || 'No MAC'}</p>
+                              </>
+                            )}
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                                Type: {toDisplayLabel(device.device_type)}
+                              </span>
+                              <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
+                                Vendor: {toDisplayLabel(device.manufacturer)}
+                              </span>
+                            </div>
                           </div>
+                          <StatusBadge status={device.status} size="sm" />
                         </div>
-                        <StatusBadge status={device.status} size="sm" />
                       </div>
+                    ))}
+                  </div>
+                  {hasMoreDevices && !loadingDevices && (
+                    <button
+                      type="button"
+                      onClick={handleLoadMoreDevices}
+                      className="mt-2 w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 font-medium border border-gray-200 rounded-lg"
+                    >
+                      Load More Devices
+                    </button>
+                  )}
+                  {loadingDevices && distributionDevices.length > 0 && (
+                    <div className="mt-2 px-3 py-2 text-sm text-gray-400 text-center">
+                      Loading...
                     </div>
-                  ))}
-                </div>
+                  )}
+                </>
               ) : (
                 <p className="text-gray-500 text-sm py-2">No device details available</p>
               )}

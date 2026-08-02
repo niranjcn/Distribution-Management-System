@@ -4,6 +4,7 @@ import secrets
 import string
 
 from app.config import settings
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.utils.security import get_password_hash
 from sqlalchemy import text
@@ -54,6 +55,7 @@ async def seed_initial_data():
                     WHERE id = :id"""),
                     {"role": "super_admin", "phone": "1111111111", "now": now, "id": existing_admin["id"]},
                 )
+                await bump_cache_version(session)
                 await session.commit()
                 print("Existing seeded account normalized to super_admin")
             else:
@@ -90,6 +92,7 @@ async def seed_initial_data():
             await session.rollback()
             return
 
+        await bump_cache_version(session)
         await session.commit()
         
         print("Default super admin account created")
@@ -135,6 +138,7 @@ async def reset_and_seed():
             await session.execute(text(f"DELETE FROM {table}"))
             print(f"   Cleared: {table}")
         
+        await bump_cache_version(session)
         await session.commit()
         print("All tables cleared")
     

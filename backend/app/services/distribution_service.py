@@ -7,6 +7,7 @@ from pathlib import Path
 from openpyxl import Workbook
 from sqlalchemy import text
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.models.distribution import DistributionCreate, DistributionStatus
 from app.models.device import DeviceStatus
@@ -235,6 +236,7 @@ async def _bulk_update_device_holders(
                 history_rows
             )
 
+        await bump_cache_version(session)
         await session.commit()
         return [str(dev_id) for dev_id in existing_ids]
 
@@ -792,6 +794,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
         except Exception:
             manifest_file = None
 
+        await bump_cache_version(session)
         await session.commit()
 
     sender_label = _sender_display_name(from_user)
@@ -843,6 +846,7 @@ async def update_distribution_status(
 
         set_clause = ", ".join(update_parts)
         await session.execute(text(f"UPDATE distributions SET {set_clause} WHERE id = :id"), params)
+        await bump_cache_version(session)
         await session.commit()
 
     await notification_service.create_notification(
@@ -927,6 +931,7 @@ async def confirm_receipt(
                     "id": int(distribution_id)
                 }
             )
+            await bump_cache_version(session)
             await session.commit()
 
         await notification_service.create_notification(
@@ -949,6 +954,7 @@ async def confirm_receipt(
             admin_rows = (await session.execute(
                 text("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff') AND status = 'active'")
             )).mappings().all()
+            await bump_cache_version(session)
             await session.commit()
 
         sender_label = (
@@ -1025,6 +1031,7 @@ async def confirm_disputed_return(
                WHERE id = :id"""),
             {"status": DistributionStatus.REJECTED.value, "notes": notes, "now": now, "today": now.date(), "id": int(distribution_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
 
         device_ids = dist.get("device_ids", []) or []
@@ -1076,6 +1083,7 @@ async def cancel_distribution(distribution_id: str, user: dict) -> bool:
             text("UPDATE distributions SET status = :status, updated_at = :now WHERE id = :id"),
             {"status": DistributionStatus.CANCELLED.value, "now": now, "id": int(distribution_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
     return True
 
@@ -1143,6 +1151,62 @@ async def get_distribution_mac_nuid_export(
         devices=devices,
         file_format=file_format,
     )
+
+
+async def get_distribution_devices(
+    distribution_id: str,
+    user: Dict[str, Any],
+    page: int = 1,
+    page_size: int = 50,
+) -> Dict[str, Any]:
+    """Return paginated device details for a distribution if the requester is permitted."""
+    dist = await get_distribution_by_id(distribution_id)
+    if not dist:
+        raise ValueError("Distribution not found")
+
+    role = str(user.get("role", "")).lower()
+    user_id = int(user.get("id", user.get("_id", 0)))
+    if role not in ["super_admin", "manager", "pdic_staff"]:
+        if user_id not in [int(dist.get("from_user_id", 0)), int(dist.get("to_user_id", 0))]:
+            raise ValueError("You are not allowed to access this distribution's devices")
+
+    device_ids = dist.get("device_ids") or []
+    if isinstance(device_ids, str):
+        device_ids = []
+
+    total = len(device_ids)
+    if not device_ids:
+        return {"data": [], "pagination": get_pagination(page, page_size, total)}
+
+    offset = (page - 1) * page_size
+    page_device_ids = device_ids[offset: offset + page_size]
+    if not page_device_ids:
+        return {"data": [], "pagination": get_pagination(page, page_size, total)}
+
+    ph = ",".join([f":d_{i}" for i in range(len(page_device_ids))])
+    params = {f"d_{i}": int(did) for i, did in enumerate(page_device_ids)}
+
+    async with async_session_factory() as session:
+        rows = (await session.execute(
+            text(
+                "SELECT id, device_id, device_type, manufacturer, model, "
+                "serial_number, mac_address, nuid, box_type, status, current_holder_name "
+                f"FROM devices WHERE id IN ({ph})"
+            ),
+            params
+        )).mappings().all()
+
+    by_id = {int(r["id"]): dict(r) for r in rows}
+    devices = []
+    for did in page_device_ids:
+        device = by_id.get(int(did))
+        if device is not None:
+            devices.append(device_service._augment_device_record(device))
+
+    return {
+        "data": devices,
+        "pagination": get_pagination(page, page_size, total),
+    }
 
 
 async def get_pending_distributions() -> List[Dict[str, Any]]:

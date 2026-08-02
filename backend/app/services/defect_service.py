@@ -4,6 +4,7 @@ import json
 
 from sqlalchemy import text, select
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.models.defect import (
     DefectCreate,
@@ -452,6 +453,7 @@ async def create_defect(
             }
         )
         new_id = result.lastrowid
+        await bump_cache_version(session)
         await session.commit()
 
     if sync_device_status:
@@ -566,6 +568,7 @@ async def forward_defect_to_management(
             """),
             {"now": now, "fid": forwarder_id, "fname": forwarder_name, "now2": now, "id": int(defect_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
 
         rows = (await session.execute(
@@ -628,6 +631,7 @@ async def update_defect(defect_id: str, defect_data: DefectUpdate) -> Optional[D
         set_clause = ", ".join(f"{k} = :{k}" for k in update_dict)
         params = {**update_dict, "id": int(defect_id)}
         result = await session.execute(text(f"UPDATE defects SET {set_clause} WHERE id = :id"), params)
+        await bump_cache_version(session)
         await session.commit()
         if result.rowcount > 0:
             return await get_defect_by_id(defect_id)
@@ -637,6 +641,7 @@ async def update_defect(defect_id: str, defect_data: DefectUpdate) -> Optional[D
 async def delete_defect(defect_id: str) -> bool:
     async with async_session_factory() as session:
         result = await session.execute(text("DELETE FROM defects WHERE id = :id"), {"id": int(defect_id)})
+        await bump_cache_version(session)
         await session.commit()
         return result.rowcount > 0
 
@@ -686,6 +691,7 @@ async def update_defect_status(
             text(f"UPDATE defects SET {set_clause} WHERE id = :id"),
             update_params
         )
+        await bump_cache_version(session)
         await session.commit()
         affected = result.rowcount
 
@@ -712,6 +718,7 @@ async def update_defect_status(
                             text("UPDATE defects SET auto_return_id = :rid WHERE id = :id"),
                             {"rid": auto_return["return_id"], "id": int(defect_id)}
                         )
+                        await bump_cache_version(session)
                         await session.commit()
                     extra_msg = f" A return request ({auto_return['return_id']}) has been automatically created."
             except Exception:
@@ -771,6 +778,7 @@ async def set_defect_payment_bill_url(defect_id: str, bill_url: str) -> Optional
             text("UPDATE defects SET payment_bill_url = :url, updated_at = :now WHERE id = :id"),
             {"url": bill_url, "now": now, "id": int(defect_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
         if result.rowcount <= 0:
             return None
@@ -820,6 +828,7 @@ async def confirm_defect_payment(
             """),
             {"now": now, "cid": confirmer_id, "cname": confirmer_name, "now2": now, "id": int(defect_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
 
     due_user_id = int(defect.get("payment_due_user_id") or defect.get("reported_by") or 0)
@@ -991,6 +1000,7 @@ async def resolve_defect(
                 "id": int(defect_id)
             }
         )
+        await bump_cache_version(session)
         await session.commit()
 
         if result.rowcount > 0:
@@ -1164,6 +1174,7 @@ async def replace_defect_device(
 
         set_clause = ", ".join(update_parts)
         await session.execute(text(f"UPDATE defects SET {set_clause} WHERE id = :id"), update_params)
+        await bump_cache_version(session)
         await session.commit()
 
     if not is_same_device_reassignment:
@@ -1183,6 +1194,7 @@ async def replace_defect_device(
                 text("UPDATE devices SET metadata = :meta, updated_at = :now WHERE id = :id"),
                 {"meta": json.dumps(old_device_metadata), "now": datetime.now().replace(tzinfo=None), "id": int(old_device["id"])}
             )
+            await bump_cache_version(session)
             await session.commit()
 
     await device_service.update_device_status(
@@ -1300,6 +1312,7 @@ async def confirm_replacement_receipt(
                 "id": int(defect_id)
             }
         )
+        await bump_cache_version(session)
         await session.commit()
 
     replacement_status = DeviceStatus.IN_USE.value if confirmer_role == "operator" else DeviceStatus.DISTRIBUTED.value
@@ -1492,6 +1505,7 @@ async def mark_replacement_waiting(
             text("UPDATE defects SET status = :status, resolution = COALESCE(:note, resolution), updated_at = :now WHERE id = :id"),
             {"status": DefectStatus.REPLACEMENT_WAITING_FOR_DEVICE.value, "note": waiting_note, "now": now, "id": int(defect_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
 
         old_device = (await session.execute(

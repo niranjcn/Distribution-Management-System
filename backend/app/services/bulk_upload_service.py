@@ -12,6 +12,7 @@ from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
 from app.core.activity_logger import log_business_activity
 from app.core.audit import audit_logger
+from app.core.cache_version import bump_cache_version
 from app.utils.roles import normalize_role
 
 logger = logging.getLogger(__name__)
@@ -396,6 +397,7 @@ async def process_bulk_user_upload(
             await asyncio.sleep(0)
 
         if should_commit and insertable_rows:
+            await bump_cache_version(session)
             await session.commit()
         elif not insertable_rows:
             pass

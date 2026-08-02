@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 
 from sqlalchemy import select, and_, or_, delete
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.auth import User, TokenBlacklist
 from app.models.auth import TokenData
@@ -71,12 +72,14 @@ async def authenticate_user(login: str, password: str) -> Optional[dict]:
 
             inst.failed_login_attempts = attempts
             inst.locked_until = lock_time
+            await bump_cache_version(session)
             await session.commit()
             return None
 
         inst.failed_login_attempts = 0
         inst.locked_until = None
         inst.last_login = datetime.now().replace(tzinfo=None)
+        await bump_cache_version(session)
         await session.commit()
         return user
 
@@ -277,6 +280,7 @@ async def complete_forced_credential_update(
         inst.force_email_change = 0
         inst.force_password_change = 0
         inst.updated_at = now
+        await bump_cache_version(session)
         await session.commit()
 
     async with async_session_factory() as session:
@@ -301,5 +305,6 @@ async def change_user_password(user_id: str, current_password: str, new_password
 
         inst.password_hash = get_password_hash(new_password)
         inst.updated_at = datetime.now().replace(tzinfo=None)
+        await bump_cache_version(session)
         await session.commit()
         return True

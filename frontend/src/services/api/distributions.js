@@ -17,6 +17,15 @@ export const distributionsAPI = {
     return response;
   },
 
+  getDistributionDevices: async (distributionId, params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const endpoint = queryString
+      ? `/distributions/${distributionId}/devices?${queryString}`
+      : `/distributions/${distributionId}/devices`;
+    const response = await apiRequest(endpoint);
+    return response;
+  },
+
   createDistribution: async (distributionData) => {
     const response = await apiRequest('/distributions', {
       method: 'POST',

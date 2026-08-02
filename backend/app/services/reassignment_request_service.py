@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
 import json
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
 from app.utils.helpers import get_pagination
@@ -124,6 +125,7 @@ async def cleanup_stale_reassignment_requests() -> int:
                     {"cj": json.dumps(surviving), "updated_at": now, "id": int(req["id"])},
                 )
 
+        await bump_cache_version(session)
         await session.commit()
         return removed
 
@@ -160,6 +162,7 @@ async def create_reassignment_request(
                 "updated_at": now
             }
         )
+        await bump_cache_version(session)
         await session.commit()
 
         result = await session.execute(
@@ -320,6 +323,7 @@ async def reassign_users(
             {"id": deleted_user_id}
         )
 
+        await bump_cache_version(session)
         await session.commit()
 
         if deleted_by_user:
@@ -351,5 +355,6 @@ async def reject_request(request_id: str) -> Tuple[bool, str]:
             text("UPDATE reassignment_requests SET status = 'rejected', updated_at = :updated_at WHERE id = :id"),
             {"updated_at": now, "id": int(request_id)}
         )
+        await bump_cache_version(session)
         await session.commit()
         return True, "Request rejected"

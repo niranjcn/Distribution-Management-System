@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 
 from sqlalchemy import text
 
+from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.models.inventory import (
     InventoryItemCreate,
@@ -255,6 +256,7 @@ async def create_item(item_data: InventoryItemCreate, user: Dict[str, Any]) -> D
             },
         )
 
+        await bump_cache_version(session)
         await session.commit()
 
         result = await session.execute(
@@ -326,6 +328,7 @@ async def update_item(
             set_params,
         )
 
+        await bump_cache_version(session)
         await session.commit()
 
     return await get_item_by_inventory_id(inventory_id)
@@ -345,6 +348,7 @@ async def update_item_image(inventory_id: str, image_url: str) -> Optional[Dict[
             text("UPDATE external_inventory_items SET image_url = :image_url, updated_at = :updated_at WHERE inventory_id = :inventory_id"),
             {"image_url": image_url, "updated_at": datetime.now().replace(tzinfo=None), "inventory_id": inventory_id},
         )
+        await bump_cache_version(session)
         await session.commit()
 
     return await get_item_by_inventory_id(inventory_id)
@@ -378,6 +382,7 @@ async def delete_item(inventory_id: str) -> Optional[Dict[str, Any]]:
             text("DELETE FROM external_inventory_items WHERE inventory_id = :inventory_id"),
             {"inventory_id": inventory_id},
         )
+        await bump_cache_version(session)
         await session.commit()
 
     return dict(existing)
@@ -581,6 +586,7 @@ async def create_purchase_order(po_data: PurchaseOrderCreate, user: Dict[str, An
                 },
             )
 
+        await bump_cache_version(session)
         await session.commit()
 
     result = await get_purchase_order_by_id(po_id)
@@ -819,6 +825,7 @@ async def receive_purchase_order(
             {"status": new_status, "updated_at": now, "po_id": po_id},
         )
 
+        await bump_cache_version(session)
         await session.commit()
 
     po = await get_purchase_order_by_id(po_id)
@@ -1040,6 +1047,7 @@ async def create_stock_adjustment(
             },
         )
 
+        await bump_cache_version(session)
         await session.commit()
 
     updated = await get_item_by_inventory_id(payload.item_inventory_id)

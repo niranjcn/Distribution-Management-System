@@ -11,6 +11,7 @@ from app.utils.security import get_password_hash
 from app.utils.helpers import get_pagination
 from app.services import device_service, notification_service, defect_service
 from app.core.audit import audit_logger
+from app.core.cache_version import bump_cache_version
 from datetime import datetime, timezone
 import uuid
 
@@ -258,6 +259,7 @@ async def submit_change_request(
                             },
                         }
                     )
+            await bump_cache_version(session)
             await session.commit()
 
         if manager_notification_payloads:
@@ -635,6 +637,7 @@ async def review_change_request(
                 {"status": "approved" if review.action == "approve" else "rejected", "reviewed_by": int(current_user["id"]), "reviewed_by_name": current_user["name"],
                  "review_note": review.review_note, "updated_at": now, "request_id": request_id}
             )
+            await bump_cache_version(session)
             await session.commit()
 
         if review.action == "approve" and req["request_type"] == "replacement_transfer_fix" and transfer_plan:

@@ -403,7 +403,10 @@ class TestAvailable:
         import app.routes.devices as mod
 
         mod.device_service.get_available_devices = AsyncMock(
-            return_value=[{"id": "1", "serial_number": "SN001", "status": "available"}]
+            return_value={
+                "data": [{"id": "1", "serial_number": "SN001", "status": "available"}],
+                "pagination": {"page": 1, "page_size": 100, "total": 1, "total_pages": 1},
+            }
         )
 
         resp = client.get(self.URL)
@@ -412,13 +415,17 @@ class TestAvailable:
         assert body["success"] is True
         assert body["message"] == "Available devices retrieved successfully"
         assert len(body["data"]) == 1
+        assert "pagination" in body
 
     def test_success_sub_role_returns_200(self, client, mock_device_services, set_role):
         import app.routes.devices as mod
 
         set_role("cluster")
         mod.device_service.get_held_devices = AsyncMock(
-            return_value=[{"id": "1", "serial_number": "SN001", "status": "in_use"}]
+            return_value={
+                "data": [{"id": "1", "serial_number": "SN001", "status": "in_use"}],
+                "pagination": {"page": 1, "page_size": 100, "total": 1, "total_pages": 1},
+            }
         )
 
         resp = client.get(self.URL)

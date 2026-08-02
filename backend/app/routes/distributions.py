@@ -470,6 +470,49 @@ async def get_distribution(
         )
 
 
+@router.get("/{distribution_id}/devices", summary="Get paginated devices for a distribution")
+async def get_distribution_devices(
+    distribution_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=1000),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get paginated devices for a distribution."""
+    try:
+        result = await distribution_service.get_distribution_devices(
+            distribution_id=distribution_id,
+            user=current_user,
+            page=page,
+            page_size=page_size,
+        )
+
+        return {
+            "success": True,
+            "message": "Distribution devices retrieved successfully",
+            "data": result["data"],
+            "pagination": result["pagination"],
+        }
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=message
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=message
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new distribution request.")
 async def create_distribution(
     dist_data: DistributionCreate,
