@@ -8,6 +8,40 @@ from openpyxl import Workbook
 
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text, bindparam
+from app.utils.roles import normalize_role
+
+
+REPORT_MANAGEMENT_ROLES = {"super_admin", "md_director", "manager", "pdic_staff"}
+
+
+async def _resolve_report_scope(current_user: Optional[dict]) -> Optional[dict]:
+    """Resolve the hierarchy-report scope for a user.
+
+    Returns None for management roles (full system report), or a dict like
+    {"scope": "sub", "sub_id": int} / {"scope": "cluster", "cluster_id": int}
+    / {"scope": "operator", "operator_id": int} for field roles.
+    """
+    if not current_user:
+        return None
+    role = normalize_role(current_user.get("role"))
+    if role in REPORT_MANAGEMENT_ROLES:
+        return None
+    user_id = int(current_user["id"])
+    if role == "sub_distributor":
+        return {"scope": "sub", "sub_id": user_id}
+    if role == "sub_distribution_manager":
+        async with async_session_factory() as session:
+            row = (await session.execute(
+                text("SELECT parent_id FROM users WHERE id = :uid"),
+                {"uid": user_id},
+            )).mappings().first()
+        sub_id = int(row["parent_id"]) if row and row.get("parent_id") is not None else None
+        return {"scope": "sub", "sub_id": sub_id}
+    if role == "cluster":
+        return {"scope": "cluster", "cluster_id": user_id}
+    if role == "operator":
+        return {"scope": "operator", "operator_id": user_id}
+    return None
 
 
 ALLOWED_REPORT_TABLES = {
@@ -846,13 +880,16 @@ async def get_sub_distribution_report() -> Dict[str, Any]:
         }
 
 
-async def get_cluster_report() -> Dict[str, Any]:
+async def get_cluster_report(scope: Optional[dict] = None) -> Dict[str, Any]:
     """Build the cluster hierarchy report.
 
     Returns one row per cluster with its parent sub-distribution, hierarchy
     rollups (operators), identity columns (digital id / broadband id), and
     device counts broken into SB / ONT / other plus per-vendor SB and ONT
     counts. Mirrors the sub-distribution report.
+
+    When a ``scope`` dict (from ``_resolve_report_scope``) is provided, only
+    clusters within that user's chain are returned.
     """
     cluster_tree = """
         WITH RECURSIVE hierarchy AS (
@@ -875,6 +912,21 @@ async def get_cluster_report() -> Dict[str, Any]:
         """))
         cluster_rows = cluster_result.mappings().all()
         cluster_ids = [int(r["id"]) for r in cluster_rows]
+
+        allowed_cluster_ids = None
+        scope_mode = (scope or {}).get("scope")
+        if scope_mode == "sub":
+            scope_sub_id = (scope or {}).get("sub_id")
+            allowed_cluster_ids = {
+                int(r["id"])
+                for r in cluster_rows
+                if scope_sub_id is not None and r["sub_id"] is not None
+                and int(r["sub_id"]) == scope_sub_id
+            }
+        elif scope_mode == "cluster":
+            allowed_cluster_ids = {int((scope or {}).get("cluster_id"))}
+        elif scope_mode == "operator":
+            allowed_cluster_ids = set()
 
         cluster_identities = {
             int(r["id"]): {"digital_id": None, "broadband_id": None, "digital_ids": []}
@@ -983,6 +1035,8 @@ async def get_cluster_report() -> Dict[str, Any]:
         rows = []
         for cluster_row in cluster_rows:
             cluster_id = int(cluster_row["id"])
+            if allowed_cluster_ids is not None and cluster_id not in allowed_cluster_ids:
+                continue
             identity = cluster_identities[cluster_id]
             members = member_counts[cluster_id]
             op_ids = operator_identities[cluster_id]
@@ -1014,12 +1068,15 @@ async def get_cluster_report() -> Dict[str, Any]:
         }
 
 
-async def get_operator_report() -> Dict[str, Any]:
+async def get_operator_report(scope: Optional[dict] = None) -> Dict[str, Any]:
     """Build the operator hierarchy report.
 
     Returns one row per operator with its parent sub-distribution and cluster
     (if any), identity columns (digital id / broadband id), and device counts
     broken into SB / ONT / other plus per-vendor SB and ONT counts.
+
+    When a ``scope`` dict (from ``_resolve_report_scope``) is provided, only
+    operators within that user's chain are returned.
     """
     async with async_session_factory() as session:
         operator_result = await session.execute(text("""
@@ -1033,6 +1090,27 @@ async def get_operator_report() -> Dict[str, Any]:
             ORDER BY g.name, p.name, o.name
         """))
         operator_rows = operator_result.mappings().all()
+
+        scope_mode = (scope or {}).get("scope")
+        if scope_mode == "sub":
+            scope_sub_id = (scope or {}).get("sub_id")
+            operator_rows = [
+                r for r in operator_rows
+                if scope_sub_id is not None and r["sub_id"] is not None
+                and int(r["sub_id"]) == scope_sub_id
+            ]
+        elif scope_mode == "cluster":
+            scope_cluster_id = int((scope or {}).get("cluster_id"))
+            operator_rows = [
+                r for r in operator_rows
+                if r["parent_id"] is not None and int(r["parent_id"]) == scope_cluster_id
+            ]
+        elif scope_mode == "operator":
+            scope_operator_id = int((scope or {}).get("operator_id"))
+            operator_rows = [
+                r for r in operator_rows if int(r["id"]) == scope_operator_id
+            ]
+
         operator_ids = [int(r["id"]) for r in operator_rows]
 
         operator_identities = {

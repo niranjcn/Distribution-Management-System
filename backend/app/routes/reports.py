@@ -11,7 +11,7 @@ from app.services.backup_vault_service import (
     download_vault_document,
 )
 from app.services.db_backup_scheduler import get_db_backup_schedule, update_db_backup_schedule
-from app.middleware.auth_middleware import require_admin_or_manager_or_md_or_staff, require_admin_or_manager_or_md
+from app.middleware.auth_middleware import require_admin_or_manager_or_md_or_staff, require_admin_or_manager_or_md, RoleChecker
 from app.core.activity_logger import log_business_activity
 
 router = APIRouter()
@@ -19,6 +19,19 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 MAX_BACKUP_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024
+
+# Hierarchy reports (sub-distribution / cluster / operator) are available to
+# management roles plus the field hierarchy (sub-distribution managers,
+# sub-distributors and clusters). Field roles only ever see their own chain.
+require_hierarchy_reports = RoleChecker([
+    "super_admin",
+    "md_director",
+    "manager",
+    "pdic_staff",
+    "sub_distribution_manager",
+    "sub_distributor",
+    "cluster",
+])
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -207,11 +220,12 @@ async def get_sub_distribution_report(
 
 @router.get("/clusters", summary="Get cluster hierarchy report")
 async def get_cluster_report(
-    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
+    current_user: dict = Depends(require_hierarchy_reports)
 ):
     """Get cluster hierarchy report (operators, device rollups)."""
     try:
-        report = await report_service.get_cluster_report()
+        scope = await report_service._resolve_report_scope(current_user)
+        report = await report_service.get_cluster_report(scope)
 
         return {
             "success": True,
@@ -230,11 +244,12 @@ async def get_cluster_report(
 
 @router.get("/operators", summary="Get operator hierarchy report")
 async def get_operator_report(
-    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
+    current_user: dict = Depends(require_hierarchy_reports)
 ):
     """Get operator hierarchy report (parent cluster / sub-distribution, device rollups)."""
     try:
-        report = await report_service.get_operator_report()
+        scope = await report_service._resolve_report_scope(current_user)
+        report = await report_service.get_operator_report(scope)
 
         return {
             "success": True,

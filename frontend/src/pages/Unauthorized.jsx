@@ -7,7 +7,7 @@ const Unauthorized = () => {
   const { user, logout } = useAuth();
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="full-screen flex items-center justify-center p-4">
       <div className="text-center max-w-md glass-panel rounded-2xl p-8 border border-slate-500/40">
         <div className="mb-8">
           <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">

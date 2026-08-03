@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Upload,
@@ -39,6 +39,10 @@ const BulkUploadUsers = () => {
   const [parentOptions, setParentOptions] = useState([]);
   const [selectedParentId, setSelectedParentId] = useState('');
   const [loadingParents, setLoadingParents] = useState(false);
+  const [subDistOptions, setSubDistOptions] = useState([]);
+  const [managerOptions, setManagerOptions] = useState([]);
+  const [loadingSubDists, setLoadingSubDists] = useState(false);
+  const [selectedSubDistId, setSelectedSubDistId] = useState('');
 
   const actorRole = normalizeRole(user?.role);
   const isManagement = [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.SUB_DISTRIBUTION_MANAGER].includes(actorRole);
@@ -84,6 +88,7 @@ const BulkUploadUsers = () => {
           requiresParent: true,
           parentRole: 'cluster',
           parentLabel: 'Parent Cluster',
+          hasSubFilter: true,
           description: 'Create operators under a specific cluster',
         },
       ];
@@ -154,6 +159,44 @@ const BulkUploadUsers = () => {
     };
     fetchParents();
   }, [selectedMode, isSubDist, user?.id]);
+
+  useEffect(() => {
+    if (!selectedMode?.hasSubFilter) {
+      setSubDistOptions([]);
+      setManagerOptions([]);
+      setSelectedSubDistId('');
+      return;
+    }
+
+    const loadSubDists = async () => {
+      setLoadingSubDists(true);
+      try {
+        const [subRes, mgrRes] = await Promise.all([
+          usersAPI.getUsers({ role: 'sub_distributor' }),
+          usersAPI.getUsers({ role: 'sub_distribution_manager' }),
+        ]);
+        setSubDistOptions(Array.isArray(subRes?.data) ? subRes.data : []);
+        setManagerOptions(Array.isArray(mgrRes?.data) ? mgrRes.data : []);
+      } catch {
+        setSubDistOptions([]);
+        setManagerOptions([]);
+      } finally {
+        setLoadingSubDists(false);
+      }
+    };
+    loadSubDists();
+  }, [selectedMode]);
+
+  const filteredParentOptions = useMemo(() => {
+    if (!selectedMode?.hasSubFilter || !selectedSubDistId) return parentOptions;
+    const managerIds = managerOptions
+      .filter((m) => String(m.parent_id) === String(selectedSubDistId))
+      .map((m) => String(m.id));
+    return parentOptions.filter((c) => (
+      String(c.parent_id) === String(selectedSubDistId)
+      || managerIds.includes(String(c.parent_id))
+    ));
+  }, [selectedMode, selectedSubDistId, parentOptions, managerOptions]);
 
   const downloadTemplate = useCallback(() => {
     try {
@@ -227,6 +270,9 @@ const BulkUploadUsers = () => {
     setResult(null);
     setSelectedParentId('');
     setParentOptions([]);
+    setSelectedSubDistId('');
+    setSubDistOptions([]);
+    setManagerOptions([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -298,28 +344,63 @@ const BulkUploadUsers = () => {
             <p className="text-sm text-gray-600 mb-4">{selectedMode.description}</p>
 
             {selectedMode.requiresParent && (
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  {selectedMode.parentLabel}
-                </label>
-                {loadingParents ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+              <div className="mb-4 space-y-4">
+                {selectedMode.hasSubFilter && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Select Sub Distribution
+                    </label>
+                    {loadingSubDists ? (
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+                      </div>
+                    ) : subDistOptions.length === 0 ? (
+                      <p className="text-sm text-amber-600">No sub-distributors available</p>
+                    ) : (
+                      <select
+                        value={selectedSubDistId}
+                        onChange={(e) => {
+                          setSelectedSubDistId(e.target.value);
+                          setSelectedParentId('');
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Select Sub Distribution...</option>
+                        {subDistOptions.map((sd) => (
+                          <option key={sd.id} value={sd.id}>{sd.name} ({sd.email})</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
-                ) : parentOptions.length === 0 ? (
-                  <p className="text-sm text-amber-600">No {selectedMode.parentRole}s available</p>
-                ) : (
-                  <select
-                    value={selectedParentId}
-                    onChange={e => setSelectedParentId(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select {selectedMode.parentLabel}...</option>
-                    {parentOptions.map(p => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
-                    ))}
-                  </select>
                 )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    {selectedMode.parentLabel}
+                  </label>
+                  {loadingParents ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+                    </div>
+                  ) : filteredParentOptions.length === 0 ? (
+                    <p className="text-sm text-amber-600">
+                      {selectedMode.hasSubFilter && !selectedSubDistId
+                        ? 'Select a sub distribution first'
+                        : `No ${selectedMode.parentRole}s available`}
+                    </p>
+                  ) : (
+                    <select
+                      value={selectedParentId}
+                      onChange={e => setSelectedParentId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select {selectedMode.parentLabel}...</option>
+                      {filteredParentOptions.map(p => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
             )}
 

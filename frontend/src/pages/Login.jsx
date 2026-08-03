@@ -61,7 +61,7 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="full-screen bg-gray-50 flex">
       {/* Left side - Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-green-700 via-green-800 to-green-900 p-12 flex-col justify-between">
         <div>
