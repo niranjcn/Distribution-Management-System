@@ -28,24 +28,37 @@ const ViewAsDashboard = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [devicePage, setDevicePage] = useState(1);
+  const DEVICE_PAGE_SIZE = 20;
 
   useEffect(() => {
+    setDevicePage(1);
+  }, [userId, dateRange]);
+
+  useEffect(() => {
+    let ignore = false;
     const fetchData = async () => {
       setLoading(true);
       setError(null);
       try {
         const dateParams = buildDateParams(dateRange);
-        const res = await dashboardAPI.getViewAsDashboard(userId, dateParams);
+        const res = await dashboardAPI.getViewAsDashboard(userId, {
+          ...dateParams,
+          page: devicePage,
+          page_size: DEVICE_PAGE_SIZE,
+        });
+        if (ignore) return;
         if (!res.success) throw new Error(res.message || 'Failed');
         setData(res.data);
       } catch (err) {
-        setError(err.message || 'Failed to load dashboard');
+        if (!ignore) setError(err.message || 'Failed to load dashboard');
       } finally {
-        setLoading(false);
+        if (!ignore) setLoading(false);
       }
     };
     fetchData();
-  }, [userId, dateRange]);
+    return () => { ignore = true; };
+  }, [userId, dateRange, devicePage]);
 
   if (loading) {
     return (
@@ -68,7 +81,7 @@ const ViewAsDashboard = () => {
     );
   }
 
-  const { user, stats, advanced, devices, users } = data;
+  const { user, stats, advanced, devices, users, devices_total, devices_page, devices_total_pages } = data;
   const kpis = advanced?.kpis || {};
   const charts = advanced?.charts || {};
 
@@ -135,10 +148,13 @@ const ViewAsDashboard = () => {
         )}
       </div>
 
-      {devices && devices.length > 0 && (
+      {devices_total > 0 && (
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-900">Devices ({devices.length})</h2>
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Devices ({devices_total})</h2>
+            <span className="text-sm text-gray-500">
+              Page {devices_page} of {devices_total_pages}
+            </span>
           </div>
           <div className="overflow-auto max-h-80">
             <table className="w-full text-sm">
@@ -164,6 +180,27 @@ const ViewAsDashboard = () => {
               </tbody>
             </table>
           </div>
+          {devices_total_pages > 1 && (
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+              <button
+                type="button"
+                disabled={devices_page <= 1}
+                onClick={() => setDevicePage(devices_page - 1)}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <p className="text-sm text-gray-500">{devices_total} device(s) total</p>
+              <button
+                type="button"
+                disabled={devices_page >= devices_total_pages}
+                onClick={() => setDevicePage(devices_page + 1)}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
       )}
 

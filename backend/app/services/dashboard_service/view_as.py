@@ -1,4 +1,5 @@
 import io
+import math
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -17,7 +18,9 @@ from .analytics import get_advanced_dashboard_metrics
 async def get_view_as_dashboard(
     target_user: Dict[str, Any],
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
 ) -> Dict[str, Any]:
     role = target_user.get("role")
     user_id = str(target_user.get("_id", target_user.get("id", "")))
@@ -65,8 +68,20 @@ async def get_view_as_dashboard(
         date_clause = " AND ".join(date_conds) if date_conds else "1=1"
         dc = f"current_holder_id IN ({dev_ph})" if scope_ids else "1=0"
 
+        dev_where = f"WHERE {dc} AND {date_clause}"
+        devices_total = int((await session.execute(
+            text(f"SELECT COUNT(*) FROM devices {dev_where}"), dev_params
+        )).scalar() or 0)
+
+        # Fetch only the requested page of devices instead of the whole chain.
+        page = max(1, page)
+        page_size = max(1, page_size)
+        devices_offset = (page - 1) * page_size
+        devices_total_pages = max(1, math.ceil(devices_total / page_size))
+
         rows = (await session.execute(
-            text(f"SELECT * FROM devices WHERE {dc} AND {date_clause}"), dev_params
+            text(f"SELECT * FROM devices {dev_where} ORDER BY id LIMIT :dl OFFSET :do"),
+            {**dev_params, "dl": page_size, "do": devices_offset}
         )).mappings().all()
         target_devices = [dict(r) for r in rows]
 
@@ -119,6 +134,10 @@ async def get_view_as_dashboard(
         "stats": stats,
         "advanced": advanced,
         "devices": target_devices,
+        "devices_total": devices_total,
+        "devices_page": page,
+        "devices_page_size": page_size,
+        "devices_total_pages": devices_total_pages,
         "defects": target_defects,
         "returns": target_returns,
         "distributions": target_distributions,

@@ -158,6 +158,7 @@ async def _bulk_update_device_holders(
     from_user_id: Optional[int] = None,
     from_user_name: Optional[str] = None,
     notes: Optional[str] = None,
+    action: str = "distributed",
 ) -> List[str]:
     if not device_ids:
         return []
@@ -210,7 +211,7 @@ async def _bulk_update_device_holders(
         for dev_id in existing_ids:
             history_rows.append({
                 "device_id": dev_id,
-                "action": "distributed",
+                "action": action,
                 "from_user_id": from_user_id,
                 "from_user_name": from_user_name,
                 "to_user_id": holder_id,
@@ -342,7 +343,7 @@ async def get_distributions(
                 "from_user_name": "from_user_name",
                 "to_user_name": "to_user_name",
                 "status": "status",
-                "approved_by_name": "approved_by_name",
+                "confirmed_by_name": "confirmed_by_name",
             }
             identity_user_columns = ["distributions.from_user_id", "distributions.to_user_id"]
             normalized_search_by = str(search_by or "all").strip().lower()
@@ -357,7 +358,7 @@ async def get_distributions(
                 params["search_like"] = like
             else:
                 id_clause, iparams = build_identity_search_clause(identity_user_columns, like)
-                conditions.append("(distribution_id LIKE :sl1 OR from_user_name LIKE :sl2 OR to_user_name LIKE :sl3 OR status LIKE :sl4 OR approved_by_name LIKE :sl5 OR " + id_clause + ")")
+                conditions.append("(distribution_id LIKE :sl1 OR from_user_name LIKE :sl2 OR to_user_name LIKE :sl3 OR status LIKE :sl4 OR confirmed_by_name LIKE :sl5 OR " + id_clause + ")")
                 for i in range(5):
                     params[f"sl{i+1}"] = like
                 params.update(iparams)
@@ -743,11 +744,11 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
         result = await session.execute(
             text("""INSERT INTO distributions (distribution_id, device_count,
                 from_user_id, from_user_name, from_user_type, to_user_id, to_user_name, to_user_type,
-                status, request_date, date_of_distribution, approval_date, approved_by, approved_by_name,
+                status, request_date, date_of_distribution,
                 notes, created_by, created_at, updated_at)
             VALUES (:dist_id, :device_count, :from_user_id, :from_user_name, :from_user_type,
                 :to_user_id, :to_user_name, :to_user_type, :status, :request_date, :date_of_distribution,
-                :approval_date, :approved_by, :approved_by_name, :notes, :created_by, :created_at, :updated_at)"""),
+                :notes, :created_by, :created_at, :updated_at)"""),
             {
                 "dist_id": dist_id,
                 "device_count": len(dist_data.device_ids),
@@ -760,9 +761,6 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 "status": DistributionStatus.PENDING_RECEIPT.value,
                 "request_date": now,
                 "date_of_distribution": distribution_date,
-                "approval_date": today,
-                "approved_by": from_user_id,
-                "approved_by_name": from_user["name"],
                 "notes": dist_data.notes,
                 "created_by": from_user_id,
                 "created_at": now,
@@ -831,7 +829,7 @@ async def update_distribution_status(
 
         now_date = now.date()
         if status == DistributionStatus.APPROVED.value:
-            update_parts.extend(["approval_date = :now2", "approved_by = :uid", "approved_by_name = :uname"])
+            update_parts.extend(["confirmed_at = :now2", "confirmed_by = :uid", "confirmed_by_name = :uname"])
             params["now2"] = now_date
             params["uid"] = user_id
             params["uname"] = user["name"]
@@ -913,12 +911,16 @@ async def confirm_receipt(
             from_user_id=int(dist["from_user_id"]),
             from_user_name=dist["from_user_name"],
             notes=f"Receipt confirmed for distribution {dist['distribution_id']}",
+            # One per-device history row is written for tracking, but the admin
+            # activity feed excludes this bulk action so accepting a large
+            # delivery shows up as a single activity entry.
+            action="bulk_distributed",
         )
 
         async with async_session_factory() as session:
             await session.execute(
                 text("""UPDATE distributions
-                   SET status = :status, approval_date = :today, approved_by = :uid, approved_by_name = :uname,
+                   SET status = :status, confirmed_at = :today, confirmed_by = :uid, confirmed_by_name = :uname,
                        notes = COALESCE(:notes, notes), updated_at = :now2
                    WHERE id = :id"""),
                 {
@@ -1048,6 +1050,7 @@ async def confirm_disputed_return(
                 from_user_id=int(dist.get("to_user_id") or 0),
                 from_user_name=dist.get("to_user_name"),
                 notes=f"Disputed return confirmed for distribution {dist.get('distribution_id')}",
+                action="bulk_distributed",
             )
 
     await notification_service.create_notification(
@@ -1291,6 +1294,7 @@ async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
                     from_user_id=dist.get("from_user_id"),
                     from_user_name=dist.get("from_user_name"),
                     notes=f"Synced from approved distribution {dist.get('distribution_id', '')}",
+                    action="bulk_distributed",
                 )
                 synced_count += len(updated)
 

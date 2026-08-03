@@ -27,7 +27,7 @@ const SEARCH_BY_OPTIONS = [
   { value: 'digital_id', label: 'Digital ID' },
   { value: 'broadband_id', label: 'Broadband ID' },
   { value: 'status', label: 'Status' },
-  { value: 'approved_by_name', label: 'Approved By' },
+  { value: 'confirmed_by_name', label: 'Confirmed By' },
 ];
 
 const STATUS_CARD_CONFIG = ['pending_receipt', 'approved', 'disputed'];
@@ -425,8 +425,8 @@ const Distributions = () => {
     },
     { key: 'created_at', label: 'Created', render: (value) => value ? new Date(value).toLocaleDateString() : '-' },
     {
-      key: 'approved_by_name',
-      label: 'Approved By',
+      key: 'confirmed_by_name',
+      label: 'Confirmed By',
       render: (value) => value || '-'
     },
     {
@@ -698,8 +698,8 @@ const Distributions = () => {
                 <p className="font-medium text-gray-800">{selectedDist.device_count || selectedDist.device_ids?.length || 0}</p>
               </div>
               <div>
-                <label className="text-xs text-gray-500 uppercase tracking-wider">Transferred By</label>
-                <p className="font-medium text-gray-800">{selectedDist.approved_by_name || selectedDist.from_user_name || 'N/A'}</p>
+                <label className="text-xs text-gray-500 uppercase tracking-wider">Confirmed By</label>
+                <p className="font-medium text-gray-800">{selectedDist.confirmed_by_name || selectedDist.from_user_name || 'N/A'}</p>
               </div>
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wider">Transfer Date</label>

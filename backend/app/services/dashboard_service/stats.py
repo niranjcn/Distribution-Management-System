@@ -299,7 +299,31 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
             my_returns = (await session.execute(
                 text(f"SELECT COUNT(*) FROM returns r LEFT JOIN defects def ON def.id = r.defect_id WHERE {rc.replace('created_at', 'r.created_at')}"), rp
             )).scalar() or 0
+
+            # Accurate counts independent of any device-list page size. The
+            # dashboard reads these keys; without them it falls back to the
+            # (page-limited) device rows and shows e.g. 10 instead of the real total.
+            ac, ap = _build_date_filter(
+                "current_holder_id = :uid5 AND status IN ('available','distributed','in_use')",
+                {"uid5": uid}, start_date, end_date
+            )
+            active_devices = (await session.execute(
+                text(f"SELECT COUNT(*) FROM devices WHERE {ac}"), ap
+            )).scalar() or 0
+
+            ic, ip = _build_date_filter(
+                "current_holder_id = :uid6 AND status = 'in_use'",
+                {"uid6": uid}, start_date, end_date
+            )
+            in_use_devices = (await session.execute(
+                text(f"SELECT COUNT(*) FROM devices WHERE {ic}"), ip
+            )).scalar() or 0
+
         stats = {
+            "assigned_devices": my_devices,
+            "active_devices": active_devices,
+            "in_use_devices": in_use_devices,
+            "defect_reports": my_defects,
             "my_devices": my_devices,
             "my_defects": my_defects,
             "my_returns": my_returns
