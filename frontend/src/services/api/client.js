@@ -61,7 +61,10 @@ const buildCsrfHeader = (method) => {
   return csrfToken && isUnsafeMethod(method) ? { 'X-CSRFToken': csrfToken } : {};
 };
 
-const AUTH_FAILURE_STATUSES = new Set([401, 403]);
+// 401 indicates an invalid/expired session (token refresh then logout).
+// 403 is a genuine permission error (authenticated but not allowed) and must
+// NOT clear the session, otherwise any "forbidden" API error logs the user out.
+const AUTH_FAILURE_STATUSES = new Set([401]);
 const AUTH_FAILURE_ALLOWLIST = new Set([
   '/auth/login',
   '/auth/refresh',

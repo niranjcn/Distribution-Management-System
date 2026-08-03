@@ -299,6 +299,8 @@ async def view_as_dashboard(
     target_user_id: str,
     start_date: str = Query(None),
     end_date: str = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=500),
     current_user: dict = Depends(require_admin_or_md)
 ):
     """Get dashboard data as seen by the target user (admin/manager only)."""
@@ -324,7 +326,7 @@ async def view_as_dashboard(
                 "email": str(row.get("email", "")),
             }
 
-        data = await dashboard_service.get_view_as_dashboard(target_user, start_date, end_date)
+        data = await dashboard_service.get_view_as_dashboard(target_user, start_date, end_date, page=page, page_size=page_size)
         return {"success": True, "data": data}
     except HTTPException:
         raise

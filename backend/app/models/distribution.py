@@ -53,12 +53,12 @@ class Distribution(BaseModel):
     status: DistributionStatus = DistributionStatus.PENDING
     request_date: datetime
     date_of_distribution: Optional[date] = None
-    approval_date: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
     delivery_date: Optional[datetime] = None
     notes: Optional[str] = None
     manifest_file: Optional[str] = None
-    approved_by: Optional[str] = None
-    approved_by_name: Optional[str] = None
+    confirmed_by: Optional[str] = None
+    confirmed_by_name: Optional[str] = None
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -82,12 +82,12 @@ class DistributionResponse(BaseModel):
     status: DistributionStatus
     request_date: datetime
     date_of_distribution: Optional[date] = None
-    approval_date: Optional[date] = None
+    confirmed_at: Optional[date] = None
     delivery_date: Optional[date] = None
     notes: Optional[str] = None
     manifest_file: Optional[str] = None
-    approved_by: Optional[str] = None
-    approved_by_name: Optional[str] = None
+    confirmed_by: Optional[str] = None
+    confirmed_by_name: Optional[str] = None
     created_at: datetime
 
 

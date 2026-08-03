@@ -373,7 +373,13 @@ async def get_my_device_overview(
                 }
             }
         else:
-            effective_limit = limit if limit is not None else (10 if show_all else min(page_size, 1000))
+            # Paginated requests must slice the FULL scoped chain so the in-memory
+            # page offsets and the reported total_count are accurate. Capping by
+            # page_size previously truncated the chain to 100 devices, which made
+            # pagination stop at page 10 for sub-distributor/cluster/operator roles.
+            effective_limit = limit if limit is not None else (
+                1_000_000 if paginate else (10 if show_all else min(page_size, 1000))
+            )
             overview = await device_service.get_user_device_overview(
                 user_id=current_user["id"],
                 user_role=role,

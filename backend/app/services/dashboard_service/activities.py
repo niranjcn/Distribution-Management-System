@@ -14,13 +14,14 @@ async def get_recent_activities(user: Dict[str, Any], limit: int = 10) -> list:
     async with async_session_factory() as session:
         if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
             rows = (await session.execute(
-                text("SELECT * FROM device_history ORDER BY timestamp DESC LIMIT :lim"),
+                text("SELECT * FROM device_history WHERE action NOT IN ('bulk_registered', 'bulk_distributed') ORDER BY timestamp DESC LIMIT :lim"),
                 {"lim": limit}
             )).mappings().all()
         else:
             rows = (await session.execute(
                 text("""SELECT * FROM device_history
-                WHERE performed_by = :uid OR from_user_id = :uid2 OR to_user_id = :uid3
+                WHERE (performed_by = :uid OR from_user_id = :uid2 OR to_user_id = :uid3)
+                  AND action NOT IN ('bulk_registered', 'bulk_distributed')
                 ORDER BY timestamp DESC LIMIT :lim"""),
                 {"uid": user_id, "uid2": user_id, "uid3": user_id, "lim": limit}
             )).mappings().all()
@@ -60,6 +61,11 @@ async def get_admin_activities(
 
             conditions.append("action != :bulk_action")
             params["bulk_action"] = "bulk_registered"
+
+            # Bulk distribution receipts write one per-device history row for
+            # tracking purposes but must surface as a single activity entry.
+            conditions.append("action != :bulk_action2")
+            params["bulk_action2"] = "bulk_distributed"
 
             conditions.append("(notes IS NULL OR notes NOT LIKE :excl1)")
             params["excl1"] = "Device replaced by % for defect %"

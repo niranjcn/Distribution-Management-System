@@ -923,7 +923,9 @@ async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[st
     async with async_session_factory() as session:
         scope_user_ids = await _get_report_scope_user_ids(session, current_user) if current_user else None
         requested_user_id = int(user_id)
-        if scope_user_ids is not None and requested_user_id not in scope_user_ids:
+        # scope_user_ids is a set of string ids; compare as strings to avoid an
+        # int-vs-str mismatch that wrongly rejected every non-management caller.
+        if scope_user_ids is not None and str(requested_user_id) not in scope_user_ids:
             raise PermissionError("Requested user is outside your hierarchy scope")
 
         rows = (await session.execute(
