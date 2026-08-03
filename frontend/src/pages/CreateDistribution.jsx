@@ -180,7 +180,7 @@ const CreateDistribution = () => {
     if (filterClusterId) return operatorPool.filter(o => String(o.parent_id) === filterClusterId);
     if (isManagement && filterSubDistId) {
       const clusterIds = new Set(allClusters.filter(c => String(c.parent_id) === filterSubDistId).map(c => String(c.id)));
-      return operatorPool.filter(o => clusterIds.has(String(o.parent_id)));
+      return operatorPool.filter(o => clusterIds.has(String(o.parent_id)) || String(o.parent_id) === filterSubDistId);
     }
     return operatorPool;
   }, [allOperators, allClusters, filterSubDistId, filterClusterId, isManagement, role, user?.id]);

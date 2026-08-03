@@ -50,7 +50,7 @@ const ForcedCredentialUpdate = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+    <div className="full-screen bg-slate-950 flex items-center justify-center p-6">
       <div className="w-full max-w-lg rounded-2xl border border-cyan-500/30 bg-slate-900 p-8 shadow-xl">
         <div className="flex items-center gap-3 text-cyan-200 mb-6">
           <ShieldCheck className="w-6 h-6" />

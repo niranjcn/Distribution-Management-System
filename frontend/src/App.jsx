@@ -55,7 +55,7 @@ const ProtectedRoute = ({ children, allowedRoles = [] }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="full-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-500">Loading...</p>
@@ -85,7 +85,7 @@ const PublicRoute = ({ children }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="full-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-500">Loading...</p>
@@ -297,7 +297,7 @@ function AppRoutes() {
         <Route
           path="reports/cluster"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor']}>
               <ClusterReport />
             </ProtectedRoute>
           }
@@ -306,7 +306,7 @@ function AppRoutes() {
         <Route
           path="reports/operator"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster']}>
               <OperatorReport />
             </ProtectedRoute>
           }
@@ -405,11 +405,11 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <NotificationProvider>
-          <div className="ops-theme min-h-screen">
+          <div className="ops-theme full-screen">
             <ErrorBoundary
               name="Page"
               fallback={
-                <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+                <div className="full-screen flex items-center justify-center bg-gray-50 p-4">
                   <div className="bg-white rounded-xl shadow-sm border border-red-200 p-8 max-w-md w-full text-center">
                     <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center border border-red-200 mx-auto mb-4">
                       <AlertTriangle className="w-6 h-6 text-red-500" />

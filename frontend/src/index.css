@@ -142,6 +142,19 @@ html, body {
   overflow-x: clip;
 }
 
+/* Default zoom to 80% so the UI renders smaller than the browser's native 100% */
+html {
+  zoom: 0.8;
+}
+
+/* The 80% zoom above also scales vh units in Chromium, so a 100vh element only
+   covers 80% of the visual viewport. Use this on full-screen sections (login,
+   loading screens) so they fill edge-to-edge and leave no blank strip at the
+   bottom: 100vh / 0.8 = 125vh. */
+.full-screen {
+  min-height: 125vh;
+}
+
 /* ===== KannurVision Light Theme Overrides ===== */
 /* The ops-theme wrapper now drives the LIGHT theme */
 .ops-theme {

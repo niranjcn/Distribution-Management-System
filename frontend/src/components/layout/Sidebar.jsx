@@ -115,6 +115,28 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
     };
 
+    // Field-hierarchy report menus are scoped to the caller's own chain:
+    // sub-distribution managers/sub-distributors see cluster + operator pages,
+    // clusters see the operator page only.
+    const subFieldReportMenu = {
+      key: 'report',
+      icon: BarChart3,
+      label: 'Report',
+      children: [
+        { path: '/reports/cluster', label: 'Cluster' },
+        { path: '/reports/operator', label: 'Operator' },
+      ],
+    };
+
+    const clusterFieldReportMenu = {
+      key: 'report',
+      icon: BarChart3,
+      label: 'Report',
+      children: [
+        { path: '/reports/operator', label: 'Operator' },
+      ],
+    };
+
     const roleMenus = {
       [ROLES.SUPER_ADMIN]: [
         ...commonItems,
@@ -250,6 +272,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.SUB_DISTRIBUTION_MANAGER]: [
         ...commonItems,
+        subFieldReportMenu,
         {
           key: 'users',
           icon: Users,
@@ -272,6 +295,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.SUB_DISTRIBUTOR]: [
         ...commonItems,
+        subFieldReportMenu,
         {
           key: 'users',
           icon: Users,
@@ -306,6 +330,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
       [ROLES.CLUSTER]: [
         ...commonItems,
+        clusterFieldReportMenu,
         {
           key: 'users',
           icon: Users,

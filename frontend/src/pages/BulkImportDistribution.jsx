@@ -122,7 +122,9 @@ const BulkImportDistribution = () => {
           .filter(c => String(c.parent_id) === String(filterSubDistId))
           .map(c => String(c.id))
       );
-      return allOperators.filter(o => clusterIds.has(String(o.parent_id)));
+      return allOperators.filter(
+        o => clusterIds.has(String(o.parent_id)) || String(o.parent_id) === String(filterSubDistId)
+      );
     }
 
     return allOperators;

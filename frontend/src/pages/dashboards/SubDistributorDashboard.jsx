@@ -51,6 +51,7 @@ const SubDistributorDashboard = () => {
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
   const [myDevices, setMyDevices] = useState([]);
+  const [deviceStats, setDeviceStats] = useState({});
   const [distributions, setDistributions] = useState([]);
   const [myOperators, setMyOperators] = useState([]);
   const [defectReports, setDefectReports] = useState([]);
@@ -76,6 +77,7 @@ const SubDistributorDashboard = () => {
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
         setMyDevices(Array.isArray(devRes.data) ? devRes.data : (devRes.data?.all_under_me || []));
+        setDeviceStats(devRes.data?.stats || {});
         setDistributions(distRes.data || []);
         setMyOperators(usersRes.data || []);
         setDefectReports(defRes.data || []);
@@ -151,6 +153,46 @@ const SubDistributorDashboard = () => {
           <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" />
           <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" />
         </div>
+      </ErrorBoundary>
+
+      <ErrorBoundary name="Device Chain Card">
+        <Card title="Devices Under My Chain" icon={Box}>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Box className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-800">
+                  {Number(deviceStats.total_in_chain ?? (myDevices.length || 0))}
+                </p>
+                <p className="text-sm text-gray-500">Total Devices</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                <Package className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-800">
+                  {Number(deviceStats.in_my_hand ?? (myDevices.filter((d) => String(d.current_holder_id) === String(user?.id)).length || 0))}
+                </p>
+                <p className="text-sm text-gray-500">Total Devices In Hand</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                <Users className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-gray-800">
+                  {Number(deviceStats.under_subordinates ?? 0)}
+                </p>
+                <p className="text-sm text-gray-500">Under the Chain</p>
+              </div>
+            </div>
+          </div>
+        </Card>
       </ErrorBoundary>
 
       <ErrorBoundary name="Charts">

@@ -10,10 +10,10 @@ const Layout = () => {
   const { toasts } = useNotifications();
 
   return (
-    <div className="min-h-screen">
+    <div className="full-screen">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="lg:ml-64 min-h-screen flex flex-col">
+      <div className="lg:ml-64 full-screen flex flex-col">
         <Navbar onMenuClick={() => setSidebarOpen(true)} />
 
         {/* Main content */}
