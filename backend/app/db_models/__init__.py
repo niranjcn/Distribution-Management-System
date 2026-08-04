@@ -2,7 +2,7 @@ from app.db_models.base import Base
 from app.db_models.cache_version import CacheVersion
 from app.db_models.auth import User, TokenBlacklist, ChangeRequest, ReassignmentRequest
 from app.db_models.device import Device, DeviceHistory
-from app.db_models.distribution import Distribution, DistributionDevice
+from app.db_models.distribution import Distribution
 from app.db_models.defect import Defect
 from app.db_models.return_device import Return
 from app.db_models.operator import Operator
@@ -16,7 +16,7 @@ __all__ = [
     "CacheVersion",
     "User", "TokenBlacklist", "ChangeRequest", "ReassignmentRequest",
     "Device", "DeviceHistory",
-    "Distribution", "DistributionDevice",
+    "Distribution",
     "Defect",
     "Return",
     "Operator",
