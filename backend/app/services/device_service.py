@@ -14,10 +14,10 @@ from app.utils.helpers import get_pagination, generate_device_id
 
 async def _get_locked_distribution_device_ids(session) -> set:
     result = await session.execute(text("""
-        SELECT dd.device_id
-        FROM distribution_devices dd
-        INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
-        WHERE d.status IN ('pending_receipt', 'disputed')
+        SELECT d.id
+        FROM devices d
+        INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
+        WHERE dist.status IN ('pending_receipt', 'disputed')
     """))
     return {row[0] for row in result}
 

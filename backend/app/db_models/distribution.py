@@ -28,10 +28,7 @@ class Distribution(Base):
     updated_at = Column(DateTime, nullable=False)
 
 
-class DistributionDevice(Base):
-    __tablename__ = "distribution_devices"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    distribution_id = Column(String(128), nullable=False)
-    device_id = Column(Integer, nullable=False)
-    created_at = Column(DateTime, nullable=False)
+# NOTE: The `distribution_devices` junction table was removed (migration 0017).
+# Distribution <-> device membership is now derived from:
+#   - `devices.current_distribution_id` (current / locked-in distribution)
+#   - `device_history.distribution_id` (historical membership)

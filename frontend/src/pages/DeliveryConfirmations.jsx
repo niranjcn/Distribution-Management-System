@@ -87,13 +87,19 @@ const DeliveryConfirmations = () => {
     }
   };
 
-  const fetchDistributionDevices = async (deviceIds) => {
-    if (!deviceIds || deviceIds.length === 0) {
+const fetchDistributionDevices = async (distributionId) => {
+    if (!distributionId) {
       setDistributionDevices([]);
       return;
     }
     try {
       setLoadingDevices(true);
+      const detail = await distributionsAPI.getDistribution(distributionId);
+      const deviceIds = Array.isArray(detail?.data?.device_ids) ? detail.data.device_ids : [];
+      if (deviceIds.length === 0) {
+        setDistributionDevices([]);
+        return;
+      }
       const devicePromises = deviceIds.map(id => devicesAPI.getDevice(id));
       const responses = await Promise.all(devicePromises);
       setDistributionDevices(responses.map(res => res.data).filter(Boolean));
@@ -106,12 +112,8 @@ const DeliveryConfirmations = () => {
   };
 
   useEffect(() => {
-    fetchDistributions();
-  }, []);
-
-  useEffect(() => {
     if (showDetailModal && selectedDist) {
-      fetchDistributionDevices(selectedDist.device_ids);
+      fetchDistributionDevices(selectedDist._id || selectedDist.id);
     }
   }, [showDetailModal, selectedDist]);
 

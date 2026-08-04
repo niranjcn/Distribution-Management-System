@@ -311,6 +311,7 @@ async def get_distributions(
     search_by: Optional[str] = Query("all"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    include_device_ids: bool = Query(False),
     current_user: dict = Depends(get_current_user)
 ):
     """Get all distributions with pagination and filters"""
@@ -325,6 +326,7 @@ async def get_distributions(
             search_by=search_by,
             start_date=start_date,
             end_date=end_date,
+            include_device_ids=include_device_ids,
         )
 
         return {

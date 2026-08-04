@@ -159,6 +159,7 @@ async def _bulk_update_device_holders(
     from_user_name: Optional[str] = None,
     notes: Optional[str] = None,
     action: str = "distributed",
+    distribution_id: Optional[str] = None,
 ) -> List[str]:
     if not device_ids:
         return []
@@ -212,6 +213,7 @@ async def _bulk_update_device_holders(
             history_rows.append({
                 "device_id": dev_id,
                 "action": action,
+                "distribution_id": distribution_id,
                 "from_user_id": from_user_id,
                 "from_user_name": from_user_name,
                 "to_user_id": holder_id,
@@ -228,10 +230,10 @@ async def _bulk_update_device_holders(
         if history_rows:
             await session.execute(
                 text("""INSERT INTO device_history (
-                    device_id, action, from_user_id, from_user_name,
+                    device_id, action, distribution_id, from_user_id, from_user_name,
                     to_user_id, to_user_name, status_before, status_after,
                     location, notes, performed_by, performed_by_name, timestamp
-                ) VALUES (:device_id, :action, :from_user_id, :from_user_name,
+                ) VALUES (:device_id, :action, :distribution_id, :from_user_id, :from_user_name,
                     :to_user_id, :to_user_name, :status_before, :status_after,
                     :location, :notes, :performed_by, :performed_by_name, :ts)"""),
                 history_rows
@@ -273,18 +275,38 @@ async def _load_distribution_device_ids(
     session,
     distribution_codes: List[str],
 ) -> Dict[str, List[str]]:
-    """Return {distribution_code: [device_id, ...]} from distribution_devices."""
+    """Return {distribution_code: [device_id, ...]}.
+
+    Membership is derived from two sources (the `distribution_devices` junction
+    table was removed in migration 0017):
+    - `devices.current_distribution_id` for distributions a device is currently
+      locked in (pending_receipt / disputed).
+    - `device_history.distribution_id` for historical / completed membership.
+    """
     result: Dict[str, List[str]] = {}
     if not distribution_codes:
         return result
     ph = ",".join([f":c_{i}" for i in range(len(distribution_codes))])
     params = {f"c_{i}": code for i, code in enumerate(distribution_codes)}
-    rows = (await session.execute(
-        text(f"SELECT distribution_id, device_id FROM distribution_devices WHERE distribution_id IN ({ph})"),
+
+    current_rows = (await session.execute(
+        text(f"""SELECT current_distribution_id AS distribution_id, id AS device_id
+                 FROM devices WHERE current_distribution_id IN ({ph})"""),
         params
     )).mappings().all()
-    for r in rows:
+    for r in current_rows:
         result.setdefault(str(r["distribution_id"]), []).append(str(r["device_id"]))
+
+    history_rows = (await session.execute(
+        text(f"""SELECT distribution_id, device_id
+                 FROM device_history WHERE distribution_id IN ({ph})"""),
+        params
+    )).mappings().all()
+    for r in history_rows:
+        key = str(r["distribution_id"])
+        device_id = str(r["device_id"])
+        if device_id not in result.setdefault(key, []):
+            result[key].append(device_id)
     return result
 
 
@@ -300,6 +322,7 @@ async def get_distributions(
     current_user: Optional[Dict[str, Any]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    include_device_ids: bool = False,
 ) -> Dict[str, Any]:
     async with async_session_factory() as session:
         conditions = []
@@ -377,14 +400,19 @@ async def get_distributions(
             params
         )).mappings().all()
 
-        device_map = await _load_distribution_device_ids(
-            session, [str(r["distribution_id"]) for r in rows]
-        )
+        device_map = {}
+        if include_device_ids:
+            device_map = await _load_distribution_device_ids(
+                session, [str(r["distribution_id"]) for r in rows]
+            )
 
         result = []
         for r in rows:
             d = dict(r)
-            d["device_ids"] = device_map.get(str(d["distribution_id"]), [])
+            if include_device_ids:
+                d["device_ids"] = device_map.get(str(d["distribution_id"]), [])
+            else:
+                d["device_ids"] = []
             result.append(d)
 
         return {
@@ -508,6 +536,31 @@ async def create_distribution_from_identifiers(
             for dev in rows:
                 nuid_map[dev["nuid"].strip().lower()] = dict(dev)
 
+        from_role = str(from_user.get("role") or "").lower()
+        from_user_id = int(from_user.get("id") or from_user.get("_id") or 0)
+
+        # Devices currently locked in an unconfirmed / disputed distribution.
+        open_lock_rows = (await session.execute(
+            text("""SELECT d.id AS device_id
+                    FROM devices d
+                    INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
+                    WHERE dist.status IN (:s1, :s2)"""),
+            {"s1": DistributionStatus.PENDING_RECEIPT.value, "s2": DistributionStatus.DISPUTED.value}
+        )).mappings().all()
+        open_lock_device_ids = {str(r["device_id"]) for r in open_lock_rows}
+
+        # For non-management uploaders, block devices awaiting their receipt confirmation.
+        pending_blocked: Set[str] = set()
+        if from_role not in ["super_admin", "manager", "pdic_staff"]:
+            blocked_rows = (await session.execute(
+                text("""SELECT d.id AS device_id
+                        FROM devices d
+                        INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
+                        WHERE dist.to_user_id = :uid AND dist.status = :status"""),
+                {"uid": from_user_id, "status": DistributionStatus.PENDING_RECEIPT.value}
+            )).mappings().all()
+            pending_blocked = {str(r["device_id"]) for r in blocked_rows}
+
         for item in row_lookup:
             row_number = item["row"]
             mac_address = item["mac_address"]
@@ -570,6 +623,51 @@ async def create_distribution_from_identifiers(
                     "error": "Duplicate device in upload",
                 })
                 continue
+
+            device_status = str(resolved_device.get("status") or "")
+            device_display_id = str(resolved_device.get("device_id") or "")
+            identifier_value = mac_address or serial_number or nuid
+
+            if device_status == DeviceStatus.DEFECTIVE.value:
+                errors.append({
+                    "row": row_number,
+                    "identifier": identifier_value,
+                    "error": f"Device {device_display_id} is marked defective and cannot be transferred",
+                })
+                continue
+            if resolved_id in open_lock_device_ids:
+                errors.append({
+                    "row": row_number,
+                    "identifier": identifier_value,
+                    "error": f"Device {device_display_id} is already in an unconfirmed or disputed distribution",
+                })
+                continue
+            if from_role in ["super_admin", "manager", "pdic_staff"]:
+                if device_status != DeviceStatus.AVAILABLE.value:
+                    errors.append({
+                        "row": row_number,
+                        "identifier": identifier_value,
+                        "error": f"Device {device_display_id} is not available",
+                    })
+                    continue
+            else:
+                if int(resolved_device.get("current_holder_id") or 0) != from_user_id:
+                    errors.append({
+                        "row": row_number,
+                        "identifier": identifier_value,
+                        "error": f"Device {device_display_id} is not in your possession",
+                    })
+                    continue
+                if resolved_id in pending_blocked:
+                    errors.append({
+                        "row": row_number,
+                        "identifier": identifier_value,
+                        "error": (
+                            f"Device {device_display_id} is awaiting your receipt confirmation. "
+                            "Confirm receipt before redistributing."
+                        ),
+                    })
+                    continue
 
             seen_device_ids.add(resolved_id)
             resolved_device_ids.append(resolved_id)
@@ -675,10 +773,10 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 
         if from_role not in ["super_admin", "manager", "pdic_staff"]:
             blocked_rows = (await session.execute(
-                text("""SELECT dd.device_id
-                   FROM distribution_devices dd
-                   INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
-                   WHERE d.to_user_id = :uid AND d.status = :status"""),
+                text("""SELECT d.id AS device_id
+                   FROM devices d
+                   INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
+                   WHERE dist.to_user_id = :uid AND dist.status = :status"""),
                 {"uid": from_user_id, "status": DistributionStatus.PENDING_RECEIPT.value}
             )).mappings().all()
             for r in blocked_rows:
@@ -690,11 +788,11 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
         lparams["s1"] = DistributionStatus.PENDING_RECEIPT.value
         lparams["s2"] = DistributionStatus.DISPUTED.value
         lock_rows = (await session.execute(
-            text(f"""SELECT dd.device_id
-                FROM distribution_devices dd
-                INNER JOIN distributions d ON dd.distribution_id = d.distribution_id
-                WHERE d.status IN (:s1, :s2)
-                  AND dd.device_id IN ({lph})"""),
+            text(f"""SELECT d.id AS device_id
+                FROM devices d
+                INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
+                WHERE dist.status IN (:s1, :s2)
+                  AND d.id IN ({lph})"""),
             lparams
         )).mappings().all()
         for lr in lock_rows:
@@ -771,9 +869,15 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 
         dd_rows = [{"dist_id": dist_id, "device_id": int(dev_id), "now": now} for dev_id in dist_data.device_ids]
         if dd_rows:
+            uph = ",".join([f":u_{i}" for i in range(len(dd_rows))])
+            uparams = {f"u_{i}": int(row["device_id"]) for i, row in enumerate(dd_rows)}
+            uparams["dist_id"] = dist_id
+            uparams["now"] = now
             await session.execute(
-                text("INSERT INTO distribution_devices (distribution_id, device_id, created_at) VALUES (:dist_id, :device_id, :now)"),
-                dd_rows
+                text(f"""UPDATE devices
+                    SET current_distribution_id = :dist_id, updated_at = :now
+                    WHERE id IN ({uph})"""),
+                uparams
             )
 
         manifest_file = None
@@ -915,7 +1019,20 @@ async def confirm_receipt(
             # activity feed excludes this bulk action so accepting a large
             # delivery shows up as a single activity entry.
             action="bulk_distributed",
+            distribution_id=dist["distribution_id"],
         )
+
+        async with async_session_factory() as session:
+            if device_ids:
+                uph = ",".join([f":r_{i}" for i in range(len(device_ids))])
+                rparams = {f"r_{i}": int(did) for i, did in enumerate(device_ids)}
+                await session.execute(
+                    text(f"""UPDATE devices
+                        SET current_distribution_id = NULL, updated_at = :now
+                        WHERE id IN ({uph})"""),
+                    {**rparams, "now": now}
+                )
+            await session.commit()
 
         async with async_session_factory() as session:
             await session.execute(
@@ -1051,7 +1168,18 @@ async def confirm_disputed_return(
                 from_user_name=dist.get("to_user_name"),
                 notes=f"Disputed return confirmed for distribution {dist.get('distribution_id')}",
                 action="bulk_distributed",
+                distribution_id=dist.get("distribution_id"),
             )
+            if dist.get("distribution_id"):
+                uph = ",".join([f":d_{i}" for i in range(len(device_ids))])
+                dparams = {f"d_{i}": int(did) for i, did in enumerate(device_ids)}
+                await session.execute(
+                    text(f"""UPDATE devices
+                        SET current_distribution_id = NULL, updated_at = :now2
+                        WHERE id IN ({uph})"""),
+                    {**dparams, "now2": now}
+                )
+            await session.commit()
 
     await notification_service.create_notification(
         user_id=str(dist["from_user_id"]),
@@ -1086,6 +1214,34 @@ async def cancel_distribution(distribution_id: str, user: dict) -> bool:
             text("UPDATE distributions SET status = :status, updated_at = :now WHERE id = :id"),
             {"status": DistributionStatus.CANCELLED.value, "now": now, "id": int(distribution_id)}
         )
+
+        device_ids = dist.get("device_ids") or []
+        if dist.get("distribution_id") and device_ids:
+            dist_code = dist["distribution_id"]
+            hist_rows = [
+                {
+                    "device_id": int(did),
+                    "distribution_id": dist_code,
+                    "notes": f"Distribution {dist_code} cancelled",
+                    "ts": now,
+                }
+                for did in device_ids
+            ]
+            await session.execute(
+                text("""INSERT INTO device_history (
+                    device_id, action, distribution_id, notes, timestamp
+                ) VALUES (:device_id, 'distribution_record', :distribution_id, :notes, :ts)"""),
+                hist_rows
+            )
+            uph = ",".join([f":c_{i}" for i in range(len(device_ids))])
+            cparams = {f"c_{i}": int(did) for i, did in enumerate(device_ids)}
+            await session.execute(
+                text(f"""UPDATE devices
+                    SET current_distribution_id = NULL, updated_at = :now2
+                    WHERE id IN ({uph}) AND current_distribution_id = :dist_code"""),
+                {**cparams, "now2": now, "dist_code": dist_code}
+            )
+
         await bump_cache_version(session)
         await session.commit()
     return True
@@ -1295,8 +1451,21 @@ async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
                     from_user_name=dist.get("from_user_name"),
                     notes=f"Synced from approved distribution {dist.get('distribution_id', '')}",
                     action="bulk_distributed",
+                    distribution_id=dist.get("distribution_id"),
                 )
                 synced_count += len(updated)
+
+                if dist.get("distribution_id"):
+                    uph = ",".join([f":s_{i}" for i in range(len(device_ids))])
+                    sparams = {f"s_{i}": int(did) for i, did in enumerate(device_ids)}
+                    await session.execute(
+                        text(f"""UPDATE devices
+                            SET current_distribution_id = NULL, updated_at = :now2
+                            WHERE id IN ({uph}) AND current_distribution_id = :dist_code"""),
+                        {**sparams, "now2": datetime.now().replace(tzinfo=None), "dist_code": dist["distribution_id"]}
+                    )
+
+        await session.commit()
 
     return {"total_distributions": len(distributions), "devices_synced": synced_count, "errors": errors}
 
