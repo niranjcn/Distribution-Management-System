@@ -143,6 +143,102 @@ class TestReturnSummaryReport:
         assert resp.status_code == 403
 
 
+class TestSubDistributionReport:
+    URL = "/api/reports/sub-distributions"
+
+    def test_super_admin_gets_report(self, client, mock_report_services):
+        import app.routes.reports as rep_mod
+
+        rep_mod.report_service.get_sub_distribution_report = AsyncMock(
+            return_value={"sub_distributions": [{"sub_id": 1}]}
+        )
+
+        resp = client.get(self.URL)
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["sub_distributions"][0]["sub_id"] == 1
+
+    def test_passes_date_params(self, client, mock_report_services):
+        import app.routes.reports as rep_mod
+
+        rep_mod.report_service.get_sub_distribution_report = AsyncMock(
+            return_value={"sub_distributions": []}
+        )
+
+        client.get(self.URL, params={"start_date": "2025-01-01", "end_date": "2025-03-31"})
+
+        rep_mod.report_service.get_sub_distribution_report.assert_awaited_once_with(
+            "2025-01-01", "2025-03-31"
+        )
+
+    def test_cluster_returns_403(self, client, set_role):
+        set_role("cluster")
+        resp = client.get(self.URL)
+        assert resp.status_code == 403
+
+
+class TestClusterReport:
+    URL = "/api/reports/clusters"
+
+    def test_super_admin_gets_report(self, client, mock_report_services):
+        import app.routes.reports as rep_mod
+
+        rep_mod.report_service._resolve_report_scope = AsyncMock(return_value=None)
+        rep_mod.report_service.get_cluster_report = AsyncMock(
+            return_value={"clusters": [{"cluster_id": 1}]}
+        )
+
+        resp = client.get(self.URL)
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["clusters"][0]["cluster_id"] == 1
+
+    def test_passes_date_params(self, client, mock_report_services):
+        import app.routes.reports as rep_mod
+
+        rep_mod.report_service._resolve_report_scope = AsyncMock(return_value=None)
+        rep_mod.report_service.get_cluster_report = AsyncMock(
+            return_value={"clusters": []}
+        )
+
+        client.get(self.URL, params={"start_date": "2025-01-01", "end_date": "2025-03-31"})
+
+        rep_mod.report_service.get_cluster_report.assert_awaited_once_with(
+            None, "2025-01-01", "2025-03-31"
+        )
+
+
+class TestOperatorReport:
+    URL = "/api/reports/operators"
+
+    def test_super_admin_gets_report(self, client, mock_report_services):
+        import app.routes.reports as rep_mod
+
+        rep_mod.report_service._resolve_report_scope = AsyncMock(return_value=None)
+        rep_mod.report_service.get_operator_report = AsyncMock(
+            return_value={"operators": [{"operator_id": 1}]}
+        )
+
+        resp = client.get(self.URL)
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["operators"][0]["operator_id"] == 1
+
+    def test_passes_date_params(self, client, mock_report_services):
+        import app.routes.reports as rep_mod
+
+        rep_mod.report_service._resolve_report_scope = AsyncMock(return_value=None)
+        rep_mod.report_service.get_operator_report = AsyncMock(
+            return_value={"operators": []}
+        )
+
+        client.get(self.URL, params={"start_date": "2025-01-01", "end_date": "2025-03-31"})
+
+        rep_mod.report_service.get_operator_report.assert_awaited_once_with(
+            None, "2025-01-01", "2025-03-31"
+        )
+
+
 class TestUserActivityReport:
     URL = "/api/reports/user-activity"
 
