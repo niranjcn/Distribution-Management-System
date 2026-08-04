@@ -283,9 +283,9 @@ async def _load_distribution_device_ids(
       locked in (pending_receipt / disputed).
     - `device_history.distribution_id` for historical / completed membership.
     """
-    result: Dict[str, List[str]] = {}
+    result: Dict[str, Set[str]] = {}
     if not distribution_codes:
-        return result
+        return {}
     ph = ",".join([f":c_{i}" for i in range(len(distribution_codes))])
     params = {f"c_{i}": code for i, code in enumerate(distribution_codes)}
 
@@ -295,7 +295,7 @@ async def _load_distribution_device_ids(
         params
     )).mappings().all()
     for r in current_rows:
-        result.setdefault(str(r["distribution_id"]), []).append(str(r["device_id"]))
+        result.setdefault(str(r["distribution_id"]), set()).add(str(r["device_id"]))
 
     history_rows = (await session.execute(
         text(f"""SELECT distribution_id, device_id
@@ -304,10 +304,8 @@ async def _load_distribution_device_ids(
     )).mappings().all()
     for r in history_rows:
         key = str(r["distribution_id"])
-        device_id = str(r["device_id"])
-        if device_id not in result.setdefault(key, []):
-            result[key].append(device_id)
-    return result
+        result.setdefault(key, set()).add(str(r["device_id"]))
+    return {key: list(ids) for key, ids in result.items()}
 
 
 async def get_distributions(
