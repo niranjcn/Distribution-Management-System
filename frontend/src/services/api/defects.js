@@ -171,14 +171,6 @@ export const defectsAPI = {
     return response;
   },
 
-  forwardToManagement: async (defectId, notes = '') => {
-    const response = await apiRequest(`/defects/${defectId}/forward-to-management`, {
-      method: 'POST',
-      body: JSON.stringify({ notes }),
-    });
-    return response;
-  },
-
   getReplacements: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
     const response = await apiRequest(`/defects/replacements?${queryString}`);

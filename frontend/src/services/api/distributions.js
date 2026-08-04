@@ -26,6 +26,11 @@ export const distributionsAPI = {
     return response;
   },
 
+  getDistributionDeviceSummary: async (distributionId) => {
+    const response = await apiRequest(`/distributions/${distributionId}/device-summary`);
+    return response;
+  },
+
   createDistribution: async (distributionData) => {
     const response = await apiRequest('/distributions', {
       method: 'POST',

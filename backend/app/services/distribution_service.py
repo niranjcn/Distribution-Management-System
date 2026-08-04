@@ -1366,6 +1366,64 @@ async def get_distribution_devices(
     }
 
 
+async def get_distribution_device_summary(
+    distribution_id: str,
+    user: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Return aggregated device type / vendor counts for a distribution.
+
+    Aggregation is computed entirely in SQL so it stays cheap even for
+    distributions with hundreds of thousands of devices. Membership is derived
+    from `devices.current_distribution_id` and `device_history.distribution_id`
+    (deduplicated via UNION), mirroring `_load_distribution_device_ids`.
+    """
+    async with async_session_factory() as session:
+        row = (await session.execute(
+            text("SELECT id, distribution_id, from_user_id, to_user_id FROM distributions WHERE id = :id"),
+            {"id": int(distribution_id)}
+        )).mappings().first()
+        if not row:
+            raise ValueError("Distribution not found")
+
+        role = str(user.get("role", "")).lower()
+        user_id = int(user.get("id", user.get("_id", 0)))
+        if role not in ["super_admin", "manager", "pdic_staff"]:
+            if user_id not in [int(row["from_user_id"]), int(row["to_user_id"])]:
+                raise ValueError("You are not allowed to access this distribution's devices")
+
+        code = str(row["distribution_id"])
+        membership = (
+            "SELECT id AS device_id FROM devices WHERE current_distribution_id = :code "
+            "UNION "
+            "SELECT device_id FROM device_history WHERE distribution_id = :code"
+        )
+        type_rows = (await session.execute(
+            text(f"""
+                SELECT d.device_type AS bucket, COUNT(*) AS cnt
+                FROM ({membership}) u
+                JOIN devices d ON d.id = u.device_id
+                GROUP BY d.device_type
+                ORDER BY cnt DESC
+            """),
+            {"code": code}
+        )).mappings().all()
+        manufacturer_rows = (await session.execute(
+            text(f"""
+                SELECT d.manufacturer AS bucket, COUNT(*) AS cnt
+                FROM ({membership}) u
+                JOIN devices d ON d.id = u.device_id
+                GROUP BY d.manufacturer
+                ORDER BY cnt DESC
+            """),
+            {"code": code}
+        )).mappings().all()
+
+    return {
+        "device_types": [[str(r["bucket"]), int(r["cnt"])] for r in type_rows],
+        "manufacturers": [[str(r["bucket"]), int(r["cnt"])] for r in manufacturer_rows],
+    }
+
+
 async def get_pending_distributions() -> List[Dict[str, Any]]:
     async with async_session_factory() as session:
         rows = (await session.execute(

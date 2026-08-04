@@ -490,8 +490,6 @@ def _build_returns_defects_backup_file(
         "defect_type",
         "severity",
         "description",
-        "report_target",
-        "forwarded_to_management",
         "status",
         "resolution",
         "replacement_by_name",

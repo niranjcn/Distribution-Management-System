@@ -14,10 +14,7 @@ import { distributionKeys } from '../hooks';
 import { Plus, Eye, Truck, CheckCircle, Loader2, AlertTriangle, PackageCheck, XCircle, Layers3, Factory, Upload, Download, Search } from 'lucide-react';
 
 const TABLE_PAGE_SIZE = 10;
-const TABLE_WINDOW_PAGES = 10;
-const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
-const EXPORT_PAGE_SIZE = 1000;
-const DEVICES_PAGE_SIZE = 100;
+const ALL_DISTRIBUTIONS_PAGE_SIZE = 100000;
 
 const SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -58,14 +55,11 @@ const Distributions = () => {
   const [tableTotalCount, setTableTotalCount] = useState(0);
   const [statusCounts, setStatusCounts] = useState({ pending_receipt: 0, approved: 0, disputed: 0 });
   const [pendingReceiptForMeCount, setPendingReceiptForMeCount] = useState(0);
-  const [tablePage, setTablePage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedDist, setSelectedDist] = useState(null);
   const [showModal, setShowModal] = useState(false);
-  const [distributionDevices, setDistributionDevices] = useState([]);
-  const [loadingDevices, setLoadingDevices] = useState(false);
-  const [devicePage, setDevicePage] = useState(1);
-  const [hasMoreDevices, setHasMoreDevices] = useState(false);
+  const [deviceSummary, setDeviceSummary] = useState(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptSubmitting, setReceiptSubmitting] = useState(false);
@@ -73,14 +67,13 @@ const Distributions = () => {
   const [searchBy, setSearchBy] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState({ by: 'all', query: '' });
-  const loadedWindowRef = useRef(0);
-  const loadingWindowsRef = useRef(new Set());
   const queryVersionRef = useRef(0);
+  const summaryRequestIdRef = useRef(0);
 
-  const buildDistributionParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
+  const buildDistributionParams = () => {
     const params = {
-      page: windowPage,
-      page_size: pageSize,
+      page: 1,
+      page_size: ALL_DISTRIBUTIONS_PAGE_SIZE,
       ...buildDateParams(dateRange),
     };
     if (appliedSearch.query) {
@@ -92,26 +85,7 @@ const Distributions = () => {
     return params;
   };
 
-  const getExportRows = async () => {
-    let page = 1;
-    let collected = [];
-    let total = 0;
-
-    while (true) {
-      const response = await distributionsAPI.getDistributions(buildDistributionParams(page, EXPORT_PAGE_SIZE));
-      const rows = Array.isArray(response?.data) ? response.data : [];
-      total = Number(response?.pagination?.total || rows.length);
-      collected = collected.concat(rows);
-
-      if (!rows.length || collected.length >= total) {
-        break;
-      }
-
-      page += 1;
-    }
-
-    return collected;
-  };
+  const getExportRows = async () => distributions;
 
   const buildDistributionCountParams = (status) => {
     const params = {
@@ -172,53 +146,34 @@ const Distributions = () => {
     }
   };
 
-  const loadDistributionWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
-    if (loadingWindowsRef.current.has(windowPage)) return;
+  const loadDistributions = async () => {
     const queryVersion = queryVersionRef.current;
-    loadingWindowsRef.current.add(windowPage);
-    if (withLoading) setLoading(true);
-
+    setLoading(true);
     try {
-      const response = await distributionsAPI.getDistributions(buildDistributionParams(windowPage));
+      const response = await distributionsAPI.getDistributions(buildDistributionParams());
       if (queryVersion !== queryVersionRef.current) return;
 
       const rows = Array.isArray(response?.data) ? response.data : [];
       const total = Number(response?.pagination?.total || rows.length);
 
-      setDistributions((prev) => {
-        const merged = reset ? rows : [...prev, ...rows];
-        const unique = [];
-        const seen = new Set();
-        for (const row of merged) {
-          const rowId = String(row?.id || row?._id || '');
-          if (!rowId || seen.has(rowId)) continue;
-          seen.add(rowId);
-          unique.push(row);
-        }
-        return unique;
-      });
+      setDistributions(rows);
       setTableTotalCount(total);
-      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
     } catch (error) {
       console.error('Failed to fetch distributions:', error);
       showToast('Failed to load distributions', 'error');
     } finally {
-      loadingWindowsRef.current.delete(windowPage);
-      if (withLoading) setLoading(false);
+      setLoading(false);
     }
   };
 
   const resetAndLoadDistributions = async () => {
     queryVersionRef.current += 1;
-    loadedWindowRef.current = 0;
-    loadingWindowsRef.current = new Set();
     setDistributions([]);
     setTableTotalCount(0);
     setStatusCounts({ pending_receipt: 0, approved: 0, disputed: 0 });
     setPendingReceiptForMeCount(0);
-    setTablePage(1);
     await Promise.all([
-      loadDistributionWindow(1, { reset: true, withLoading: true }),
+      loadDistributions(),
       loadDistributionStatusCounts(),
       loadPendingReceiptForMeCount(),
     ]);
@@ -235,50 +190,30 @@ const Distributions = () => {
     setAppliedSearch({ by: 'all', query: '' });
   };
 
-  const handleTablePageChange = async (nextPage) => {
-    setTablePage(nextPage);
-    const loadedPages = Math.max(1, Math.ceil(distributions.length / TABLE_PAGE_SIZE));
-    const needsNextWindow = nextPage >= loadedPages && distributions.length < tableTotalCount;
-    if (needsNextWindow) {
-      await loadDistributionWindow(loadedWindowRef.current + 1, { withLoading: true });
-    }
-  };
-
-  const devicesRequestIdRef = useRef(0);
-
-  const fetchDistributionDevicesPage = async (page, requestId, { reset = false } = {}) => {
+  const fetchDistributionSummary = async (requestId) => {
     const distributionId = selectedDist?._id || selectedDist?.id;
     if (!distributionId) return;
 
     try {
-      setLoadingDevices(true);
-      const response = await distributionsAPI.getDistributionDevices(distributionId, {
-        page,
-        page_size: DEVICES_PAGE_SIZE,
-      });
-      if (requestId !== devicesRequestIdRef.current) return;
+      setLoadingSummary(true);
+      const response = await distributionsAPI.getDistributionDeviceSummary(distributionId);
+      if (requestId !== summaryRequestIdRef.current) return;
 
-      const fetchedDevices = Array.isArray(response?.data) ? response.data : [];
-      const pagination = response?.pagination || {};
-      setDistributionDevices((prev) => (reset ? fetchedDevices : [...prev, ...fetchedDevices]));
-      setDevicePage(page);
-      setHasMoreDevices(Boolean(pagination.has_next));
+      const data = response?.data || {};
+      setDeviceSummary({
+        device_types: Array.isArray(data.device_types) ? data.device_types : [],
+        manufacturers: Array.isArray(data.manufacturers) ? data.manufacturers : [],
+      });
     } catch (error) {
-      console.error('Failed to fetch distribution devices:', error);
-      if (requestId === devicesRequestIdRef.current && reset) {
-        setDistributionDevices([]);
-        setHasMoreDevices(false);
+      console.error('Failed to fetch distribution device summary:', error);
+      if (requestId === summaryRequestIdRef.current) {
+        showToast(error.message || 'Failed to load device summary', 'error');
       }
     } finally {
-      if (requestId === devicesRequestIdRef.current) {
-        setLoadingDevices(false);
+      if (requestId === summaryRequestIdRef.current) {
+        setLoadingSummary(false);
       }
     }
-  };
-
-  const handleLoadMoreDevices = () => {
-    if (!hasMoreDevices || loadingDevices) return;
-    fetchDistributionDevicesPage(devicePage + 1, devicesRequestIdRef.current, { reset: false });
   };
 
   useEffect(() => {
@@ -297,11 +232,9 @@ const Distributions = () => {
 
   useEffect(() => {
     if (showModal && selectedDist) {
-      const requestId = ++devicesRequestIdRef.current;
-      setDistributionDevices([]);
-      setDevicePage(1);
-      setHasMoreDevices(false);
-      fetchDistributionDevicesPage(1, requestId, { reset: true });
+      const requestId = ++summaryRequestIdRef.current;
+      setDeviceSummary(null);
+      fetchDistributionSummary(requestId);
     }
   }, [showModal, selectedDist]);
 
@@ -388,30 +321,34 @@ const Distributions = () => {
     const typeCounts = {};
     const manufacturerCounts = {};
     let setupBoxCount = 0;
+    let totalDevices = 0;
 
-    distributionDevices.forEach((device) => {
-      const typeLabel = toDisplayLabel(device.device_type);
-      const manufacturerLabel = toDisplayLabel(device.manufacturer);
-
-      typeCounts[typeLabel] = (typeCounts[typeLabel] || 0) + 1;
-      manufacturerCounts[manufacturerLabel] = (manufacturerCounts[manufacturerLabel] || 0) + 1;
-
+    (deviceSummary?.device_types || []).forEach(([type, count]) => {
+      const typeLabel = toDisplayLabel(type);
+      const numericCount = Number(count) || 0;
+      typeCounts[typeLabel] = (typeCounts[typeLabel] || 0) + numericCount;
+      totalDevices += numericCount;
       if (isSetupBoxType(typeLabel)) {
-        setupBoxCount += 1;
+        setupBoxCount += numericCount;
       }
+    });
+
+    (deviceSummary?.manufacturers || []).forEach(([manufacturer, count]) => {
+      const manufacturerLabel = toDisplayLabel(manufacturer);
+      manufacturerCounts[manufacturerLabel] = (manufacturerCounts[manufacturerLabel] || 0) + (Number(count) || 0);
     });
 
     const sortedTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
     const sortedManufacturers = Object.entries(manufacturerCounts).sort((a, b) => b[1] - a[1]);
 
     return {
-      totalSent: selectedDist?.device_count || selectedDist?.device_ids?.length || 0,
-      loadedDetailsCount: distributionDevices.length,
+      totalSent: selectedDist?.device_count || 0,
+      loadedDetailsCount: totalDevices,
       setupBoxCount,
       types: sortedTypes,
       manufacturers: sortedManufacturers,
     };
-  }, [distributionDevices, selectedDist]);
+  }, [deviceSummary, selectedDist]);
 
   const columns = [
     { key: 'distribution_id', label: 'Distribution ID' },
@@ -618,9 +555,8 @@ const Distributions = () => {
           data={distributions}
           searchable={false}
           pageSize={TABLE_PAGE_SIZE}
+          pagination={false}
           totalItems={tableTotalCount || distributions.length}
-          currentPage={tablePage}
-          onPageChange={handleTablePageChange}
           getExportRows={getExportRows}
           onRowClick={(row) => {
             setSelectedDist(row);
@@ -633,12 +569,10 @@ const Distributions = () => {
       <Modal
         isOpen={showModal}
         onClose={() => {
-          devicesRequestIdRef.current += 1;
+          summaryRequestIdRef.current += 1;
           setShowModal(false);
           setSelectedDist(null);
-          setDistributionDevices([]);
-          setDevicePage(1);
-          setHasMoreDevices(false);
+          setDeviceSummary(null);
         }}
         title="Distribution Details"
         size="lg"
@@ -732,7 +666,7 @@ const Distributions = () => {
                 <p className="text-2xl font-bold text-green-900 mt-1">{distributionInsights.setupBoxCount}</p>
               </div>
               <div className="rounded-lg border border-amber-100 bg-amber-50 p-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Details Loaded</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Total Devices</p>
                 <p className="text-2xl font-bold text-amber-900 mt-1">{distributionInsights.loadedDetailsCount}</p>
               </div>
             </div>
@@ -743,7 +677,12 @@ const Distributions = () => {
                   <Layers3 className="w-4 h-4 text-indigo-600" />
                   <h4 className="text-sm font-semibold text-gray-800">By Device Type</h4>
                 </div>
-                {distributionInsights.types.length > 0 ? (
+                {loadingSummary && !deviceSummary ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                    Loading device summary...
+                  </div>
+                ) : distributionInsights.types.length > 0 ? (
                   <div className="space-y-2">
                     {distributionInsights.types.map(([type, count]) => (
                       <div key={type} className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2">
@@ -762,7 +701,12 @@ const Distributions = () => {
                   <Factory className="w-4 h-4 text-rose-600" />
                   <h4 className="text-sm font-semibold text-gray-800">By Vendor</h4>
                 </div>
-                {distributionInsights.manufacturers.length > 0 ? (
+                {loadingSummary && !deviceSummary ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                    Loading device summary...
+                  </div>
+                ) : distributionInsights.manufacturers.length > 0 ? (
                   <div className="space-y-2">
                     {distributionInsights.manufacturers.map(([manufacturer, count]) => (
                       <div key={manufacturer} className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2">
@@ -775,64 +719,6 @@ const Distributions = () => {
                   <p className="text-sm text-gray-500">No vendor data available.</p>
                 )}
               </div>
-            </div>
-
-            {/* Devices List */}
-            <div>
-              <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Device Details</label>
-              {loadingDevices && distributionDevices.length === 0 ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                  <span className="ml-2 text-gray-500">Loading devices...</span>
-                </div>
-              ) : distributionDevices.length > 0 ? (
-                <>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {distributionDevices.map((device, index) => (
-                      <div key={device._id || device.id || index} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <p className="font-medium text-gray-800">{device.model || device.device_type}</p>
-                            {isSetupBoxType(device.device_type) ? (
-                              <p className="text-sm text-gray-500 font-mono">NUID: {device.nuid || 'N/A'}</p>
-                            ) : (
-                              <>
-                                <p className="text-sm text-gray-500 font-mono">{device.serial_number}</p>
-                                <p className="text-xs text-gray-400">{device.mac_address || 'No MAC'}</p>
-                              </>
-                            )}
-                            <div className="mt-1 flex flex-wrap gap-2">
-                              <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                                Type: {toDisplayLabel(device.device_type)}
-                              </span>
-                              <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
-                                Vendor: {toDisplayLabel(device.manufacturer)}
-                              </span>
-                            </div>
-                          </div>
-                          <StatusBadge status={device.status} size="sm" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  {hasMoreDevices && !loadingDevices && (
-                    <button
-                      type="button"
-                      onClick={handleLoadMoreDevices}
-                      className="mt-2 w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 font-medium border border-gray-200 rounded-lg"
-                    >
-                      Load More Devices
-                    </button>
-                  )}
-                  {loadingDevices && distributionDevices.length > 0 && (
-                    <div className="mt-2 px-3 py-2 text-sm text-gray-400 text-center">
-                      Loading...
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-gray-500 text-sm py-2">No device details available</p>
-              )}
             </div>
           </div>
         )}

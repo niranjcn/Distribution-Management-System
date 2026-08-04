@@ -5,7 +5,6 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { useNotifications } from '../context/NotificationContext';
-import { useAuth } from '../context/AuthContext';
 import { devicesAPI, defectsAPI } from '../services/api';
 import { getDeviceSelectLabel } from '../utils/deviceDisplay';
 import { AlertTriangle, Save, X, Upload, Camera, Search } from 'lucide-react';
@@ -14,7 +13,6 @@ const PAGE_SIZE = 100;
 
 const CreateDefectReport = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
@@ -28,7 +26,6 @@ const CreateDefectReport = () => {
     defectType: '',
     severity: '',
     description: '',
-    reportTarget: 'manager_admin',
     imageFiles: []
   });
   const [submitProgress, setSubmitProgress] = useState('');
@@ -55,8 +52,6 @@ const CreateDefectReport = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [formData.deviceId, devices]);
-
-  const isOperator = user?.role === 'operator';
 
   const fetchDevicesPage = async (page, search, reset) => {
     setLoadingDevices(true);
@@ -195,7 +190,6 @@ const CreateDefectReport = () => {
         severity: String(formData.severity || '').trim().toLowerCase(),
         description: normalizedDescription,
         images: uploadedUrls,
-        ...(isOperator ? { report_target: formData.reportTarget } : {})
       };
 
       await defectsAPI.createDefect(normalizedPayload);
@@ -366,24 +360,6 @@ const CreateDefectReport = () => {
                 <option value="low">Low - Minor issue</option>
               </select>
             </div>
-
-            {isOperator && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Report To <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="reportTarget"
-                  value={formData.reportTarget}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  required
-                >
-                  <option value="manager_admin">Manager/Admin</option>
-                  <option value="sub_distributor">Sub Distributor</option>
-                </select>
-              </div>
-            )}
           </div>
 
           <div>

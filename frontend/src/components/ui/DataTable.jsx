@@ -11,6 +11,7 @@ const DataTable = ({
   actions,
   searchable = true,
   exportable = true,
+  pagination = true,
   pageSize = 10,
   searchPlaceholder = "Search...",
   getRowClassName,
@@ -90,11 +91,12 @@ const DataTable = ({
   const resolvedTotalItems = Number.isFinite(Number(totalItems))
     ? Number(totalItems)
     : sortedData.length;
-  const totalPages = Math.max(1, Math.ceil(resolvedTotalItems / pageSize));
-  const loadedPages = Math.max(1, Math.ceil(sortedData.length / pageSize));
+  const effectivePageSize = pagination ? pageSize : Math.max(pageSize, sortedData.length);
+  const totalPages = Math.max(1, Math.ceil(resolvedTotalItems / effectivePageSize));
+  const loadedPages = Math.max(1, Math.ceil(sortedData.length / effectivePageSize));
   const paginatedData = sortedData.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
+    (currentPage - 1) * effectivePageSize,
+    currentPage * effectivePageSize
   );
 
   const setPage = (nextPage) => {
@@ -369,7 +371,8 @@ const DataTable = ({
       </div>
 
       {/* Pagination */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-200">
+      {pagination && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-t border-gray-200">
         <div className="text-sm text-gray-600 text-center sm:text-left">
           Showing {resolvedTotalItems === 0 ? 0 : ((currentPage - 1) * pageSize) + 1} to{' '}
           {Math.min(currentPage * pageSize, resolvedTotalItems)} of{' '}
@@ -441,6 +444,7 @@ const DataTable = ({
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 };
