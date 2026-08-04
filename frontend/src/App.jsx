@@ -44,6 +44,7 @@ import PendingDues from './pages/PendingDues';
 import BulkImportDevices from './pages/BulkImportDevices';
 import BulkImportDistribution from './pages/BulkImportDistribution';
 import BulkUploadUsers from './pages/BulkUploadUsers';
+import ExternalBulkDistribution from './pages/ExternalBulkDistribution';
 import { normalizeRole, isForcedCredentialUpdateRequired } from './utils/roles';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 import { AlertTriangle } from 'lucide-react';
@@ -334,7 +335,34 @@ function AppRoutes() {
           path="external-inventory"
           element={
             <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
-              <ExternalInventory />
+              <ExternalInventory tab="items" />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="external-inventory/distribution"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff']}>
+              <ExternalInventory tab="distribution" />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="external-inventory/bulk"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff']}>
+              <ExternalBulkDistribution />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="external-inventory/distributed"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff']}>
+              <ExternalInventory tab="distributed" />
             </ProtectedRoute>
           }
         />

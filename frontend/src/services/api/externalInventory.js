@@ -1,11 +1,6 @@
 import { apiRequest, buildCsrfHeader, API_BASE_URL } from './client';
 
 export const externalInventoryAPI = {
-  getDashboard: async () => {
-    const response = await apiRequest('/external-inventory/dashboard');
-    return response;
-  },
-
   getItems: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
     const response = await apiRequest(`/external-inventory/items?${queryString}`);
@@ -38,26 +33,46 @@ export const externalInventoryAPI = {
     return data;
   },
 
-  updateItem: async (inventoryId, payload) => {
-    const response = await apiRequest(`/external-inventory/items/${inventoryId}`, {
+  updateItem: async (itemId, payload) => {
+    const response = await apiRequest(`/external-inventory/items/${itemId}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
     return response;
   },
 
-  deleteItem: async (inventoryId) => {
-    const response = await apiRequest(`/external-inventory/items/${inventoryId}`, {
+  deleteItem: async (itemId) => {
+    const response = await apiRequest(`/external-inventory/items/${itemId}`, {
       method: 'DELETE',
     });
     return response;
   },
 
-  uploadItemImage: async (inventoryId, file) => {
-    const formData = new FormData();
-    formData.append('image', file);
+  distributeItem: async (payload) => {
+    const response = await apiRequest('/external-inventory/distributions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return response;
+  },
 
-    const response = await fetch(`${API_BASE_URL}/external-inventory/items/${inventoryId}/image`, {
+  bulkDistributeItems: async (payload) => {
+    const response = await apiRequest('/external-inventory/distributions/bulk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return response;
+  },
+
+  bulkUploadDistribution: async (file, toUserId, notes) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('to_user_id', String(toUserId));
+    if (notes) {
+      formData.append('notes', notes);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/external-inventory/distributions/bulk-upload`, {
       method: 'POST',
       credentials: 'include',
       headers: { ...buildCsrfHeader('POST') },
@@ -66,50 +81,14 @@ export const externalInventoryAPI = {
 
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data?.message || data?.detail || 'Failed to upload item image');
+      throw new Error(data?.message || data?.detail || 'Bulk distribution failed');
     }
     return data;
   },
 
-  createAdjustment: async (payload) => {
-    const response = await apiRequest('/external-inventory/adjustments', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    return response;
-  },
-
-  getPurchaseOrders: async (params = {}) => {
+  getDistributions: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
-    const response = await apiRequest(`/external-inventory/purchase-orders?${queryString}`);
-    return response;
-  },
-
-  createPurchaseOrder: async (payload) => {
-    const response = await apiRequest('/external-inventory/purchase-orders', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    return response;
-  },
-
-  receivePurchaseOrder: async (poId, payload) => {
-    const response = await apiRequest(`/external-inventory/purchase-orders/${poId}/receive`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    return response;
-  },
-
-  getReceipts: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    const response = await apiRequest(`/external-inventory/receipts?${queryString}`);
-    return response;
-  },
-
-  getMovements: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    const response = await apiRequest(`/external-inventory/movements?${queryString}`);
+    const response = await apiRequest(`/external-inventory/distributions?${queryString}`);
     return response;
   },
 };

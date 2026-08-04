@@ -116,11 +116,7 @@ async def reset_and_seed():
         print("Clearing all database tables...")
         
         tables = [
-            "inventory_stock_movements",
-            "inventory_receipt_lines",
-            "inventory_receipts",
-            "inventory_po_lines",
-            "inventory_purchase_orders",
+            "external_device_history",
             "external_inventory_items",
             "change_requests",
             "notifications",

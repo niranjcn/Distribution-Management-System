@@ -137,6 +137,28 @@ const Sidebar = ({ isOpen, onClose }) => {
       ],
     };
 
+    // External Inventory menus. Management roles (super_admin/manager/pdic_staff)
+    // get a dropdown with Items/Distribution/Bulk/Distributed items.
+    const externalInventoryMgmtMenu = {
+      key: 'external-inventory',
+      icon: Warehouse,
+      label: 'External Inventory',
+      children: [
+        { path: '/external-inventory', label: 'Items' },
+        { path: '/external-inventory/distribution', label: 'Distribution' },
+        { path: '/external-inventory/bulk', label: 'Bulk Distribution' },
+        { path: '/external-inventory/distributed', label: 'Distributed Items' },
+      ],
+    };
+
+    // Non-management (field) users only access the Items page, so no dropdown
+    // is needed here.
+    const externalInventoryFieldMenu = {
+      path: '/external-inventory',
+      icon: Warehouse,
+      label: 'External Inventory',
+    };
+
     const roleMenus = {
       [ROLES.SUPER_ADMIN]: [
         ...commonItems,
@@ -178,7 +200,7 @@ const Sidebar = ({ isOpen, onClose }) => {
         },
         defectMenu,
         { path: '/backup', icon: Database, label: 'Backup' },
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryMgmtMenu,
       ],
       [ROLES.MD_DIRECTOR]: [
         ...commonItems,
@@ -202,7 +224,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           ],
         },
         { path: '/backup', icon: Database, label: 'Backup' },
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryFieldMenu,
       ],
       [ROLES.MANAGER]: [
         ...commonItems,
@@ -242,7 +264,7 @@ const Sidebar = ({ isOpen, onClose }) => {
         },
         defectMenu,
         { path: '/backup', icon: Database, label: 'Backup' },
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryMgmtMenu,
       ],
       [ROLES.PDIC_STAFF]: [
         ...commonItems,
@@ -268,7 +290,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           ]
         },
         defectMenu,
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryMgmtMenu,
       ],
       [ROLES.SUB_DISTRIBUTION_MANAGER]: [
         ...commonItems,
@@ -284,7 +306,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           ]
         },
         { path: '/devices', icon: Box, label: 'My Devices' },
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryFieldMenu,
         { path: '/distributions', icon: Truck, label: 'Scoped Distributions' },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
         ...(canShowReplacementOptions ? [
@@ -307,7 +329,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           ]
         },
         { path: '/devices', icon: Box, label: 'My Devices' },
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryFieldMenu,
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
         ...(canShowReplacementOptions ? [{ path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' }] : []),
         {
@@ -342,7 +364,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           ]
         },
         { path: '/devices', icon: Box, label: 'My Devices' },
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryFieldMenu,
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
         ...(canShowReplacementOptions ? [{ path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' }] : []),
         {
@@ -366,7 +388,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       [ROLES.OPERATOR]: [
         ...commonItems,
         { path: '/devices', icon: Box, label: 'My Devices' },
-        { path: '/external-inventory', icon: Warehouse, label: 'External Inventory' },
+        externalInventoryFieldMenu,
         { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
         ...(canShowReplacementOptions ? [{ path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' }] : []),
         {

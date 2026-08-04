@@ -11,7 +11,6 @@ from app.models.digital_id import DigitalIdentityCreate, DigitalIdentityResponse
 from app.models.inventory import (
 	InventoryItemCreate,
 	InventoryItemUpdate,
-	PurchaseOrderCreate,
-	ReceiptCreate,
-	StockAdjustmentCreate,
+	ExternalDistributionCreate,
+	ExternalBulkDistributionCreate,
 )

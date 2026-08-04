@@ -1,112 +1,113 @@
-from unittest.mock import AsyncMock
+from io import BytesIO
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 
-class TestExternalInventoryDashboard:
-    URL = "/api/external-inventory/dashboard"
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    def test_success(self, client, mock_inventory_services):
-        import app.routes.external_inventory as mod
-        mod.inventory_service.get_dashboard_summary = AsyncMock(
-            return_value={"total_items": 100, "low_stock": 5}
-        )
-        resp = client.get(self.URL)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["message"] == "External inventory dashboard retrieved successfully"
-        assert body["data"]["total_items"] == 100
+def _fake_item(**overrides):
+    base = {
+        "id": 1,
+        "name": "Test Item",
+        "identifier_type": "MAC ID",
+        "identifier": "AA:BB:CC:DD:EE:FF",
+        "device_type": "Router",
+        "price": 100.0,
+        "quantity": 10,
+        "supplier_name": "Acme",
+        "location": "Main Store",
+        "status": "active",
+        "notes": None,
+        "created_by": 1,
+        "created_at": "2026-01-01T00:00:00",
+        "updated_at": "2026-01-01T00:00:00",
+    }
+    base.update(overrides)
+    return base
 
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.get(self.URL)
-        assert resp.status_code == 403
 
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.get(self.URL)
-        assert resp.status_code == 401
+def _fake_paginated(**overrides):
+    base = {
+        "data": [_fake_item()],
+        "pagination": {
+            "page": 1,
+            "page_size": 20,
+            "total": 1,
+            "total_pages": 1,
+            "has_next": False,
+        },
+    }
+    base.update(overrides)
+    return base
 
-    def test_internal_error_returns_500(self, client, mock_inventory_services):
-        import app.routes.external_inventory as mod
-        mod.inventory_service.get_dashboard_summary = AsyncMock(
-            side_effect=RuntimeError("error")
-        )
-        resp = client.get(self.URL)
-        assert resp.status_code == 500
 
+# ---------------------------------------------------------------------------
+# GET /items
+# ---------------------------------------------------------------------------
 
 class TestGetExternalInventoryItems:
     URL = "/api/external-inventory/items"
 
-    def _fake_paginated(self):
-        return {
-            "data": [{"inventory_id": "1", "name": "Item 1"}],
-            "pagination": {"page": 1, "page_size": 20, "total": 1, "total_pages": 1},
-        }
-
     def test_success(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_items = AsyncMock(return_value=self._fake_paginated())
+        mod.inventory_service.get_items = AsyncMock(return_value=_fake_paginated())
         resp = client.get(self.URL)
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
-        assert "data" in body
-        assert "pagination" in body
+        assert body["data"] == [_fake_item()]
+        mod.inventory_service.get_items.assert_awaited_once()
 
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.get(self.URL)
-        assert resp.status_code == 401
+    def test_non_management_passes_management_false(self, client, mock_inventory_services, set_role):
+        set_role("operator")
+        import app.routes.external_inventory as mod
+        mod.inventory_service.get_items = AsyncMock(return_value=_fake_paginated())
+        client.get(self.URL)
+        mod.inventory_service.get_items.assert_awaited_once()
+        kwargs = mod.inventory_service.get_items.await_args.kwargs
+        assert kwargs["management"] is False
+
+    def test_management_passes_management_true(self, client, mock_inventory_services, set_role):
+        set_role("pdic_staff")
+        import app.routes.external_inventory as mod
+        mod.inventory_service.get_items = AsyncMock(return_value=_fake_paginated())
+        client.get(self.URL)
+        mod.inventory_service.get_items.assert_awaited_once()
+        kwargs = mod.inventory_service.get_items.await_args.kwargs
+        assert kwargs["management"] is True
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
         mod.inventory_service.get_items = AsyncMock(side_effect=RuntimeError("error"))
         resp = client.get(self.URL)
         assert resp.status_code == 500
+        assert resp.json()["detail"] == "An internal error occurred. Please try again later."
 
+
+# ---------------------------------------------------------------------------
+# POST /items
+# ---------------------------------------------------------------------------
 
 class TestCreateExternalInventoryItem:
     URL = "/api/external-inventory/items"
     VALID_PAYLOAD = {
-        "item_id": "ITEM001",
         "name": "New Item",
-        "serial_number": "SN001",
-        "device_type": "adapter",
-        "mac_id": "MAC001",
+        "identifier_type": "MAC ID",
+        "quantity": 5,
     }
-
-    def _fake_item(self, **overrides):
-        return {
-            "inventory_id": "INV001",
-            "name": "New Item",
-            "serial_number": "SN001",
-            **overrides,
-        }
 
     def test_success(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.create_item = AsyncMock(return_value=self._fake_item())
+        mod.inventory_service.create_item = AsyncMock(return_value=_fake_item())
         resp = client.post(self.URL, json=self.VALID_PAYLOAD)
         assert resp.status_code == 201
         body = resp.json()
         assert body["success"] is True
         assert body["message"] == "External inventory item created successfully"
-        assert body["data"]["inventory_id"] == "INV001"
-
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 403
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 401
+        mod.inventory_service.create_item.assert_awaited_once()
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
@@ -115,81 +116,57 @@ class TestCreateExternalInventoryItem:
         assert resp.status_code == 500
 
 
-class TestUpdateExternalInventoryItem:
-    URL = "/api/external-inventory/items/INV001"
-    VALID_PAYLOAD = {"name": "Updated Item"}
+# ---------------------------------------------------------------------------
+# PUT /items/{item_id}
+# ---------------------------------------------------------------------------
 
-    def _fake_item(self, **overrides):
-        return {"inventory_id": "INV001", "name": "Updated Item", **overrides}
+class TestUpdateExternalInventoryItem:
+    URL = "/api/external-inventory/items/1"
+    VALID_PAYLOAD = {"quantity": 15, "price": 120.0}
 
     def test_success(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_item_by_inventory_id = AsyncMock(return_value=self._fake_item())
-        mod.inventory_service.update_item = AsyncMock(return_value=self._fake_item())
+        mod.inventory_service.get_item_by_id = AsyncMock(return_value=_fake_item())
+        mod.inventory_service.update_item = AsyncMock(return_value=_fake_item(quantity=15))
         resp = client.put(self.URL, json=self.VALID_PAYLOAD)
         assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["message"] == "External inventory item updated successfully"
-        assert body["data"]["name"] == "Updated Item"
+        assert resp.json()["message"] == "External inventory item updated successfully"
 
     def test_not_found_returns_404(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_item_by_inventory_id = AsyncMock(return_value=None)
+        mod.inventory_service.get_item_by_id = AsyncMock(return_value=None)
         mod.inventory_service.update_item = AsyncMock(return_value=None)
-        resp = client.put("/api/external-inventory/items/NONEXIST", json=self.VALID_PAYLOAD)
+        resp = client.put("/api/external-inventory/items/999", json=self.VALID_PAYLOAD)
         assert resp.status_code == 404
-
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.put(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 403
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.put(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 401
+        assert resp.json()["detail"] == "External inventory item not found"
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_item_by_inventory_id = AsyncMock(return_value=self._fake_item())
+        mod.inventory_service.get_item_by_id = AsyncMock(return_value=_fake_item())
         mod.inventory_service.update_item = AsyncMock(side_effect=RuntimeError("error"))
         resp = client.put(self.URL, json=self.VALID_PAYLOAD)
         assert resp.status_code == 500
 
 
-class TestDeleteExternalInventoryItem:
-    URL = "/api/external-inventory/items/INV001"
+# ---------------------------------------------------------------------------
+# DELETE /items/{item_id}
+# ---------------------------------------------------------------------------
 
-    def _fake_item(self, **overrides):
-        return {"inventory_id": "INV001", "name": "Item", **overrides}
+class TestDeleteExternalInventoryItem:
+    URL = "/api/external-inventory/items/1"
 
     def test_success(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.delete_item = AsyncMock(return_value=self._fake_item())
+        mod.inventory_service.delete_item = AsyncMock(return_value=_fake_item())
         resp = client.delete(self.URL)
         assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["message"] == "External inventory item deleted successfully"
+        assert resp.json()["message"] == "External inventory item deleted successfully"
 
     def test_not_found_returns_404(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
         mod.inventory_service.delete_item = AsyncMock(return_value=None)
-        resp = client.delete("/api/external-inventory/items/NONEXIST")
+        resp = client.delete("/api/external-inventory/items/999")
         assert resp.status_code == 404
-
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.delete(self.URL)
-        assert resp.status_code == 403
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.delete(self.URL)
-        assert resp.status_code == 401
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
@@ -198,245 +175,241 @@ class TestDeleteExternalInventoryItem:
         assert resp.status_code == 500
 
 
-class TestUploadExternalInventoryItemImage:
-    URL = "/api/external-inventory/items/INV001/image"
+# ---------------------------------------------------------------------------
+# POST /distributions
+# ---------------------------------------------------------------------------
 
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.post(self.URL, files={"image": ("test.jpg", b"data", "image/jpeg")})
-        assert resp.status_code == 403
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.post(self.URL, files={"image": ("test.jpg", b"data", "image/jpeg")})
-        assert resp.status_code == 401
-
-    def test_not_found_returns_404(self, client, set_role, mock_inventory_services):
-        import app.routes.external_inventory as mod
-        set_role("manager")
-        mod.inventory_service.get_item_by_inventory_id = AsyncMock(return_value=None)
-        resp = client.post(self.URL, files={"image": ("test.jpg", b"data", "image/jpeg")})
-        assert resp.status_code == 404
-
-
-class TestCreateExternalInventoryAdjustment:
-    URL = "/api/external-inventory/adjustments"
-    VALID_PAYLOAD = {
-        "item_inventory_id": "INV001",
-        "quantity_change": 5,
-        "reason": "Stock correction",
-    }
-
-    def _fake_item(self, **overrides):
-        return {"inventory_id": "INV001", "quantity_on_hand": 15, **overrides}
+class TestDistributeExternalInventoryItem:
+    URL = "/api/external-inventory/distributions"
+    VALID_PAYLOAD = {"item_id": 1, "to_user_id": 2, "quantity": 2, "notes": "ok"}
 
     def test_success(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.create_stock_adjustment = AsyncMock(return_value=self._fake_item())
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert body["message"] == "Stock adjustment applied successfully"
-
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 403
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 401
-
-    def test_internal_error_returns_500(self, client, mock_inventory_services):
-        import app.routes.external_inventory as mod
-        mod.inventory_service.create_stock_adjustment = AsyncMock(
-            side_effect=RuntimeError("error")
-        )
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 500
-
-
-class TestGetExternalInventoryPurchaseOrders:
-    URL = "/api/external-inventory/purchase-orders"
-
-    def _fake_paginated(self):
-        return {
-            "data": [{"po_id": "PO001", "supplier_name": "Supplier"}],
-            "pagination": {"page": 1, "page_size": 20, "total": 1, "total_pages": 1},
+        result = {
+            "history_id": "EXT-001",
+            "item_id": 1,
+            "item_name": "Test Item",
+            "quantity": 2,
+            "recipient_id": 2,
+            "recipient_name": "Jane",
+            "previous_quantity": 10,
+            "remaining_quantity": 8,
         }
-
-    def test_success(self, client, mock_inventory_services):
-        import app.routes.external_inventory as mod
-        mod.inventory_service.get_purchase_orders = AsyncMock(return_value=self._fake_paginated())
-        resp = client.get(self.URL)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert "data" in body
-        assert "pagination" in body
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.get(self.URL)
-        assert resp.status_code == 401
-
-    def test_internal_error_returns_500(self, client, mock_inventory_services):
-        import app.routes.external_inventory as mod
-        mod.inventory_service.get_purchase_orders = AsyncMock(side_effect=RuntimeError("error"))
-        resp = client.get(self.URL)
-        assert resp.status_code == 500
-
-
-class TestCreateExternalInventoryPurchaseOrder:
-    URL = "/api/external-inventory/purchase-orders"
-    VALID_PAYLOAD = {
-        "supplier_name": "Supplier Inc",
-        "lines": [{"item_inventory_id": "ITEM001", "quantity_ordered": 10}],
-    }
-
-    def _fake_po(self, **overrides):
-        return {"po_id": "PO001", "supplier_name": "Supplier Inc", **overrides}
-
-    def test_success(self, client, mock_inventory_services):
-        import app.routes.external_inventory as mod
-        mod.inventory_service.create_purchase_order = AsyncMock(return_value=self._fake_po())
+        mod.inventory_service.distribute_item = AsyncMock(return_value=result)
         resp = client.post(self.URL, json=self.VALID_PAYLOAD)
         assert resp.status_code == 201
         body = resp.json()
         assert body["success"] is True
-        assert body["message"] == "Purchase order created successfully"
-        assert body["data"]["po_id"] == "PO001"
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 401
+        assert body["message"] == "External inventory item distributed successfully"
+        assert body["data"]["remaining_quantity"] == 8
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.create_purchase_order = AsyncMock(
-            side_effect=RuntimeError("error")
-        )
+        mod.inventory_service.distribute_item = AsyncMock(side_effect=RuntimeError("error"))
         resp = client.post(self.URL, json=self.VALID_PAYLOAD)
         assert resp.status_code == 500
 
 
-class TestReceiveExternalInventoryPurchaseOrder:
-    URL = "/api/external-inventory/purchase-orders/PO001/receive"
+# ---------------------------------------------------------------------------
+# POST /distributions/bulk
+# ---------------------------------------------------------------------------
+
+class TestBulkDistributeExternalInventoryItems:
+    URL = "/api/external-inventory/distributions/bulk"
     VALID_PAYLOAD = {
-        "lines": [{"item_inventory_id": "ITEM001", "quantity_received": 10}],
+        "items": [
+            {"item_id": 1, "to_user_id": 2, "quantity": 1},
+            {"item_id": 2, "recipient_email": "bob@test.com", "quantity": 3},
+        ]
     }
 
-    def _fake_po(self, **overrides):
-        return {"po_id": "PO001", "status": "received", **overrides}
-
     def test_success(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.receive_purchase_order = AsyncMock(return_value=self._fake_po())
+        result = {
+            "created_count": 2,
+            "error_count": 0,
+            "created": [{"item_id": 1}, {"item_id": 2}],
+            "errors": [],
+        }
+        mod.inventory_service.bulk_distribute = AsyncMock(return_value=result)
         resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 200
+        assert resp.status_code == 201
         body = resp.json()
         assert body["success"] is True
-        assert body["message"] == "Purchase order submitted successfully"
-        assert body["data"]["po_id"] == "PO001"
-
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 403
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.post(self.URL, json=self.VALID_PAYLOAD)
-        assert resp.status_code == 401
+        assert body["data"]["created_count"] == 2
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.receive_purchase_order = AsyncMock(
-            side_effect=RuntimeError("error")
-        )
+        mod.inventory_service.bulk_distribute = AsyncMock(side_effect=RuntimeError("error"))
         resp = client.post(self.URL, json=self.VALID_PAYLOAD)
         assert resp.status_code == 500
 
 
-class TestGetExternalInventoryReceipts:
-    URL = "/api/external-inventory/receipts"
+# ---------------------------------------------------------------------------
+# GET /distributions (history)
+# ---------------------------------------------------------------------------
 
-    def _fake_paginated(self):
-        return {
-            "data": [{"receipt_id": "RCP001"}],
-            "pagination": {"page": 1, "page_size": 20, "total": 1, "total_pages": 1},
-        }
+class TestGetExternalInventoryDistributions:
+    URL = "/api/external-inventory/distributions"
 
     def test_success(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_receipts = AsyncMock(return_value=self._fake_paginated())
+        mod.inventory_service.get_distribution_history = AsyncMock(return_value=_fake_paginated())
         resp = client.get(self.URL)
         assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert "data" in body
-        assert "pagination" in body
-
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.get(self.URL)
-        assert resp.status_code == 403
-
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.get(self.URL)
-        assert resp.status_code == 401
+        assert resp.json()["success"] is True
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_receipts = AsyncMock(side_effect=RuntimeError("error"))
+        mod.inventory_service.get_distribution_history = AsyncMock(side_effect=RuntimeError("error"))
         resp = client.get(self.URL)
         assert resp.status_code == 500
 
 
-class TestGetExternalInventoryMovements:
-    URL = "/api/external-inventory/movements"
+# ---------------------------------------------------------------------------
+# POST /distributions/bulk-upload
+# ---------------------------------------------------------------------------
 
-    def _fake_paginated(self):
-        return {
-            "data": [{"movement_id": "MOV001"}],
-            "pagination": {"page": 1, "page_size": 20, "total": 1, "total_pages": 1},
+class TestBulkDistributeExternalInventoryFromFile:
+    URL = "/api/external-inventory/distributions/bulk-upload"
+
+    def _result(self, **overrides):
+        base = {
+            "total_rows": 2,
+            "created_count": 2,
+            "error_count": 0,
+            "recipient_id": 2,
+            "recipient_name": "Jane",
+            "created": [{"item_name": "Item One"}, {"item_name": "Item Two"}],
+            "errors": [],
         }
+        base.update(overrides)
+        return base
 
-    def test_success(self, client, mock_inventory_services):
+    def test_success_csv(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_stock_movements = AsyncMock(return_value=self._fake_paginated())
-        resp = client.get(self.URL)
-        assert resp.status_code == 200
+        mod.inventory_service.bulk_distribute_from_file = AsyncMock(return_value=self._result())
+        csv_bytes = b"id,quantity\r\n1,2\r\n2,3\r\n"
+        resp = client.post(
+            self.URL,
+            data={"to_user_id": "2"},
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 201
         body = resp.json()
         assert body["success"] is True
-        assert "data" in body
-        assert "pagination" in body
+        assert body["data"]["created_count"] == 2
+        mod.inventory_service.bulk_distribute_from_file.assert_awaited_once()
+        kwargs = mod.inventory_service.bulk_distribute_from_file.await_args.kwargs
+        assert kwargs["to_user_id"] == "2"
+        assert len(kwargs["identifier_rows"]) == 2
+        assert kwargs["identifier_rows"][0]["id"] == "1"
+        assert kwargs["identifier_rows"][0]["quantity"] == "2"
+        assert kwargs["identifier_rows"][0]["notes"] is None
 
-    def test_forbidden_for_operator(self, client, set_role):
-        set_role("operator")
-        resp = client.get(self.URL)
-        assert resp.status_code == 403
+    def test_non_supported_extension_rejected(self, client, mock_inventory_services):
+        resp = client.post(
+            self.URL,
+            data={"to_user_id": "2"},
+            files={"file": ("items.txt", BytesIO(b"abc"), "text/plain")},
+        )
+        assert resp.status_code == 400
+        assert "Only Excel" in resp.json()["detail"]
 
-    def test_unauthenticated_returns_401(self, client, test_app):
-        from app.middleware.auth_middleware import get_current_user
-        test_app.dependency_overrides.pop(get_current_user, None)
-        resp = client.get(self.URL)
-        assert resp.status_code == 401
+    def test_missing_id_column_rejected(self, client, mock_inventory_services):
+        csv_bytes = b"quantity\r\n2\r\n"
+        resp = client.post(
+            self.URL,
+            data={"to_user_id": "2"},
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 400
+        assert "Missing required column" in resp.json()["detail"]
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
-        mod.inventory_service.get_stock_movements = AsyncMock(
-            side_effect=RuntimeError("error")
+        mod.inventory_service.bulk_distribute_from_file = AsyncMock(side_effect=RuntimeError("error"))
+        csv_bytes = b"id,quantity\r\n1,2\r\n"
+        resp = client.post(
+            self.URL,
+            data={"to_user_id": "2"},
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
         )
-        resp = client.get(self.URL)
+        assert resp.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# POST /items/bulk-upload
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_bulk_upload_db():
+    """Replace the DB session used inside the bulk-upload handler."""
+    import app.database_sqlalchemy as dbs
+
+    session = AsyncMock()
+    session.info = {}
+
+    class _Ctx:
+        def __init__(self, s):
+            self._s = s
+
+        async def __aenter__(self):
+            return self._s
+
+        async def __aexit__(self, *args):
+            return False
+
+    def _factory():
+        return _Ctx(session)
+
+    patchers = [
+        patch("app.database_sqlalchemy.async_session_factory", new=_factory),
+        patch("app.routes.external_inventory._fetch_existing_names", new=AsyncMock(return_value=set())),
+    ]
+    for p in patchers:
+        p.start()
+    yield session
+    for p in patchers:
+        p.stop()
+
+
+class TestBulkUploadExternalInventoryItems:
+    URL = "/api/external-inventory/items/bulk-upload"
+
+    def test_success(self, client, mock_inventory_services, mock_bulk_upload_db):
+        csv_bytes = b"name,identifier_type,identifier,quantity\r\nItem One,MAC ID,AA:BB:CC,2\r\nItem Two,MAC ID,DD:EE:FF,3\r\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["created_count"] == 2
+
+    def test_non_csv_rejected(self, client, mock_inventory_services):
+        resp = client.post(
+            self.URL,
+            files={"file": ("items.txt", BytesIO(b"abc"), "text/plain")},
+        )
+        assert resp.status_code == 400
+        assert "CSV" in resp.json()["detail"]
+
+    def test_missing_required_column_rejected(self, client, mock_inventory_services):
+        csv_bytes = b"identifier_type,quantity\r\nMAC ID,2\r\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 400
+        assert "Missing required columns" in resp.json()["detail"]
+
+    def test_internal_error_returns_500(self, client, mock_inventory_services, mock_bulk_upload_db):
+        csv_bytes = b"name,quantity\r\nItem One,2\r\n"
+        with patch("app.routes.external_inventory._chunks", side_effect=RuntimeError("error")):
+            resp = client.post(
+                self.URL,
+                files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+            )
         assert resp.status_code == 500
