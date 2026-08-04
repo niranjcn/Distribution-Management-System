@@ -112,6 +112,10 @@ const fetchDistributionDevices = async (distributionId) => {
   };
 
   useEffect(() => {
+    fetchDistributions();
+  }, [user?.id]);
+
+  useEffect(() => {
     if (showDetailModal && selectedDist) {
       fetchDistributionDevices(selectedDist._id || selectedDist.id);
     }

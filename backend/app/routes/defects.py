@@ -346,41 +346,6 @@ async def get_defects(
         )
 
 
-@router.post("/{defect_id}/forward-to-management", summary="Allow sub distributor to forward a routed defect to manager/admin queue")
-async def forward_defect_to_management(
-    defect_id: str,
-    action_data: DefectActionRequest,
-    current_user: dict = Depends(require_any_role)
-):
-    """Allow sub distributor to forward a routed defect to manager/admin queue."""
-    _ensure_not_md_director(current_user)
-
-    try:
-        defect = await defect_service.forward_defect_to_management(
-            defect_id=defect_id,
-            forwarder=current_user,
-            notes=action_data.notes
-        )
-        return {
-            "success": True,
-            "message": "Defect forwarded to manager/admin successfully",
-            "data": defect
-        }
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        logger.exception("Unhandled route exception")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal error occurred. Please try again later."
-        )
-
-
 @router.get("/{defect_id}", summary="Get defect report by ID")
 async def get_defect(
     defect_id: str,

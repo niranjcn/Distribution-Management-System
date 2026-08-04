@@ -12,7 +12,6 @@ from app.models.defect import (
     DefectStatus,
     DefectSeverity,
     DefectType,
-    DefectReportTarget,
 )
 from app.models.device import DeviceStatus, DeviceCreate
 from app.services import device_service, notification_service, return_service
@@ -98,59 +97,6 @@ async def _resolve_defect_lineage_ids(
         "operator_id": operator_id,
         "sub_distributor_id": sub_distributor_id,
     }
-
-
-async def _get_sub_distributor_operator_ids(session, sub_distributor_id: str) -> Set[str]:
-    operator_ids: Set[str] = set()
-    rows = (await session.execute(
-        text("""
-            SELECT CAST(id AS CHAR) AS id FROM users
-            WHERE role = 'operator' AND (
-                CAST(parent_id AS CHAR) = CAST(:sid AS CHAR)
-                OR parent_id IN (
-                    SELECT id FROM users WHERE role = 'cluster' AND CAST(parent_id AS CHAR) = CAST(:sid2 AS CHAR)
-                )
-            )
-        """),
-        {"sid": str(sub_distributor_id), "sid2": str(sub_distributor_id)}
-    )).mappings().all()
-    for row in rows:
-        operator_ids.add(str(row["id"]))
-    return operator_ids
-
-
-async def _resolve_sub_distributor_targets_for_operator(session, operator_id: str) -> List[str]:
-    recipients: Set[str] = set()
-    operator_row = (await session.execute(
-        text("SELECT id, parent_id FROM users WHERE CAST(id AS CHAR) = CAST(:uid AS CHAR)"),
-        {"uid": str(operator_id)}
-    )).mappings().first()
-    if not operator_row:
-        return []
-
-    parent_id = operator_row["parent_id"]
-    if parent_id is None:
-        return []
-
-    parent_row = (await session.execute(
-        text("SELECT id, role, parent_id FROM users WHERE id = :pid"),
-        {"pid": int(parent_id)}
-    )).mappings().first()
-    if not parent_row:
-        return []
-
-    parent_role = parent_row["role"]
-    if parent_role == "sub_distributor":
-        recipients.add(str(parent_row["id"]))
-    elif parent_role == "cluster" and parent_row["parent_id"] is not None:
-        sub_row = (await session.execute(
-            text("SELECT id FROM users WHERE id = :pid AND role = 'sub_distributor'"),
-            {"pid": int(parent_row["parent_id"])}
-        )).mappings().first()
-        if sub_row:
-            recipients.add(str(sub_row["id"]))
-
-    return sorted(recipients)
 
 
 async def _get_report_scope_user_ids(session, user: Dict[str, Any]) -> Optional[Set[str]]:
@@ -382,12 +328,6 @@ async def create_defect(
     reporter_id = int(reporter.get("_id") or reporter.get("id"))
     reporter_name = reporter.get("name") or "System"
     reporter_role = reporter.get("role") or ""
-    requested_target = defect_data.report_target.value if defect_data.report_target else None
-    report_target = (
-        DefectReportTarget.SUB_DISTRIBUTOR.value
-        if requested_target == DefectReportTarget.SUB_DISTRIBUTOR.value and reporter_role == "operator"
-        else DefectReportTarget.MANAGER_ADMIN.value
-    )
 
     async with async_session_factory() as session:
         device_row = (await session.execute(
@@ -420,11 +360,11 @@ async def create_defect(
             text("""
                 INSERT INTO defects (report_id, device_id, device_serial, device_nuid, device_type,
                 reported_by, reported_by_name, defect_type, severity, description,
-                operator_id, sub_distributor_id, report_target, forwarded_to_management, status, resolution, replacement_by,
+                operator_id, sub_distributor_id, status, resolution, replacement_by,
                 replacement_by_name, resolved_at, images, created_at, updated_at)
                 VALUES (:report_id, :device_id, :device_serial, :device_nuid, :device_type,
                 :reported_by, :reported_by_name, :defect_type, :severity, :description,
-                :operator_id, :sub_distributor_id, :report_target, :forwarded_to_management, :status, :resolution, :replacement_by,
+                :operator_id, :sub_distributor_id, :status, :resolution, :replacement_by,
                 :replacement_by_name, :resolved_at, :images, :created_at, :updated_at)
             """),
             {
@@ -440,8 +380,6 @@ async def create_defect(
                 "description": defect_data.description,
                 "operator_id": lineage.get("operator_id"),
                 "sub_distributor_id": lineage.get("sub_distributor_id"),
-                "report_target": report_target,
-                "forwarded_to_management": 0,
                 "status": DefectStatus.REPORTED.value,
                 "resolution": None,
                 "replacement_by": None,
@@ -466,15 +404,19 @@ async def create_defect(
         )
 
     async with async_session_factory() as session:
-        recipient_ids: List[str] = []
-        if report_target == DefectReportTarget.SUB_DISTRIBUTOR.value:
-            recipient_ids = await _resolve_sub_distributor_targets_for_operator(session, reporter_id)
+        # Defect reports always go directly to manager/admin. Field operators
+        # (and clusters under a sub distributor) additionally notify their
+        # concerned sub distributor through the stored lineage.
+        recipient_ids: Set[str] = set()
+        rows = (await session.execute(
+            text("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
+        )).mappings().all()
+        for r in rows:
+            recipient_ids.add(str(r["id"]))
 
-        if not recipient_ids:
-            rows = (await session.execute(
-                text("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
-            )).mappings().all()
-            recipient_ids = [str(r["id"]) for r in rows]
+        concerned_sub = lineage.get("sub_distributor_id")
+        if concerned_sub is not None:
+            recipient_ids.add(str(concerned_sub))
 
         severity = defect_data.severity.value
         await notification_service.bulk_create_notifications([
@@ -488,10 +430,9 @@ async def create_defect(
                 "metadata": {
                     "action": "new_defect_report",
                     "defect_id": str(new_id),
-                    "report_target": report_target
                 }
             }
-            for rid in recipient_ids
+            for rid in sorted(recipient_ids)
         ])
 
     return await get_defect_by_id(str(new_id))
@@ -523,93 +464,6 @@ async def create_or_get_active_defect_for_device(
         images=[]
     )
     return await create_defect(payload, reporter, sync_device_status=False)
-
-
-async def forward_defect_to_management(
-    defect_id: str,
-    forwarder: Dict[str, Any],
-    notes: Optional[str] = None
-) -> Dict[str, Any]:
-    forwarder_role = forwarder.get("role")
-    forwarder_id = int(forwarder.get("id") or forwarder.get("_id"))
-    forwarder_name = forwarder.get("name") or "Sub Distributor"
-
-    if forwarder_role != "sub_distributor":
-        raise ValueError("Only sub distributors can forward defects to manager/admin")
-
-    async with async_session_factory() as session:
-        defect = (await session.execute(
-            text("SELECT * FROM defects WHERE id = :id"), {"id": int(defect_id)}
-        )).mappings().first()
-        if not defect:
-            raise ValueError("Defect report not found")
-        defect = dict(defect)
-
-        target = defect.get("report_target") or DefectReportTarget.MANAGER_ADMIN.value
-        if target != DefectReportTarget.SUB_DISTRIBUTOR.value:
-            raise ValueError("This defect is not routed through sub distributor")
-        if int(defect.get("forwarded_to_management") or 0) == 1:
-            raise ValueError("This defect has already been forwarded to manager/admin")
-
-        operator_ids = await _get_sub_distributor_operator_ids(session, forwarder_id)
-        if str(defect.get("reported_by")) not in operator_ids:
-            raise ValueError("You can only forward defects reported by operators under your hierarchy")
-
-        now = datetime.now().replace(tzinfo=None)
-        await session.execute(
-            text("""
-                UPDATE defects
-                SET forwarded_to_management = 1,
-                    forwarded_to_management_at = :now,
-                    forwarded_to_management_by = :fid,
-                    forwarded_to_management_by_name = :fname,
-                    updated_at = :now2
-                WHERE id = :id
-            """),
-            {"now": now, "fid": forwarder_id, "fname": forwarder_name, "now2": now, "id": int(defect_id)}
-        )
-        await bump_cache_version(session)
-        await session.commit()
-
-        rows = (await session.execute(
-            text("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff')")
-        )).mappings().all()
-
-    await notification_service.bulk_create_notifications([
-        {
-            "user_id": r["id"],
-            "title": "Defect Forwarded by Sub Distributor",
-            "message": (
-                f"Defect {defect.get('report_id')} was forwarded by {forwarder_name} "
-                "for manager/admin review."
-            ),
-            "notification_type": "info",
-            "category": "defect",
-            "link": f"/defects?defectId={defect_id}",
-            "metadata": {
-                "action": "forwarded_to_management",
-                "defect_id": str(defect_id),
-                "notes": notes,
-                "forwarded_by": forwarder_name
-            }
-        }
-        for r in rows
-    ])
-
-    if defect.get("reported_by"):
-        await notification_service.create_notification(
-            user_id=int(defect["reported_by"]),
-            title="Defect Forwarded to Manager/Admin",
-            message=(
-                f"Your defect report {defect.get('report_id')} has been forwarded to manager/admin "
-                "for further review."
-            ),
-            notification_type="info",
-            category="defect",
-            link=f"/defects?defectId={defect_id}"
-        )
-
-    return await get_defect_by_id(defect_id)
 
 
 async def update_defect(defect_id: str, defect_data: DefectUpdate) -> Optional[Dict[str, Any]]:

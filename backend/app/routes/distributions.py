@@ -515,6 +515,44 @@ async def get_distribution_devices(
         )
 
 
+@router.get("/{distribution_id}/device-summary", summary="Get aggregated device type/vendor summary for a distribution")
+async def get_distribution_device_summary(
+    distribution_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get aggregated device type/vendor counts for a distribution."""
+    try:
+        result = await distribution_service.get_distribution_device_summary(
+            distribution_id=distribution_id,
+            user=current_user,
+        )
+
+        return {
+            "success": True,
+            "message": "Distribution device summary retrieved successfully",
+            "data": result,
+        }
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=message
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=message
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new distribution request.")
 async def create_distribution(
     dist_data: DistributionCreate,

@@ -30,8 +30,6 @@ async def init_db():
             "UPDATE devices SET nuid = NULL WHERE device_type <> 'Set-top box'",
             "UPDATE devices SET current_location = 'PDIC' WHERE current_location = 'NOC' OR current_location IS NULL",
             "UPDATE devices SET current_holder_name = 'PDIC (Distribution)' WHERE current_holder_type = 'noc' AND (current_holder_name IS NULL OR current_holder_name = 'NOC')",
-            "UPDATE defects SET report_target = 'manager_admin' WHERE report_target IS NULL OR report_target = ''",
-            "UPDATE defects SET forwarded_to_management = COALESCE(forwarded_to_management, 0)",
             "UPDATE defects SET payment_confirmed = COALESCE(payment_confirmed, 0)",
             "UPDATE defects SET payment_due_user_id = COALESCE(NULLIF(payment_due_user_id, ''), reported_by)",
             "UPDATE defects SET payment_due_user_name = COALESCE(NULLIF(payment_due_user_name, ''), reported_by_name)",
