@@ -15,8 +15,6 @@ MEANINGFUL_ACTIVITY_RULES = [
     ("PATCH", re.compile(r"^/api/defects/[^/]+/resolve$"), "Defect resolved", "defect resolution"),
     ("POST", re.compile(r"^/api/defects/[^/]+/forward-to-management$"), "Defect forwarded to management", "defect forwarding"),
     ("POST", re.compile(r"^/api/returns$"), "Return requested", "return request"),
-    ("POST", re.compile(r"^/api/external-inventory/items/[^/]+/image$"), "External inventory item image uploaded", "item image upload"),
-    ("POST", re.compile(r"^/api/external-inventory/adjustments$"), "External inventory adjusted", "stock adjustment"),
     ("POST", re.compile(r"^/api/distributions/[^/]+/receipt$"), "Distribution receipt confirmed", "distribution receipt confirmation"),
     ("PATCH", re.compile(r"^/api/users/[^/]+/credentials$"), "User credentials updated", "user credential update"),
     ("GET", re.compile(r"^/api/distributions/[^/]+/manifest$"), "Distribution manifest downloaded", "distribution manifest download"),

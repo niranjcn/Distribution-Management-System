@@ -124,49 +124,49 @@ async def get_admin_activities(
             params: Dict[str, Any] = {}
 
             if actor:
-                conditions.append("performed_by_name LIKE :actor")
+                conditions.append("distributed_by_name LIKE :actor")
                 params["actor"] = f"%{actor}%"
 
             if search:
                 like = f"%{search}%"
-                conditions.append("(movement_type LIKE :sl1 OR notes LIKE :sl2 OR item_sku LIKE :sl3 OR item_name LIKE :sl4 OR performed_by_name LIKE :sl5)")
+                conditions.append("(history_id LIKE :sl1 OR item_name LIKE :sl2 OR recipient_name LIKE :sl3 OR distributed_by_name LIKE :sl4 OR notes LIKE :sl5)")
                 for i, key in enumerate([f"sl{i+1}" for i in range(5)]):
                     params[key] = like
 
             if start_date:
-                conditions.append("created_at >= :start_date")
+                conditions.append("distributed_at >= :start_date")
                 params["start_date"] = start_date
 
             if end_date:
-                conditions.append("created_at <= :end_date")
+                conditions.append("distributed_at <= :end_date")
                 params["end_date"] = end_date
 
             where = " AND ".join(conditions)
             table_total += (await session.execute(
-                text(f"SELECT COUNT(*) FROM inventory_stock_movements WHERE {where}"), params
+                text(f"SELECT COUNT(*) FROM external_device_history WHERE {where}"), params
             )).scalar() or 0
 
             rows = (await session.execute(
-                text(f"""SELECT id, item_sku, item_name, movement_type, notes, performed_by_name, created_at
-                    FROM inventory_stock_movements
+                text(f"""SELECT id, history_id, item_name, quantity, recipient_name, distributed_by_name, distributed_at, notes
+                    FROM external_device_history
                     WHERE {where}
-                    ORDER BY created_at DESC
+                    ORDER BY distributed_at DESC
                     LIMIT :lim"""),
                 {**params, "lim": fetch_limit}
             )).mappings().all()
             for item in rows:
-                actor_name = item.get("performed_by_name") or "Unknown"
+                actor_name = item.get("distributed_by_name") or "Unknown"
                 description = (
                     item.get("notes")
-                    or f"{item.get('movement_type', 'movement')} for {item.get('item_sku') or item.get('item_name') or '-'}."
+                    or f"Distributed {item.get('item_name', '-')} to {item.get('recipient_name') or '-'}."
                 )
                 activities.append({
                     "id": f"inventory-{item.get('id')}",
                     "category": "inventory",
-                    "action": item.get("movement_type") or "movement",
+                    "action": "distribution",
                     "actor": actor_name,
                     "description": description,
-                    "date": item.get("created_at"),
+                    "date": item.get("distributed_at"),
                     "link": None,
                 })
 

@@ -46,24 +46,11 @@ def generate_operator_id() -> str:
     return generate_id("OP")
 
 
-def generate_inventory_item_id() -> str:
-    """Generate external inventory item ID"""
-    return generate_id("INV")
+def generate_external_distribution_id() -> str:
+    """Generate external inventory distribution ID"""
+    return generate_id("EXT")
 
 
-def generate_purchase_order_id() -> str:
-    """Generate external inventory purchase order ID"""
-    return generate_id("EPO")
-
-
-def generate_inventory_receipt_id() -> str:
-    """Generate external inventory receipt ID"""
-    return generate_id("ERC")
-
-
-def generate_inventory_movement_id() -> str:
-    """Generate external inventory stock movement ID"""
-    return generate_id("EIM")
 def get_pagination(page: int, page_size: int, total: int) -> Dict[str, int]:
     """Calculate pagination info"""
     total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0

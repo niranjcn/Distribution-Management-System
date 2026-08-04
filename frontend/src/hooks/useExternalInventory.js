@@ -4,24 +4,13 @@ import { externalInventoryAPI } from '../services/api';
 export const inventoryKeys = {
   all: ['externalInventory'],
   items: (params) => [...inventoryKeys.all, 'items', params],
-  dashboard: () => [...inventoryKeys.all, 'dashboard'],
-  purchaseOrders: (params) => [...inventoryKeys.all, 'purchaseOrders', params],
-  receipts: (params) => [...inventoryKeys.all, 'receipts', params],
-  movements: (params) => [...inventoryKeys.all, 'movements', params],
+  distributions: (params) => [...inventoryKeys.all, 'distributions', params],
 };
 
 export function useInventoryItems(params) {
   return useQuery({
     queryKey: inventoryKeys.items(params),
     queryFn: () => externalInventoryAPI.getItems(params),
-  });
-}
-
-export function useInventoryDashboard() {
-  return useQuery({
-    queryKey: inventoryKeys.dashboard(),
-    queryFn: () => externalInventoryAPI.getDashboard(),
-    staleTime: 30 * 1000,
   });
 }
 
@@ -49,47 +38,25 @@ export function useDeleteInventoryItem() {
   });
 }
 
-export function useCreateAdjustment() {
+export function useDistributeInventoryItem() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload) => externalInventoryAPI.createAdjustment(payload),
+    mutationFn: (payload) => externalInventoryAPI.distributeItem(payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: inventoryKeys.all }),
   });
 }
 
-export function usePurchaseOrders(params) {
-  return useQuery({
-    queryKey: inventoryKeys.purchaseOrders(params),
-    queryFn: () => externalInventoryAPI.getPurchaseOrders(params),
-  });
-}
-
-export function useCreatePurchaseOrder() {
+export function useBulkDistributeInventoryItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload) => externalInventoryAPI.createPurchaseOrder(payload),
+    mutationFn: (payload) => externalInventoryAPI.bulkDistributeItems(payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: inventoryKeys.all }),
   });
 }
 
-export function useReceivePurchaseOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, payload }) => externalInventoryAPI.receivePurchaseOrder(id, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: inventoryKeys.all }),
-  });
-}
-
-export function useReceipts(params) {
+export function useExternalDistributions(params) {
   return useQuery({
-    queryKey: inventoryKeys.receipts(params),
-    queryFn: () => externalInventoryAPI.getReceipts(params),
-  });
-}
-
-export function useMovements(params) {
-  return useQuery({
-    queryKey: inventoryKeys.movements(params),
-    queryFn: () => externalInventoryAPI.getMovements(params),
+    queryKey: inventoryKeys.distributions(params),
+    queryFn: () => externalInventoryAPI.getDistributions(params),
   });
 }

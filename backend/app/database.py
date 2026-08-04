@@ -25,19 +25,6 @@ async def init_db():
         await ensure_cache_version_row(session)
 
         for stmt in [
-            "UPDATE external_inventory_items SET item_id = inventory_id WHERE item_id IS NULL OR item_id = ''",
-            "UPDATE external_inventory_items SET serial_number = '' WHERE serial_number IS NULL",
-            "UPDATE external_inventory_items SET mac_id = '' WHERE mac_id IS NULL",
-            "UPDATE external_inventory_items SET identifier_type = COALESCE(identifier_type, '')",
-            "UPDATE external_inventory_items SET identifier = COALESCE(identifier, '')",
-            "UPDATE external_inventory_items SET device_type = COALESCE(category, 'device') WHERE device_type IS NULL OR device_type = ''",
-            "UPDATE external_inventory_items SET price = COALESCE(price, unit_cost, 0)",
-            "UPDATE external_inventory_items SET sku = COALESCE(NULLIF(item_id, ''), sku)",
-            "UPDATE external_inventory_items SET category = COALESCE(NULLIF(device_type, ''), category)",
-            "UPDATE external_inventory_items SET unit_cost = COALESCE(price, unit_cost, 0)",
-            "UPDATE external_inventory_items SET identifier_type = 'MAC ID', identifier = mac_id WHERE (identifier_type IS NULL OR identifier_type = '') AND (identifier IS NULL OR identifier = '') AND COALESCE(mac_id, '') != '' AND LOWER(REPLACE(REPLACE(REPLACE(device_type, '-', ''), '_', ''), ' ', '')) NOT IN ('olt', 'adapter')",
-            "UPDATE external_inventory_items SET identifier_type = NULL, identifier = NULL WHERE LOWER(REPLACE(REPLACE(REPLACE(device_type, '-', ''), '_', ''), ' ', '')) IN ('olt', 'adapter')",
-
             "UPDATE devices SET serial_number = NULL WHERE device_type = 'Set-top box'",
             "UPDATE devices SET mac_address = NULL WHERE device_type = 'Set-top box'",
             "UPDATE devices SET nuid = NULL WHERE device_type <> 'Set-top box'",
