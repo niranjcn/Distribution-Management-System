@@ -3,6 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Pagination from '../components/ui/Pagination';
 import ReportFilter from '../components/ui/ReportFilter';
+import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { reportsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { RefreshCw, BarChart3, Layers, Building2, Loader2 } from 'lucide-react';
@@ -32,6 +33,7 @@ const ClusterReport = () => {
   const [activeView, setActiveView] = useState('total');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [subFilter, setSubFilter] = useState('');
   const [page, setPage] = useState(1);
   const [searchBy, setSearchBy] = useState('all');
@@ -41,7 +43,7 @@ const ClusterReport = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await reportsAPI.getClusterReport();
+      const res = await reportsAPI.getClusterReport(buildDateParams(dateRange));
       setRows(res.data?.clusters || []);
     } catch (err) {
       showToast(err.message || 'Failed to load cluster report', 'error');
@@ -51,7 +53,7 @@ const ClusterReport = () => {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [dateRange]);
 
   const subOptions = useMemo(() => {
     const map = new Map();
@@ -241,7 +243,10 @@ const ClusterReport = () => {
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Cluster Report</h1>
           <p className="text-gray-500 mt-1 text-sm">Cluster-wise summary grouped under sub-distributions</p>
         </div>
-        <Button variant="outline" icon={RefreshCw} onClick={fetchData}>Refresh</Button>
+        <div className="flex items-center gap-3">
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
+          <Button variant="outline" icon={RefreshCw} onClick={fetchData}>Refresh</Button>
+        </div>
       </div>
 
       <ReportFilter

@@ -3,6 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Pagination from '../components/ui/Pagination';
 import ReportFilter from '../components/ui/ReportFilter';
+import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { reportsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { RefreshCw, BarChart3, Layers, Building2, Loader2 } from 'lucide-react';
@@ -32,6 +33,7 @@ const OperatorReport = () => {
   const [activeView, setActiveView] = useState('total');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [subFilter, setSubFilter] = useState('');
   const [clusterFilter, setClusterFilter] = useState('');
   const [page, setPage] = useState(1);
@@ -42,7 +44,7 @@ const OperatorReport = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await reportsAPI.getOperatorReport();
+      const res = await reportsAPI.getOperatorReport(buildDateParams(dateRange));
       setRows(res.data?.operators || []);
     } catch (err) {
       showToast(err.message || 'Failed to load operator report', 'error');
@@ -52,7 +54,7 @@ const OperatorReport = () => {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [dateRange]);
 
   const subOptions = useMemo(() => {
     const map = new Map();
@@ -259,7 +261,10 @@ const OperatorReport = () => {
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Operator Report</h1>
           <p className="text-gray-500 mt-1 text-sm">Operator-wise summary with optional sub-distribution and cluster filters</p>
         </div>
-        <Button variant="outline" icon={RefreshCw} onClick={fetchData}>Refresh</Button>
+        <div className="flex items-center gap-3">
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
+          <Button variant="outline" icon={RefreshCw} onClick={fetchData}>Refresh</Button>
+        </div>
       </div>
 
       <ReportFilter

@@ -31,18 +31,21 @@ export const reportsAPI = {
     return response;
   },
 
-  getSubDistributionReport: async () => {
-    const response = await apiRequest('/reports/sub-distributions');
+  getSubDistributionReport: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/sub-distributions${queryString ? `?${queryString}` : ''}`);
     return response;
   },
 
-  getClusterReport: async () => {
-    const response = await apiRequest('/reports/clusters');
+  getClusterReport: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/clusters${queryString ? `?${queryString}` : ''}`);
     return response;
   },
 
-  getOperatorReport: async () => {
-    const response = await apiRequest('/reports/operators');
+  getOperatorReport: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const response = await apiRequest(`/reports/operators${queryString ? `?${queryString}` : ''}`);
     return response;
   },
 

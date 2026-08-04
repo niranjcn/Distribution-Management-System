@@ -712,12 +712,34 @@ def _is_ont_device_type(value) -> bool:
     return _canonical_device_type(value) == "ont"
 
 
-async def get_sub_distribution_report() -> Dict[str, Any]:
+def _build_device_date_filter(base_params: Optional[dict], start_date: Optional[str], end_date: Optional[str], prefix: str = "") -> str:
+    """Build a ``devices.created_at`` date filter fragment with named params.
+
+    Mirrors the dashboard date-filter semantics (device counts restricted to
+    devices created within the requested window). When no date is provided,
+    returns ``1=1`` so callers can append the fragment unconditionally.
+    """
+    params = base_params if base_params is not None else {}
+    conds = []
+    if start_date:
+        conds.append(f"d.created_at >= :{prefix}start_date")
+        params[f"{prefix}start_date"] = start_date
+    if end_date:
+        conds.append(f"d.created_at <= :{prefix}end_date")
+        params[f"{prefix}end_date"] = end_date
+    return " AND ".join(conds) if conds else "1=1"
+
+
+async def get_sub_distribution_report(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Build the sub-distribution hierarchy report.
 
     Returns one row per sub-distributor with hierarchy rollups (operators,
     clusters), identity columns (digital id / broadband id), and device
     counts broken into SB / ONT / other plus per-vendor SB and ONT counts.
+
+    When ``start_date`` / ``end_date`` are provided, device counts are
+    restricted to devices created within that window (matching the dashboard
+    date-filter semantics).
     """
     sub_tree = """
         WITH RECURSIVE hierarchy AS (
@@ -822,6 +844,8 @@ async def get_sub_distribution_report() -> Dict[str, Any]:
                 if row["has_broadband"]:
                     operator_identities[sub_id]["with_broadband"].add(int(row["user_id"]))
 
+            device_date_params = {}
+            device_date_cond = _build_device_date_filter(device_date_params, start_date, end_date)
             device_result = await session.execute(text(f"""
                 {sub_tree}
                 SELECT h.sub_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
@@ -829,8 +853,9 @@ async def get_sub_distribution_report() -> Dict[str, Any]:
                 INNER JOIN devices d ON CAST(d.current_holder_id AS CHAR) = CAST(h.id AS CHAR)
                 WHERE d.current_holder_id IS NOT NULL
                   AND TRIM(CAST(d.current_holder_id AS CHAR)) != ''
+                  AND {device_date_cond}
                 GROUP BY h.sub_id, d.device_type, d.manufacturer
-            """))
+            """), device_date_params)
             for row in device_result.mappings().all():
                 sub_id = int(row["sub_id"])
                 device_type = str(row["device_type"] or "")
@@ -880,7 +905,7 @@ async def get_sub_distribution_report() -> Dict[str, Any]:
         }
 
 
-async def get_cluster_report(scope: Optional[dict] = None) -> Dict[str, Any]:
+async def get_cluster_report(scope: Optional[dict] = None, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Build the cluster hierarchy report.
 
     Returns one row per cluster with its parent sub-distribution, hierarchy
@@ -889,7 +914,9 @@ async def get_cluster_report(scope: Optional[dict] = None) -> Dict[str, Any]:
     counts. Mirrors the sub-distribution report.
 
     When a ``scope`` dict (from ``_resolve_report_scope``) is provided, only
-    clusters within that user's chain are returned.
+    clusters within that user's chain are returned. When ``start_date`` /
+    ``end_date`` are provided, device counts are restricted to devices created
+    within that window (matching the dashboard date-filter semantics).
     """
     cluster_tree = """
         WITH RECURSIVE hierarchy AS (
@@ -1008,14 +1035,17 @@ async def get_cluster_report(scope: Optional[dict] = None) -> Dict[str, Any]:
                 if row["has_broadband"]:
                     operator_identities[cluster_id]["with_broadband"].add(int(row["user_id"]))
 
+            device_date_params = {}
+            device_date_cond = _build_device_date_filter(device_date_params, start_date, end_date)
             device_result = await session.execute(text(f"""
                 {cluster_tree}
                 SELECT h.cluster_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
                 FROM hierarchy h
                 INNER JOIN devices d ON d.current_holder_id = h.id
                 WHERE d.current_holder_id IS NOT NULL
+                  AND {device_date_cond}
                 GROUP BY h.cluster_id, d.device_type, d.manufacturer
-            """))
+            """), device_date_params)
             for row in device_result.mappings().all():
                 cluster_id = int(row["cluster_id"])
                 device_type = str(row["device_type"] or "")
@@ -1068,7 +1098,7 @@ async def get_cluster_report(scope: Optional[dict] = None) -> Dict[str, Any]:
         }
 
 
-async def get_operator_report(scope: Optional[dict] = None) -> Dict[str, Any]:
+async def get_operator_report(scope: Optional[dict] = None, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Build the operator hierarchy report.
 
     Returns one row per operator with its parent sub-distribution and cluster
@@ -1076,7 +1106,9 @@ async def get_operator_report(scope: Optional[dict] = None) -> Dict[str, Any]:
     broken into SB / ONT / other plus per-vendor SB and ONT counts.
 
     When a ``scope`` dict (from ``_resolve_report_scope``) is provided, only
-    operators within that user's chain are returned.
+    operators within that user's chain are returned. When ``start_date`` /
+    ``end_date`` are provided, device counts are restricted to devices created
+    within that window (matching the dashboard date-filter semantics).
     """
     async with async_session_factory() as session:
         operator_result = await session.execute(text("""
@@ -1156,15 +1188,18 @@ async def get_operator_report(scope: Optional[dict] = None) -> Dict[str, Any]:
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                 })
 
+            device_date_params = {}
+            device_date_cond = _build_device_date_filter(device_date_params, start_date, end_date)
             device_result = await session.execute(
                 text("""
                     SELECT d.current_holder_id AS user_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
                     FROM devices d
                     WHERE d.current_holder_id IS NOT NULL
                       AND d.current_holder_id IN :operator_ids
+                      AND """ + device_date_cond + """
                     GROUP BY d.current_holder_id, d.device_type, d.manufacturer
                 """).bindparams(bindparam("operator_ids", expanding=True)),
-                {"operator_ids": operator_ids},
+                {**device_date_params, "operator_ids": operator_ids},
             )
             for row in device_result.mappings().all():
                 user_id = int(row["user_id"])

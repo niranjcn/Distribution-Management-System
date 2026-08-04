@@ -197,11 +197,13 @@ async def get_device_utilization_report(
 
 @router.get("/sub-distributions", summary="Get sub-distribution hierarchy report")
 async def get_sub_distribution_report(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
 ):
     """Get sub-distribution hierarchy report (operators, clusters, device rollups)."""
     try:
-        report = await report_service.get_sub_distribution_report()
+        report = await report_service.get_sub_distribution_report(start_date, end_date)
 
         return {
             "success": True,
@@ -220,12 +222,14 @@ async def get_sub_distribution_report(
 
 @router.get("/clusters", summary="Get cluster hierarchy report")
 async def get_cluster_report(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_hierarchy_reports)
 ):
     """Get cluster hierarchy report (operators, device rollups)."""
     try:
         scope = await report_service._resolve_report_scope(current_user)
-        report = await report_service.get_cluster_report(scope)
+        report = await report_service.get_cluster_report(scope, start_date, end_date)
 
         return {
             "success": True,
@@ -244,12 +248,14 @@ async def get_cluster_report(
 
 @router.get("/operators", summary="Get operator hierarchy report")
 async def get_operator_report(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
     current_user: dict = Depends(require_hierarchy_reports)
 ):
     """Get operator hierarchy report (parent cluster / sub-distribution, device rollups)."""
     try:
         scope = await report_service._resolve_report_scope(current_user)
-        report = await report_service.get_operator_report(scope)
+        report = await report_service.get_operator_report(scope, start_date, end_date)
 
         return {
             "success": True,
