@@ -949,77 +949,51 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
         }
 
 
-def _build_hierarchy_scope_fragments(user_role: str) -> str:
-    """Return (mine, hierarchy) SQL fragments for a hierarchy user's device scope.
+async def _build_scope_id_sets(session, user_id: str, user_role: str) -> tuple:
+    """Return (mine_ids, chain_ids) integer user id lists for a hierarchy user.
 
-    - mine: devices currently held by the user plus defective devices the user
-      reported (mirrors the old in-memory `held_devices`).
-    - hierarchy: devices held by users below the current user plus defective
-      devices reported inside that sub-chain (mirrors `subordinate_devices`).
+    - mine_ids: the user itself.
+    - chain_ids: users in the sub-hierarchy the user oversees (empty for leaf
+      roles). Used to build index-friendly `current_holder_id IN (ints)`
+      conditions instead of CAST()/OR subquery scans over the whole devices
+      table.
     """
-    mine = (
-        "d.current_holder_id = :uid"
-        " OR (d.status = 'defective' AND EXISTS ("
-        "   SELECT 1 FROM defects def"
-        "   WHERE CAST(def.device_id AS CHAR) = CAST(d.id AS CHAR)"
-        "     AND CAST(def.reported_by AS CHAR) = :uid"
-        " ))"
-    )
+    uid = int(user_id)
+    mine_ids = [uid]
 
     if user_role == "sub_distributor":
-        hierarchy = (
-            "d.current_holder_id IN ("
-            "   SELECT id FROM users WHERE parent_id = :uid AND role = 'cluster')"
-            " OR d.current_holder_id IN ("
-            "   SELECT op.id FROM users op"
-            "   INNER JOIN users cl ON op.parent_id = cl.id"
-            "   WHERE cl.parent_id = :uid AND op.role = 'operator')"
-            " OR (d.status = 'defective' AND EXISTS ("
-            "   SELECT 1 FROM defects def"
-            "   INNER JOIN users op ON CAST(def.reported_by AS CHAR) = CAST(op.id AS CHAR)"
-            "   LEFT JOIN users cl ON op.parent_id = cl.id"
-            "   WHERE (op.role = 'operator' AND cl.parent_id = :uid)"
-            "      OR (op.role = 'cluster' AND op.parent_id = :uid)"
-            " ))"
-        )
+        chain_ids = list((await session.execute(text(
+            "SELECT id FROM users WHERE parent_id = :uid AND role = 'cluster' "
+            "UNION "
+            "SELECT op.id FROM users op "
+            "INNER JOIN users cl ON op.parent_id = cl.id "
+            "WHERE cl.parent_id = :uid AND op.role = 'operator'"
+        ), {"uid": uid})).scalars().all())
     elif user_role == "sub_distribution_manager":
-        hierarchy = (
-            "d.current_holder_id = :root"
-            " OR d.current_holder_id IN ("
-            "   WITH RECURSIVE descendants AS ("
-            "       SELECT id FROM users WHERE parent_id = :root"
-            "       UNION ALL"
-            "       SELECT u.id FROM users u"
-            "       INNER JOIN descendants dd ON u.parent_id = dd.id"
-            "   )"
-            "   SELECT id FROM descendants)"
-            " OR (d.status = 'defective' AND EXISTS ("
-            "   SELECT 1 FROM defects def"
-            "   WHERE CAST(def.reported_by AS CHAR) = :root"
-            "      OR CAST(def.reported_by AS CHAR) IN ("
-            "        WITH RECURSIVE descendants AS ("
-            "            SELECT id FROM users WHERE parent_id = :root"
-            "            UNION ALL"
-            "            SELECT u.id FROM users u"
-            "            INNER JOIN descendants dd ON u.parent_id = dd.id"
-            "        )"
-            "        SELECT id FROM descendants)"
-            " ))"
-        )
+        mgr_row = (await session.execute(
+            text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
+        )).mappings().first()
+        root_id = uid
+        if mgr_row and mgr_row.get("parent_id") is not None:
+            root_id = int(mgr_row["parent_id"])
+        chain_ids = [root_id]
+        desc_rows = (await session.execute(text(
+            "WITH RECURSIVE descendants AS ("
+            "  SELECT id FROM users WHERE parent_id = :root"
+            "  UNION ALL"
+            "  SELECT u.id FROM users u "
+            "  INNER JOIN descendants d ON u.parent_id = d.id"
+            ") SELECT id FROM descendants"
+        ), {"root": root_id})).scalars().all()
+        chain_ids.extend(int(i) for i in desc_rows if i is not None)
     elif user_role == "cluster":
-        hierarchy = (
-            "d.current_holder_id IN ("
-            "   SELECT id FROM users WHERE parent_id = :uid AND role = 'operator')"
-            " OR (d.status = 'defective' AND EXISTS ("
-            "   SELECT 1 FROM defects def"
-            "   INNER JOIN users op ON CAST(def.reported_by AS CHAR) = CAST(op.id AS CHAR)"
-            "   WHERE op.parent_id = :uid AND op.role = 'operator'"
-            " ))"
-        )
+        chain_ids = list((await session.execute(text(
+            "SELECT id FROM users WHERE parent_id = :uid AND role = 'operator'"
+        ), {"uid": uid})).scalars().all())
     else:
-        hierarchy = "1 = 0"
+        chain_ids = []
 
-    return mine, hierarchy
+    return mine_ids, chain_ids
 
 
 async def get_user_device_page(
@@ -1041,35 +1015,40 @@ async def get_user_device_page(
 ) -> Dict[str, Any]:
     """SQL-paginated view of a hierarchy user's scoped devices.
 
-    Filters and LIMIT/OFFSET are applied in MySQL instead of loading the whole
-    chain (previously up to 1,000,000 rows) into memory per request. Stats are
-    computed from cheap COUNT queries. Returns:
+    The scope is precomputed into integer user id lists and applied with
+    indexed `current_holder_id IN (ints)` conditions instead of CAST()/OR
+    subquery scans over the whole devices table. Defective devices reported
+    inside the scope are merged from a second small query. Stats come from
+    cheap COUNT queries. Returns:
         {page_devices, total_count, page_size_used, stats}
     """
     async with async_session_factory() as session:
         uid = int(user_id)
-        mine_frag, hierarchy_frag = _build_hierarchy_scope_fragments(user_role)
+        mine_ids, chain_ids = await _build_scope_id_sets(session, user_id, user_role)
 
         scope_norm = str(scope or "all").strip().lower()
         if scope_norm == "mine":
-            scope_sql = f"({mine_frag})"
+            scope_ids = mine_ids
         elif scope_norm == "hierarchy":
-            scope_sql = f"({hierarchy_frag})"
+            scope_ids = chain_ids
         else:
-            scope_sql = f"({mine_frag}) OR ({hierarchy_frag})"
+            scope_ids = mine_ids + chain_ids
+        seen = set()
+        scope_ids = [sid for sid in scope_ids if not (sid in seen or seen.add(sid))]
+        if not scope_ids:
+            stats = await _cached_hierarchy_stats(
+                cache_version_manager.get_version(), user_id, user_role
+            )
+            return {
+                "page_devices": [],
+                "total_count": 0,
+                "page_size_used": 0,
+                "stats": stats,
+            }
 
-        conditions = [scope_sql]
-        params: Dict[str, Any] = {"uid": uid}
+        params: Dict[str, Any] = {}
 
-        if user_role == "sub_distribution_manager":
-            mgr_row = (await session.execute(
-                text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
-            )).mappings().first()
-            root_id = uid
-            if mgr_row and mgr_row.get("parent_id") is not None:
-                root_id = int(mgr_row["parent_id"])
-            params["root"] = root_id
-
+        conditions = []
         if status:
             conditions.append("d.status = :status")
             params["status"] = status
@@ -1113,30 +1092,53 @@ async def get_user_device_page(
                 )
             params["search_pattern"] = pattern
 
-        where_sql = " AND ".join(conditions)
+        extra_sql = " AND ".join(conditions) if conditions else "1 = 1"
 
-        count_q = text(f"SELECT COUNT(DISTINCT d.id) FROM devices d WHERE {where_sql}")
+        ids_ph = ", ".join([f":ids_{i}" for i in range(len(scope_ids))])
+        for i, sid in enumerate(scope_ids):
+            params[f"ids_{i}"] = sid
+
+        holder_where = f"(d.current_holder_id IN ({ids_ph})) AND {extra_sql}"
+        defect_where = (
+            "(d.status = 'defective' AND d.id IN ("
+            "   SELECT CAST(device_id AS UNSIGNED) FROM defects"
+            f"   WHERE reported_by IN ({ids_ph}))) AND {extra_sql}"
+        )
+
+        count_q = text(
+            "SELECT COUNT(*) FROM ("
+            "  (SELECT d.id FROM devices d WHERE " + holder_where + ")"
+            "  UNION"
+            "  (SELECT d.id FROM devices d WHERE " + defect_where + ")"
+            ") t"
+        )
         total = int((await session.execute(count_q, params)).scalar() or 0)
 
         effective_page_size = total if show_all else min(page_size, 1000)
+
+        order_sql = "ORDER BY d.updated_at DESC, d.id DESC"
+        holder_base = f"SELECT d.* FROM devices d WHERE {holder_where} {order_sql}"
+        defect_base = f"SELECT d.* FROM devices d WHERE {defect_where} {order_sql}"
+
         if show_all:
-            page_rows = (await session.execute(
-                text(
-                    f"SELECT d.* FROM devices d WHERE {where_sql} "
-                    "ORDER BY d.updated_at DESC, d.id DESC"
-                ),
-                params,
-            )).mappings().all()
+            holder_rows = (await session.execute(text(holder_base), params)).mappings().all()
+            defect_rows = (await session.execute(text(defect_base), params)).mappings().all()
+            offset = 0
         else:
             offset = max((page - 1) * effective_page_size, 0)
-            page_rows = (await session.execute(
-                text(
-                    f"SELECT d.* FROM devices d WHERE {where_sql} "
-                    "ORDER BY d.updated_at DESC, d.id DESC "
-                    "LIMIT :limit OFFSET :offset"
-                ),
-                {**params, "limit": effective_page_size, "offset": offset},
+            fetch = offset + effective_page_size
+            holder_rows = (await session.execute(
+                text(holder_base + " LIMIT :lim"), {**params, "lim": fetch}
             )).mappings().all()
+            defect_rows = (await session.execute(
+                text(defect_base + " LIMIT :lim"), {**params, "lim": fetch}
+            )).mappings().all()
+
+        def _sort_key(row):
+            return (row["updated_at"] or datetime.min, row["id"])
+
+        merged = sorted([*holder_rows, *defect_rows], key=_sort_key, reverse=True)
+        page_rows = merged if show_all else merged[offset:offset + effective_page_size]
 
         page_devices = [dict(r) for r in page_rows]
         stats = await _cached_hierarchy_stats(cache_version_manager.get_version(), user_id, user_role)
