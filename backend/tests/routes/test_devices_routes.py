@@ -499,6 +499,36 @@ class TestMyOverview:
         assert "held_by_me" in body["data"]
         assert "meta" in body["data"]
 
+    def test_success_non_management_paginate_returns_200(self, client, mock_device_services, set_role):
+        import app.routes.devices as mod
+
+        set_role("sub_distributor")
+        mod.device_service.get_user_device_page = AsyncMock(
+            return_value={
+                "page_devices": [
+                    {"id": "1", "serial_number": "SN001", "current_holder_id": "5"},
+                    {"id": "2", "serial_number": "SN002", "current_holder_id": "1"},
+                ],
+                "total_count": 120,
+                "page_size_used": 30,
+                "stats": {"total_in_chain": 120, "in_my_hand": 20, "under_subordinates": 100},
+            }
+        )
+
+        resp = client.get(self.URL, params={"paginate": "true", "page": 1, "page_size": 30})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        data = body["data"]
+        assert data["all_under_me"][0]["id"] == "1"
+        assert data["held_by_me"] == [{"id": "2", "serial_number": "SN002", "current_holder_id": "1"}]
+        assert data["under_subordinates"] == [
+            {"id": "1", "serial_number": "SN001", "current_holder_id": "5"}
+        ]
+        assert data["meta"]["total_count"] == 120
+        assert data["meta"]["has_next"] is True
+        assert data["stats"]["total_in_chain"] == 120
+
     def test_unauthenticated_returns_401(self, client, test_app):
         from app.middleware.auth_middleware import get_current_user
 

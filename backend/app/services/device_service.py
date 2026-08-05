@@ -1,14 +1,47 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 import json
+import time
+from functools import wraps
 
 from sqlalchemy import select, func, and_, or_, text, String
 
 from app.core.cache_version import bump_cache_version
+from app.core.cache_version_manager import cache_version_manager
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.device import Device, DeviceHistory
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceStatus, HolderType
 from app.utils.helpers import get_pagination, generate_device_id
+
+
+def _ttl_async_cache(ttl_seconds: float = 60.0, max_size: int = 256):
+    """Small in-memory TTL cache for async functions.
+
+    Results are keyed by call arguments. Callers that need to invalidate on
+    data changes should include the global cache version in the arguments so a
+    cache_version bump (any data write) produces a fresh key automatically.
+    """
+    def decorator(fn):
+        _sentinel = object()
+        cache: Dict[Any, Any] = {}
+
+        @wraps(fn)
+        async def wrapper(*args, **kwargs):
+            now = time.monotonic()
+            key = (args, tuple(sorted(kwargs.items())))
+            entry = cache.get(key, _sentinel)
+            if entry is not _sentinel and now < entry[0]:
+                return entry[1]
+            result = await fn(*args, **kwargs)
+            if len(cache) >= max_size:
+                cache.clear()
+            cache[key] = (now + ttl_seconds, result)
+            return result
+
+        wrapper.cache_clear = cache.clear
+        return wrapper
+
+    return decorator
 
 
 
@@ -669,6 +702,83 @@ async def get_held_devices(
         }
 
 
+async def _get_hierarchy_stats(session, user_id: str, user_role: str) -> Dict[str, Any]:
+    """Aggregate device/distribution counts for a hierarchy user (no device rows)."""
+    uid = int(user_id)
+
+    distrib_q = text("""
+        SELECT
+            SUM(CASE WHEN to_user_id = :uid1 THEN 1 ELSE 0 END) as received_count,
+            COALESCE(SUM(CASE WHEN to_user_id = :uid2 THEN device_count ELSE 0 END), 0) as received_devices,
+            SUM(CASE WHEN from_user_id = :uid3 THEN 1 ELSE 0 END) as sent_count,
+            COALESCE(SUM(CASE WHEN from_user_id = :uid4 THEN device_count ELSE 0 END), 0) as sent_devices
+        FROM distributions
+        WHERE :uid5 IN (to_user_id, from_user_id)
+    """)
+    dist_row = (await session.execute(distrib_q, {"uid1": user_id, "uid2": user_id, "uid3": user_id, "uid4": user_id, "uid5": user_id})).mappings().first()
+
+    total_distrib_received = int(dist_row["received_count"]) if dist_row and dist_row["received_count"] else 0
+    total_devices_received = int(dist_row["received_devices"]) if dist_row and dist_row["received_devices"] else 0
+    total_distrib_sent = int(dist_row["sent_count"]) if dist_row and dist_row["sent_count"] else 0
+    total_devices_sent = int(dist_row["sent_devices"]) if dist_row and dist_row["sent_devices"] else 0
+
+    held_count_q = select(func.count()).select_from(Device).where(Device.current_holder_id == uid)
+    held_count = (await session.execute(held_count_q)).scalar()
+
+    subordinate_count = 0
+    if user_role == "sub_distributor":
+        ct_q = text("""
+            SELECT COUNT(*) FROM devices d
+            JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
+            WHERE (u.parent_id = :uid AND u.role = 'cluster')
+               OR (u.role = 'operator' AND u.parent_id IN (
+                   SELECT id FROM users WHERE parent_id = :uid2 AND role = 'cluster'
+               ))
+        """)
+        subordinate_count = (await session.execute(ct_q, {"uid": uid, "uid2": uid})).scalar()
+    elif user_role == "sub_distribution_manager":
+        mgr_q2 = text("SELECT parent_id FROM users WHERE id = :uid")
+        mgr_row2 = (await session.execute(mgr_q2, {"uid": uid})).mappings().first()
+        scope_root_id2 = str(uid)
+        if mgr_row2 and mgr_row2.get("parent_id") is not None:
+            scope_root_id2 = str(mgr_row2["parent_id"])
+        desc_q2 = text("""
+            WITH RECURSIVE descendants AS (
+                SELECT id FROM users WHERE parent_id = :root
+                UNION ALL
+                SELECT u.id FROM users u
+                INNER JOIN descendants d ON u.parent_id = d.id
+            )
+            SELECT id FROM descendants
+        """)
+        desc_rows2 = (await session.execute(desc_q2, {"root": int(scope_root_id2)})).scalars().all()
+        scope_user_ids2 = {scope_root_id2} | {str(did) for did in desc_rows2 if did}
+        scope_user_ids2.discard(str(user_id))
+        scoped_list2 = sorted(scope_user_ids2)
+        if scoped_list2:
+            ph2 = ",".join([f":sd_{i}" for i in range(len(scoped_list2))])
+            params2 = {f"sd_{i}": sid for i, sid in enumerate(scoped_list2)}
+            ct_q2 = text(f"SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS CHAR) IN ({ph2})")
+            subordinate_count = (await session.execute(ct_q2, params2)).scalar()
+    elif user_role == "cluster":
+        ct_q3 = text("""
+            SELECT COUNT(*) FROM devices d
+            JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
+            WHERE u.parent_id = :uid AND u.role = 'operator'
+        """)
+        subordinate_count = (await session.execute(ct_q3, {"uid": uid})).scalar()
+
+    return {
+        "in_my_hand": held_count,
+        "under_subordinates": subordinate_count,
+        "total_in_chain": held_count + subordinate_count,
+        "total_devices_received": total_devices_received,
+        "total_devices_sent": total_devices_sent,
+        "total_distributions_received": total_distrib_received,
+        "total_distributions_sent": total_distrib_sent,
+    }
+
+
 async def get_user_device_overview(user_id: str, user_role: str, limit: int = 100) -> Dict[str, Any]:
     """Get comprehensive device overview: devices in hand + under hierarchy + distribution stats."""
     async with async_session_factory() as session:
@@ -820,22 +930,8 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
                     subordinate_devices.append(rd)
                     sub_device_ids.add(str(rd["id"]))
 
-        # Distribution stats
-        distrib_q = text("""
-            SELECT
-                SUM(CASE WHEN to_user_id = :uid1 THEN 1 ELSE 0 END) as received_count,
-                COALESCE(SUM(CASE WHEN to_user_id = :uid2 THEN device_count ELSE 0 END), 0) as received_devices,
-                SUM(CASE WHEN from_user_id = :uid3 THEN 1 ELSE 0 END) as sent_count,
-                COALESCE(SUM(CASE WHEN from_user_id = :uid4 THEN device_count ELSE 0 END), 0) as sent_devices
-            FROM distributions
-            WHERE :uid5 IN (to_user_id, from_user_id)
-        """)
-        dist_row = (await session.execute(distrib_q, {"uid1": user_id, "uid2": user_id, "uid3": user_id, "uid4": user_id, "uid5": user_id})).mappings().first()
-
-        total_distrib_received = int(dist_row["received_count"]) if dist_row and dist_row["received_count"] else 0
-        total_devices_received = int(dist_row["received_devices"]) if dist_row and dist_row["received_devices"] else 0
-        total_distrib_sent = int(dist_row["sent_count"]) if dist_row and dist_row["sent_count"] else 0
-        total_devices_sent = int(dist_row["sent_devices"]) if dist_row and dist_row["sent_devices"] else 0
+        # Aggregate stats (shared with the SQL-paginated path)
+        stats = await _get_hierarchy_stats(session, user_id, user_role)
 
         # Deduplicate
         seen_ids = set()
@@ -845,67 +941,218 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
                 seen_ids.add(str(d["id"]))
                 all_under_me.append(d)
 
-        # Count queries
-        held_count_q = select(func.count()).select_from(Device).where(Device.current_holder_id == uid)
-        held_count = (await session.execute(held_count_q)).scalar()
-
-        subordinate_count = 0
-        if user_role == "sub_distributor":
-            ct_q = text("""
-                SELECT COUNT(*) FROM devices d
-                JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
-                WHERE (u.parent_id = :uid AND u.role = 'cluster')
-                   OR (u.role = 'operator' AND u.parent_id IN (
-                       SELECT id FROM users WHERE parent_id = :uid2 AND role = 'cluster'
-                   ))
-            """)
-            subordinate_count = (await session.execute(ct_q, {"uid": uid, "uid2": uid})).scalar()
-        elif user_role == "sub_distribution_manager":
-            mgr_q2 = text("SELECT parent_id FROM users WHERE id = :uid")
-            mgr_row2 = (await session.execute(mgr_q2, {"uid": uid})).mappings().first()
-            scope_root_id2 = str(uid)
-            if mgr_row2 and mgr_row2.get("parent_id") is not None:
-                scope_root_id2 = str(mgr_row2["parent_id"])
-            desc_q2 = text("""
-                WITH RECURSIVE descendants AS (
-                    SELECT id FROM users WHERE parent_id = :root
-                    UNION ALL
-                    SELECT u.id FROM users u
-                    INNER JOIN descendants d ON u.parent_id = d.id
-                )
-                SELECT id FROM descendants
-            """)
-            desc_rows2 = (await session.execute(desc_q2, {"root": int(scope_root_id2)})).scalars().all()
-            scope_user_ids2 = {scope_root_id2} | {str(did) for did in desc_rows2 if did}
-            scope_user_ids2.discard(str(user_id))
-            scoped_list2 = sorted(scope_user_ids2)
-            if scoped_list2:
-                ph2 = ",".join([f":sd_{i}" for i in range(len(scoped_list2))])
-                params2 = {f"sd_{i}": sid for i, sid in enumerate(scoped_list2)}
-                ct_q2 = text(f"SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS CHAR) IN ({ph2})")
-                subordinate_count = (await session.execute(ct_q2, params2)).scalar()
-        elif user_role == "cluster":
-            ct_q3 = text("""
-                SELECT COUNT(*) FROM devices d
-                JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
-                WHERE u.parent_id = :uid AND u.role = 'operator'
-            """)
-            subordinate_count = (await session.execute(ct_q3, {"uid": uid})).scalar()
-
         return {
             "held_by_me": held_devices,
             "under_subordinates": subordinate_devices,
             "all_under_me": all_under_me,
-            "stats": {
-                "in_my_hand": held_count,
-                "under_subordinates": subordinate_count,
-                "total_in_chain": held_count + subordinate_count,
-                "total_devices_received": total_devices_received,
-                "total_devices_sent": total_devices_sent,
-                "total_distributions_received": total_distrib_received,
-                "total_distributions_sent": total_distrib_sent,
-            },
+            "stats": stats,
         }
+
+
+def _build_hierarchy_scope_fragments(user_role: str) -> str:
+    """Return (mine, hierarchy) SQL fragments for a hierarchy user's device scope.
+
+    - mine: devices currently held by the user plus defective devices the user
+      reported (mirrors the old in-memory `held_devices`).
+    - hierarchy: devices held by users below the current user plus defective
+      devices reported inside that sub-chain (mirrors `subordinate_devices`).
+    """
+    mine = (
+        "d.current_holder_id = :uid"
+        " OR (d.status = 'defective' AND EXISTS ("
+        "   SELECT 1 FROM defects def"
+        "   WHERE CAST(def.device_id AS CHAR) = CAST(d.id AS CHAR)"
+        "     AND CAST(def.reported_by AS CHAR) = :uid"
+        " ))"
+    )
+
+    if user_role == "sub_distributor":
+        hierarchy = (
+            "d.current_holder_id IN ("
+            "   SELECT id FROM users WHERE parent_id = :uid AND role = 'cluster')"
+            " OR d.current_holder_id IN ("
+            "   SELECT op.id FROM users op"
+            "   INNER JOIN users cl ON op.parent_id = cl.id"
+            "   WHERE cl.parent_id = :uid AND op.role = 'operator')"
+            " OR (d.status = 'defective' AND EXISTS ("
+            "   SELECT 1 FROM defects def"
+            "   INNER JOIN users op ON CAST(def.reported_by AS CHAR) = CAST(op.id AS CHAR)"
+            "   LEFT JOIN users cl ON op.parent_id = cl.id"
+            "   WHERE (op.role = 'operator' AND cl.parent_id = :uid)"
+            "      OR (op.role = 'cluster' AND op.parent_id = :uid)"
+            " ))"
+        )
+    elif user_role == "sub_distribution_manager":
+        hierarchy = (
+            "d.current_holder_id = :root"
+            " OR d.current_holder_id IN ("
+            "   WITH RECURSIVE descendants AS ("
+            "       SELECT id FROM users WHERE parent_id = :root"
+            "       UNION ALL"
+            "       SELECT u.id FROM users u"
+            "       INNER JOIN descendants dd ON u.parent_id = dd.id"
+            "   )"
+            "   SELECT id FROM descendants)"
+            " OR (d.status = 'defective' AND EXISTS ("
+            "   SELECT 1 FROM defects def"
+            "   WHERE CAST(def.reported_by AS CHAR) = :root"
+            "      OR CAST(def.reported_by AS CHAR) IN ("
+            "        WITH RECURSIVE descendants AS ("
+            "            SELECT id FROM users WHERE parent_id = :root"
+            "            UNION ALL"
+            "            SELECT u.id FROM users u"
+            "            INNER JOIN descendants dd ON u.parent_id = dd.id"
+            "        )"
+            "        SELECT id FROM descendants)"
+            " ))"
+        )
+    elif user_role == "cluster":
+        hierarchy = (
+            "d.current_holder_id IN ("
+            "   SELECT id FROM users WHERE parent_id = :uid AND role = 'operator')"
+            " OR (d.status = 'defective' AND EXISTS ("
+            "   SELECT 1 FROM defects def"
+            "   INNER JOIN users op ON CAST(def.reported_by AS CHAR) = CAST(op.id AS CHAR)"
+            "   WHERE op.parent_id = :uid AND op.role = 'operator'"
+            " ))"
+        )
+    else:
+        hierarchy = "1 = 0"
+
+    return mine, hierarchy
+
+
+async def get_user_device_page(
+    user_id: str,
+    user_role: str,
+    page: int = 1,
+    page_size: int = 100,
+    show_all: bool = False,
+    scope: str = "all",
+    status: Optional[str] = None,
+    device_type: Optional[str] = None,
+    manufacturer: Optional[str] = None,
+    search_by: Optional[str] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    sub_distributor_id: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """SQL-paginated view of a hierarchy user's scoped devices.
+
+    Filters and LIMIT/OFFSET are applied in MySQL instead of loading the whole
+    chain (previously up to 1,000,000 rows) into memory per request. Stats are
+    computed from cheap COUNT queries. Returns:
+        {page_devices, total_count, page_size_used, stats}
+    """
+    async with async_session_factory() as session:
+        uid = int(user_id)
+        mine_frag, hierarchy_frag = _build_hierarchy_scope_fragments(user_role)
+
+        scope_norm = str(scope or "all").strip().lower()
+        if scope_norm == "mine":
+            scope_sql = f"({mine_frag})"
+        elif scope_norm == "hierarchy":
+            scope_sql = f"({hierarchy_frag})"
+        else:
+            scope_sql = f"({mine_frag}) OR ({hierarchy_frag})"
+
+        conditions = [scope_sql]
+        params: Dict[str, Any] = {"uid": uid}
+
+        if user_role == "sub_distribution_manager":
+            mgr_row = (await session.execute(
+                text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
+            )).mappings().first()
+            root_id = uid
+            if mgr_row and mgr_row.get("parent_id") is not None:
+                root_id = int(mgr_row["parent_id"])
+            params["root"] = root_id
+
+        if status:
+            conditions.append("d.status = :status")
+            params["status"] = status
+        if device_type:
+            conditions.append("d.device_type = :device_type")
+            params["device_type"] = device_type
+        if manufacturer:
+            conditions.append("d.manufacturer = :manufacturer")
+            params["manufacturer"] = str(manufacturer).strip()
+        if start_date:
+            conditions.append("d.created_at >= :start_date")
+            params["start_date"] = start_date
+        if end_date:
+            conditions.append("d.created_at <= :end_date")
+            params["end_date"] = end_date
+        if sub_distributor_id:
+            conditions.append("CAST(d.current_holder_id AS CHAR) = :sub_distributor_id")
+            params["sub_distributor_id"] = str(sub_distributor_id).strip()
+        if cluster_id:
+            conditions.append("CAST(d.current_holder_id AS CHAR) = :cluster_id")
+            params["cluster_id"] = str(cluster_id).strip()
+        if search:
+            pattern = f"%{str(search).strip()}%"
+            field_alias = {
+                "nuid": "nuid", "mac": "mac_address", "mac_address": "mac_address",
+                "serial": "serial_number", "serial_number": "serial_number",
+                "vendor": "manufacturer", "manufacturer": "manufacturer",
+                "type": "device_type", "device_type": "device_type",
+                "device_id": "device_id", "model": "model",
+            }
+            selected_field = field_alias.get(str(search_by or "").strip().lower())
+            if selected_field:
+                conditions.append(f"d.{selected_field} LIKE :search_pattern")
+            else:
+                search_fields = [
+                    "device_id", "serial_number", "mac_address",
+                    "model", "nuid", "manufacturer", "device_type",
+                ]
+                conditions.append(
+                    "(" + " OR ".join([f"d.{f} LIKE :search_pattern" for f in search_fields]) + ")"
+                )
+            params["search_pattern"] = pattern
+
+        where_sql = " AND ".join(conditions)
+
+        count_q = text(f"SELECT COUNT(DISTINCT d.id) FROM devices d WHERE {where_sql}")
+        total = int((await session.execute(count_q, params)).scalar() or 0)
+
+        effective_page_size = total if show_all else min(page_size, 1000)
+        if show_all:
+            page_rows = (await session.execute(
+                text(
+                    f"SELECT d.* FROM devices d WHERE {where_sql} "
+                    "ORDER BY d.updated_at DESC, d.id DESC"
+                ),
+                params,
+            )).mappings().all()
+        else:
+            offset = max((page - 1) * effective_page_size, 0)
+            page_rows = (await session.execute(
+                text(
+                    f"SELECT d.* FROM devices d WHERE {where_sql} "
+                    "ORDER BY d.updated_at DESC, d.id DESC "
+                    "LIMIT :limit OFFSET :offset"
+                ),
+                {**params, "limit": effective_page_size, "offset": offset},
+            )).mappings().all()
+
+        page_devices = [dict(r) for r in page_rows]
+        stats = await _cached_hierarchy_stats(cache_version_manager.get_version(), user_id, user_role)
+
+        return {
+            "page_devices": page_devices,
+            "total_count": total,
+            "page_size_used": effective_page_size,
+            "stats": stats,
+        }
+
+
+@_ttl_async_cache(ttl_seconds=30, max_size=512)
+async def _cached_hierarchy_stats(cache_version: int, user_id: str, user_role: str) -> Dict[str, Any]:
+    async with async_session_factory() as session:
+        return await _get_hierarchy_stats(session, user_id, user_role)
 
 
 async def get_device_history(device_id: str) -> List[Dict[str, Any]]:
@@ -1006,8 +1253,9 @@ async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]
         return device
 
 
-async def get_device_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, int]:
-    """Get device statistics"""
+@_ttl_async_cache(ttl_seconds=60, max_size=64)
+async def _cached_device_stats(cache_version: int, start_date: Optional[str], end_date: Optional[str]) -> Dict[str, int]:
+    """Version-keyed cached core for get_device_stats (see wrapper below)."""
     async with async_session_factory() as session:
         conditions = []
         if start_date:
@@ -1029,8 +1277,14 @@ async def get_device_stats(start_date: Optional[str] = None, end_date: Optional[
         return stats
 
 
-async def get_management_insights() -> Dict[str, Any]:
-    """Get system-wide aggregate insights for management dashboards."""
+async def get_device_stats(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, int]:
+    """Get device statistics (cached; invalidated automatically on any write)."""
+    return await _cached_device_stats(cache_version_manager.get_version(), start_date, end_date)
+
+
+@_ttl_async_cache(ttl_seconds=60, max_size=64)
+async def _cached_management_insights(cache_version: int) -> Dict[str, Any]:
+    """Version-keyed cached core for get_management_insights (see wrapper below)."""
     async with async_session_factory() as session:
         by_type_q = text("""
             SELECT
@@ -1089,8 +1343,19 @@ async def get_management_insights() -> Dict[str, Any]:
         return {"by_type": by_type, "by_vendor": by_vendor}
 
 
+async def get_management_insights() -> Dict[str, Any]:
+    """Get system-wide aggregate insights for management dashboards (cached)."""
+    return await _cached_management_insights(cache_version_manager.get_version())
+
+
 async def get_management_holder_insights() -> Dict[str, Any]:
-    """Get aggregate device totals by hierarchy holder groups for management dashboards."""
+    """Get aggregate device totals by hierarchy holder groups for management dashboards (cached)."""
+    return await _cached_management_holder_insights(cache_version_manager.get_version())
+
+
+@_ttl_async_cache(ttl_seconds=60, max_size=16)
+async def _cached_management_holder_insights(cache_version: int) -> Dict[str, Any]:
+    """Version-keyed cached core for get_management_holder_insights."""
     async with async_session_factory() as session:
         result = await session.execute(text("""
             WITH RECURSIVE hierarchy AS (
