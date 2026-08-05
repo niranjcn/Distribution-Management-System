@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import DataTable from '../components/ui/DataTable';
-import { externalInventoryAPI, usersAPI, downloadBulkReport } from '../services/api';
+import { externalInventoryAPI, usersAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { useQueryClient } from '@tanstack/react-query';
@@ -559,28 +559,9 @@ const [importResult, setImportResult] = useState(null);
                   Import finished: {importResult.created_count} created, {importResult.skipped_count} skipped,{' '}
                   {importResult.error_count} errors.
                   {importResult.errors_truncated || importResult.skipped_truncated
-                    ? ' Only the first 500 failed rows are shown in the download.'
+                    ? ' Only the first 500 failed rows are shown.'
                     : ''}
                 </p>
-                {importResult.error_report_id && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    icon={Download}
-                    onClick={async () => {
-                      try {
-                        await downloadBulkReport(
-                          importResult.error_report_id,
-                          `items-bulk-import-report-${importResult.error_report_id}.csv`
-                        );
-                      } catch {
-                        showToast('Failed to download report', 'error');
-                      }
-                    }}
-                  >
-                    Download Full Report
-                  </Button>
-                )}
               </div>
             )}
             <DataTable
