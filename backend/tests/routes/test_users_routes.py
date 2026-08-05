@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import io
 
@@ -84,6 +84,45 @@ class TestListUsers:
         _, kwargs = mod.user_service.get_users.await_args
         assert kwargs.get("search") == "john"
 
+    def test_list_users_passes_scope_root_id(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        paginated = self._fake_paginated()
+        mod.user_service.get_users = AsyncMock(return_value=paginated)
+        mod.user_service.get_user_by_id = AsyncMock(return_value=None)
+
+        with patch("app.routes.users._get_descendant_ids", new=AsyncMock(return_value={"5", "6"})):
+            client.get(self.LIST_URL, params={"scope_root_id": "5"})
+
+        _, kwargs = mod.user_service.get_users.await_args
+        assert sorted(kwargs.get("parent_ids_in") or []) == [5, 6]
+
+    def test_list_users_scope_root_prepends_root(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        root = {"id": "5", "email": "sd@test.com", "role": "sub_distributor"}
+        paginated = {
+            "data": [self._fake_user()],
+            "pagination": {
+                "page": 1,
+                "page_size": 20,
+                "total": 1,
+                "total_pages": 1,
+                "has_next": False,
+                "has_prev": False,
+            },
+        }
+        mod.user_service.get_users = AsyncMock(return_value=paginated)
+        mod.user_service.get_user_by_id = AsyncMock(return_value=root)
+
+        with patch("app.routes.users._get_descendant_ids", new=AsyncMock(return_value={"5", "6"})):
+            resp = client.get(self.LIST_URL, params={"scope_root_id": "5"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"][0]["id"] == "5"
+        assert body["pagination"]["total"] == 2
+
     # ---------- unauthenticated ----------
 
     def test_unauthenticated_returns_401(self, client, test_app):
@@ -103,6 +142,53 @@ class TestListUsers:
         )
 
         resp = client.get(self.LIST_URL)
+
+        assert resp.status_code == 500
+        assert "internal error" in resp.json()["detail"].lower()
+
+
+class TestUserStats:
+    STATS_URL = "/api/users/stats"
+
+    def _fake_stats(self, **overrides):
+        stats = {"total": 10, "by_role": {"super_admin": 1, "operator": 9}}
+        stats.update(overrides)
+        return stats
+
+    def test_get_stats_success(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.user_service.get_user_stats = AsyncMock(return_value=self._fake_stats())
+
+        resp = client.get(self.STATS_URL)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert list(body.keys()) == ["success", "message", "data"]
+        assert body["success"] is True
+        assert body["data"]["total"] == 10
+        assert body["data"]["by_role"]["operator"] == 9
+
+    def test_forbidden_for_operator(self, client, mock_user_services, set_role):
+        set_role("operator")
+        resp = client.get(self.STATS_URL)
+        assert resp.status_code == 403
+
+    def test_unauthenticated_returns_401(self, client, test_app):
+        from app.middleware.auth_middleware import get_current_user
+
+        test_app.dependency_overrides.pop(get_current_user, None)
+        resp = client.get(self.STATS_URL)
+        assert resp.status_code == 401
+
+    def test_internal_error_returns_500(self, client, mock_user_services):
+        import app.routes.users as mod
+
+        mod.user_service.get_user_stats = AsyncMock(
+            side_effect=RuntimeError("DB connection lost")
+        )
+
+        resp = client.get(self.STATS_URL)
 
         assert resp.status_code == 500
         assert "internal error" in resp.json()["detail"].lower()

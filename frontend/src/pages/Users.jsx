@@ -79,11 +79,25 @@ const emptyForm = {
 
 const USERS_FETCH_PAGE_SIZE = 1000000;
 
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
 const Users = () => {
   const { user: currentUser, hasRole } = useAuth();
   const { showToast } = useNotifications();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Role flags — declared here so data loading, memoized views and stats can all use them
+  const isSubDist  = currentUser?.role === 'sub_distributor';
+  const isCluster  = currentUser?.role === 'cluster';
+  const isAdmin    = currentUser?.role === 'super_admin';
+  const isMdDirector = currentUser?.role === 'md_director';
+  const isManager  = currentUser?.role === 'manager';
+  const isAdminOrManager = ['super_admin', 'manager'].includes(currentUser?.role);
+  // Roles whose table is server-side paginated (the rest use the client-side full fetch)
+  const isTableRole = isAdmin || isMdDirector || isManager;
 
   const [selectedUser, setSelectedUser] = useState(null);
   const [showViewModal, setShowViewModal] = useState(false);
@@ -144,9 +158,38 @@ const Users = () => {
   const [tableSearchInput, setTableSearchInput] = useState('');
   const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
 
+  // Server-side pagination state (admin / md_director / manager table)
+  const [tableRows, setTableRows] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [tablePage, setTablePage] = useState(1);
+  const [tableLoading, setTableLoading] = useState(false);
+  const [statsData, setStatsData] = useState(null);
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const tableQueryVersionRef = useRef(0);
+
+  const loadReferenceAndStats = async () => {
+    const [sdRes, sdmRes, cRes, statsRes] = await Promise.all([
+      usersAPI.getUsers({ role: 'sub_distributor', page_size: USERS_FETCH_PAGE_SIZE }),
+      usersAPI.getUsers({ role: 'sub_distribution_manager', page_size: USERS_FETCH_PAGE_SIZE }),
+      usersAPI.getUsers({ role: 'cluster', page_size: USERS_FETCH_PAGE_SIZE }),
+      usersAPI.getUserStats(),
+    ]);
+    setUsers([
+      ...(sdRes?.data || []),
+      ...(sdmRes?.data || []),
+      ...(cRes?.data || []),
+    ]);
+    setStatsData(statsRes?.data || null);
+  };
+
   const fetchUsers = async () => {
     try {
       setLoading(true);
+      if (isTableRole) {
+        await loadReferenceAndStats();
+        return;
+      }
       const response = await usersAPI.getUsers({ page_size: USERS_FETCH_PAGE_SIZE });
       setUsers(response.data || []);
     } catch (error) {
@@ -170,6 +213,91 @@ const Users = () => {
     }
   };
 
+  const getScopeRootId = () => {
+    if (filters.clusterId) return filters.clusterId;
+    if (filters.subDistId) return filters.subDistId;
+    if (filters.subDistManagerId) return filters.subDistManagerId;
+    return '';
+  };
+
+  const buildTableQueryParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
+    const params = { page: windowPage, page_size: pageSize };
+    if (appliedTableSearch.query) {
+      params.search = appliedTableSearch.query;
+      if (appliedTableSearch.by && appliedTableSearch.by !== 'all') params.search_by = appliedTableSearch.by;
+    }
+    if (filters.role) params.role = filters.role;
+    const scopeRootId = getScopeRootId();
+    if (scopeRootId) params.scope_root_id = scopeRootId;
+    return params;
+  };
+
+  const loadTableWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (!isTableRole) return;
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = tableQueryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setTableLoading(true);
+    try {
+      const response = await usersAPI.getUsers(buildTableQueryParams(windowPage));
+      if (queryVersion !== tableQueryVersionRef.current) {
+        return;
+      }
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const totalCount = Number(response?.pagination?.total || rows.length);
+      setTableRows((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const id = String(row?.id || '');
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setTableTotalCount(totalCount);
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
+    } catch (error) {
+      console.error('Failed to load users:', error);
+      showToast('Failed to load users', 'error');
+    } finally {
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setTableLoading(false);
+    }
+  };
+
+  const resetAndLoadTable = async () => {
+    if (!isTableRole) return;
+    tableQueryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setTableRows([]);
+    setTableTotalCount(0);
+    setTablePage(1);
+    await loadTableWindow(1, { reset: true, withLoading: true });
+  };
+
+  const handleTablePageChange = (nextPage) => {
+    setTablePage(nextPage);
+    const requiredWindow = Math.ceil(nextPage / TABLE_WINDOW_PAGES);
+    const loadedPageCount = Math.max(1, Math.ceil((tableRows.length || 0) / TABLE_PAGE_SIZE));
+    const totalPageCount = Math.max(1, Math.ceil((tableTotalCount || 0) / TABLE_PAGE_SIZE));
+    const totalWindows = Math.ceil((tableTotalCount || 0) / TABLE_WINDOW_SIZE);
+
+    if (requiredWindow > loadedWindowRef.current) {
+      loadTableWindow(requiredWindow, { reset: false, withLoading: false });
+    }
+
+    if (nextPage >= loadedPageCount && loadedPageCount < totalPageCount) {
+      const nextWindow = loadedWindowRef.current + 1;
+      if (nextWindow <= totalWindows && nextWindow > loadedWindowRef.current) {
+        loadTableWindow(nextWindow, { reset: false, withLoading: false });
+      }
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
     fetchSubDistOperators();
@@ -180,12 +308,27 @@ const Users = () => {
     }
   }, []);
 
+  const queryFingerprint = useMemo(() => JSON.stringify({
+    role: isTableRole ? filters.role : '',
+    scopeRootId: isTableRole ? getScopeRootId() : '',
+    search: isTableRole ? appliedTableSearch : { by: 'all', query: '' },
+  }), [filters, appliedTableSearch, isTableRole]);
+
+  useEffect(() => {
+    if (!currentUser?.role) return;
+    if (!isTableRole) return;
+    resetAndLoadTable();
+  }, [currentUser?.role, queryFingerprint]);
+
   const queryClient = useQueryClient();
   useEffect(() => {
     const handler = () => {
       queryClient.invalidateQueries({ queryKey: userKeys.all });
       fetchUsers();
       fetchSubDistOperators();
+      if (isTableRole) {
+        resetAndLoadTable();
+      }
       if (currentUser?.role === 'super_admin') {
         reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 })
           .then(res => setPendingReassignCount(res?.pagination?.total || 0))
@@ -535,13 +678,7 @@ const Users = () => {
     }
   };
 
-  // Role flags — declared here so filteredUsers memo and stats can both use them
-  const isSubDist  = currentUser?.role === 'sub_distributor';
-  const isCluster  = currentUser?.role === 'cluster';
-  const isAdmin    = currentUser?.role === 'super_admin';
-  const isMdDirector = currentUser?.role === 'md_director';
-  const isManager  = currentUser?.role === 'manager';
-  const isAdminOrManager = ['super_admin', 'manager'].includes(currentUser?.role);
+  // Role flags — declared at the top of the component
 
   const canEditUser = (row) => {
     if (isAdmin) return row.role !== 'super_admin' || String(row.id) === String(currentUser.id);
@@ -677,6 +814,8 @@ const Users = () => {
     return map;
   }, [subDistOperators]);
 
+  const byRole = statsData?.by_role || {};
+
   const stats = isSubDist
     ? [
         { label: 'Total Clusters',    value: users.length,                                                            icon: Network,    color: 'teal'   },
@@ -691,24 +830,29 @@ const Users = () => {
       ]
     : isAdmin
     ? [
-        { label: 'Total Users',       value: users.length,                                                            icon: UsersIcon,  color: 'blue'   },
-        { label: 'Super Admins',      value: users.filter(u => u.role === 'super_admin').length,                     icon: Shield,     color: 'red'    },
-        { label: 'MD/Director',       value: users.filter(u => u.role === 'md_director').length,                     icon: Shield,     color: 'orange' },
-        { label: 'Managers',          value: users.filter(u => u.role === 'manager').length,                          icon: Shield,     color: 'purple' },
-        { label: 'PDIC Staff',        value: users.filter(u => u.role === 'pdic_staff').length,                      icon: UsersIcon,  color: 'blue'   },
-        { label: 'Sub Dist. Manager', value: users.filter(u => u.role === 'sub_distribution_manager').length,        icon: Building,   color: 'cyan'   },
-        { label: 'Sub Distributors',  value: users.filter(u => u.role === 'sub_distributor').length,                  icon: Building,   color: 'indigo' },
-        { label: 'Clusters',          value: users.filter(u => u.role === 'cluster').length,                          icon: Network,    color: 'teal'   },
-        { label: 'Operators',         value: users.filter(u => u.role === 'operator').length,                         icon: UsersIcon,  color: 'green'  },
+        { label: 'Total Users',       value: statsData ? statsData.total : 0,                                          icon: UsersIcon,  color: 'blue'   },
+        { label: 'Super Admins',      value: byRole.super_admin || 0,                                                   icon: Shield,     color: 'red'    },
+        { label: 'MD/Director',       value: byRole.md_director || 0,                                                   icon: Shield,     color: 'orange' },
+        { label: 'Managers',          value: byRole.manager || 0,                                                       icon: Shield,     color: 'purple' },
+        { label: 'PDIC Staff',        value: byRole.pdic_staff || 0,                                                    icon: UsersIcon,  color: 'blue'   },
+        { label: 'Sub Dist. Manager', value: byRole.sub_distribution_manager || 0,                                      icon: Building,   color: 'cyan'   },
+        { label: 'Sub Distributors',  value: byRole.sub_distributor || 0,                                               icon: Building,   color: 'indigo' },
+        { label: 'Clusters',          value: byRole.cluster || 0,                                                       icon: Network,    color: 'teal'   },
+        { label: 'Operators',         value: byRole.operator || 0,                                                      icon: UsersIcon,  color: 'green'  },
       ]
     : isManager
     ? [
-        { label: 'Total Users',       value: visibleUsers.length,                                                     icon: UsersIcon,  color: 'blue'   },
-      { label: 'PDIC Staff',        value: visibleUsers.filter(u => u.role === 'pdic_staff').length,               icon: UsersIcon,  color: 'blue'   },
-      { label: 'Sub Dist. Manager', value: visibleUsers.filter(u => u.role === 'sub_distribution_manager').length, icon: Building,   color: 'cyan'   },
-        { label: 'Sub Distributors',  value: visibleUsers.filter(u => u.role === 'sub_distributor').length,           icon: Building,   color: 'indigo' },
-        { label: 'Clusters',          value: visibleUsers.filter(u => u.role === 'cluster').length,                   icon: Network,    color: 'teal'   },
-        { label: 'Operators',         value: visibleUsers.filter(u => u.role === 'operator').length,                  icon: UsersIcon,  color: 'green'  },
+        { label: 'Total Users',       value: statsData ? statsData.total : 0,                                          icon: UsersIcon,  color: 'blue'   },
+        { label: 'PDIC Staff',        value: byRole.pdic_staff || 0,                                                    icon: UsersIcon,  color: 'blue'   },
+        { label: 'Sub Dist. Manager', value: byRole.sub_distribution_manager || 0,                                     icon: Building,   color: 'cyan'   },
+        { label: 'Sub Distributors',  value: byRole.sub_distributor || 0,                                              icon: Building,   color: 'indigo' },
+        { label: 'Clusters',          value: byRole.cluster || 0,                                                       icon: Network,    color: 'teal'   },
+        { label: 'Operators',         value: byRole.operator || 0,                                                      icon: UsersIcon,  color: 'green'  },
+      ]
+    : isMdDirector
+    ? [
+        { label: 'Total Users',       value: statsData ? statsData.total : 0,                                          icon: UsersIcon,  color: 'blue'   },
+        { label: 'Operators',         value: byRole.operator || 0,                                                      icon: UsersIcon,  color: 'green'  },
       ]
     : [
         { label: 'Total Users',       value: users.length,                                                            icon: UsersIcon,  color: 'blue'   },
@@ -1020,7 +1164,7 @@ const Users = () => {
                       </span>
                     )}
                     <span className="text-xs text-gray-400">
-                      {filteredUsers.length} result{filteredUsers.length !== 1 ? 's' : ''}
+                      {isTableRole ? tableTotalCount : filteredUsers.length} result{isTableRole ? (tableTotalCount !== 1 ? 's' : '') : (filteredUsers.length !== 1 ? 's' : '')}
                     </span>
                   </div>
                 )}
@@ -1068,7 +1212,7 @@ const Users = () => {
           </Card>
 
           <Card>
-            {loading ? (
+            {(loading || (isTableRole && tableLoading && tableRows.length === 0)) ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
                 <span className="ml-3 text-gray-500">Loading users...</span>
@@ -1076,8 +1220,12 @@ const Users = () => {
             ) : (
               <DataTable
                 columns={columns}
-                data={searchedFilteredUsers}
+                data={isTableRole ? tableRows : searchedFilteredUsers}
                 searchable={false}
+                pageSize={TABLE_PAGE_SIZE}
+                totalItems={isTableRole ? tableTotalCount || tableRows.length : undefined}
+                currentPage={isTableRole ? tablePage : undefined}
+                onPageChange={isTableRole ? handleTablePageChange : undefined}
               />
             )}
           </Card>

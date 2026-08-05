@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, File, UploadFile
-from typing import Optional
+from typing import List, Optional
 
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
@@ -79,6 +79,59 @@ async def _get_descendant_ids(root_user_id: str) -> set:
                     descendants.add(child_id)
                     pending.append(int(child_id))
         return descendants
+
+
+async def _filter_readable_users(current_user: dict, users: List[dict]) -> List[dict]:
+    """Read-level authorization filter for list endpoints.
+
+    SQL scoping above is only an approximation (single-level parent_id plus
+    precomputed parent sets), so every candidate row must be re-verified against
+    the actor's exact read rules. The actor's branch is resolved ONCE per request
+    into a set of descendant ids, turning the previous per-row tree walk (one
+    BFS + one query per level per row) into O(1) set lookups.
+    """
+    actor_role = normalize_role(current_user.get("role"))
+
+    if actor_role == CLUSTER:
+        current_id = str(current_user.get("id"))
+        return [
+            u for u in users
+            if normalize_role(u.get("role")) == OPERATOR
+            and str(u.get("parent_id")) == current_id
+        ]
+
+    if actor_role == SUB_DISTRIBUTOR:
+        branch = await _get_descendant_ids(str(current_user["id"]))
+        return [
+            u for u in users
+            if normalize_role(u.get("role")) in {CLUSTER, OPERATOR}
+            and str(u["id"]) in branch
+        ]
+
+    if actor_role == SUB_DISTRIBUTION_MANAGER:
+        root_id = str(current_user.get("parent_id") or current_user["id"])
+        branch = await _get_descendant_ids(root_id)
+        return [
+            u for u in users
+            if normalize_role(u.get("role")) in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR}
+            and str(u["id"]) in branch
+        ]
+
+    if actor_role == MANAGER:
+        parent_id = current_user.get("parent_id")
+        branch = await _get_descendant_ids(str(parent_id)) if parent_id else None
+        allowed = []
+        for u in users:
+            t_role = normalize_role(u.get("role"))
+            in_branch = True if branch is None else str(u["id"]) in branch
+            if t_role == MANAGER:
+                if in_branch:
+                    allowed.append(u)
+            elif can_manage_user(actor_role, t_role) and in_branch:
+                allowed.append(u)
+        return allowed
+
+    return users
 
 
 async def _notify_super_admins(message: str, *, title: str, category: str = "user",
@@ -167,6 +220,7 @@ async def get_users(
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
     parent_id: Optional[str] = None,
+    scope_root_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
     actor_role = normalize_role(current_user.get("role"))
@@ -178,6 +232,8 @@ async def get_users(
 
     if actor_role in {SUPER_ADMIN, MD_DIRECTOR, MANAGER}:
         parent_id_filter = parent_id
+        if scope_root_id:
+            parent_ids_in_filter = [int(d) for d in await _get_descendant_ids(scope_root_id)]
     elif actor_role == PDIC_STAFF:
         if normalized_role_filter in {SUB_DISTRIBUTOR, CLUSTER, OPERATOR}:
             parent_id_filter = parent_id
@@ -258,14 +314,26 @@ async def get_users(
         )
 
         if actor_role in {MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER}:
-            filtered = []
-            for row in result["data"]:
-                if await _can_access_user(current_user, row, write=False):
-                    filtered.append(row)
-            result["data"] = filtered
+            result["data"] = await _filter_readable_users(current_user, result["data"])
 
         if actor_role == MD_DIRECTOR:
             result["data"] = [row for row in result["data"] if normalize_role(row.get("role")) != SUPER_ADMIN]
+
+        # When scoping to a branch root (cascading filter), surface the root
+        # user itself on the first page so the table matches the client-side
+        # filter semantics of "root + descendants".
+        if scope_root_id and actor_role in {SUPER_ADMIN, MD_DIRECTOR, MANAGER} and page == 1 and not search:
+            root_user = await user_service.get_user_by_id(scope_root_id)
+            if root_user and actor_role == MD_DIRECTOR and normalize_role(root_user.get("role")) == SUPER_ADMIN:
+                root_user = None
+            if root_user and (not normalized_role_filter or normalize_role(root_user.get("role")) == normalized_role_filter):
+                if await _can_access_user(current_user, root_user, write=False):
+                    if not any(str(r.get("id")) == str(root_user.get("id")) for r in result["data"]):
+                        result["data"].insert(0, root_user)
+                        total = result["pagination"].get("total", 0) + 1
+                        result["pagination"]["total"] = total
+                        result["pagination"]["total_pages"] = (total + page_size - 1) // page_size if page_size > 0 else 0
+                        result["pagination"]["has_next"] = page < result["pagination"]["total_pages"]
 
         return {
             "success": True,
@@ -273,6 +341,35 @@ async def get_users(
             "data": result["data"],
             "pagination": result["pagination"],
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred. Please try again later.")
+
+
+@router.get("/stats", summary="Get user statistics")
+async def get_user_stats(
+    current_user: dict = Depends(get_current_user),
+):
+    actor_role = normalize_role(current_user.get("role"))
+    if actor_role not in {SUPER_ADMIN, MD_DIRECTOR, MANAGER}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    try:
+        exclude_roles = None
+        parent_ids_in = None
+        if actor_role == MD_DIRECTOR:
+            exclude_roles = [SUPER_ADMIN]
+        elif actor_role == MANAGER:
+            exclude_roles = [SUPER_ADMIN, MD_DIRECTOR]
+            if current_user.get("parent_id"):
+                parent_ids_in = [int(d) for d in await _get_descendant_ids(current_user["parent_id"])]
+
+        stats = await user_service.get_user_stats(
+            parent_ids_in=parent_ids_in,
+            exclude_roles=exclude_roles,
+        )
+        return {"success": True, "message": "User statistics retrieved successfully", "data": stats}
     except HTTPException:
         raise
     except Exception as e:
