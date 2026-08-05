@@ -407,7 +407,10 @@ class TestBulkUploadExternalInventoryItems:
 
     def test_internal_error_returns_500(self, client, mock_inventory_services, mock_bulk_upload_db):
         csv_bytes = b"name,quantity\r\nItem One,2\r\n"
-        with patch("app.routes.external_inventory._chunks", side_effect=RuntimeError("error")):
+        with patch(
+            "app.routes.external_inventory.chunked_executemany",
+            AsyncMock(side_effect=RuntimeError("error")),
+        ):
             resp = client.post(
                 self.URL,
                 files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},

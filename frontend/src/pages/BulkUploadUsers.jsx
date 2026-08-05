@@ -16,8 +16,9 @@ import {
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
-import { usersAPI, dashboardAPI } from '../services/api';
+import { usersAPI, dashboardAPI, downloadBulkReport } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { normalizeRole, ROLES } from '../utils/roles';
 
 const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
@@ -31,6 +32,7 @@ const TEMPLATE = {
 const BulkUploadUsers = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { showToast } = useNotifications();
   const fileInputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -471,6 +473,29 @@ const BulkUploadUsers = () => {
               <p className="text-sm text-red-600">Errors</p>
             </div>
           </div>
+
+          {(result.skipped_truncated || result.errors_truncated || result.error_report_id) && (
+            <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+              <p className="text-sm text-slate-600">
+                {result.skipped_count + result.error_count} rows need attention. Only the first 500 are shown below.
+              </p>
+              {result.error_report_id && (
+                <Button
+                  variant="outline"
+                  icon={Download}
+                  onClick={async () => {
+                    try {
+                      await downloadBulkReport(result.error_report_id, `user-bulk-upload-report-${result.error_report_id}.csv`);
+                    } catch {
+                      showToast('Failed to download report', 'error');
+                    }
+                  }}
+                >
+                  Download Full Report
+                </Button>
+              )}
+            </div>
+          )}
 
           {result.created?.length > 0 && (
             <Card title={`Created Users (${result.created.length})`} icon={CheckCircle}>

@@ -2,9 +2,12 @@ import asyncio
 import csv
 import io
 import logging
+import time
+import uuid
 import zipfile
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Set
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Set
 
 from fastapi import HTTPException, status
 
@@ -20,6 +23,125 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 MAX_BULK_ROWS = 300000
 _MAX_XLSX_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500 MB
+
+# Uploads at or below this row count keep a single atomic transaction. Larger
+# uploads commit per batch so one bad row cannot roll back many minutes of work;
+# the existing DB pre-checks make re-runs safe (already-committed rows are
+# reported as skipped duplicates).
+BULK_UPLOAD_CHUNKED_COMMIT_THRESHOLD = 10000
+
+# How many per-row results are embedded in the bulk upload response body.
+# Anything beyond this count is available via the downloadable error report so a
+# 150k-row upload never returns a giant JSON body.
+BULK_RESULT_INLINE_LIMIT = 500
+
+_BULK_REPORT_MAX_AGE_SECONDS = 86400  # 1 day
+
+
+def _bulk_reports_dir() -> Path:
+    d = Path(__file__).resolve().parents[2] / "bulk_reports"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _report_row(entry: Dict[str, Any], status: str) -> Dict[str, Any]:
+    return {
+        "row": entry.get("row", ""),
+        "reference": (
+            entry.get("serial") or entry.get("name") or entry.get("email")
+            or entry.get("identifier") or entry.get("item_id") or ""
+        ),
+        "status": status,
+        "reason": entry.get("error") or entry.get("reason") or "",
+    }
+
+
+def persist_bulk_report(skipped: List[Dict[str, Any]], errors: List[Dict[str, Any]]) -> Optional[str]:
+    """Write skipped + error rows to a CSV file and return its report id.
+
+    Returns ``None`` when there is nothing to report. Old reports are cleaned up
+    opportunistically so the directory does not grow without bound.
+    """
+    rows = [_report_row(e, "skipped") for e in skipped]
+    rows.extend(_report_row(e, "error") for e in errors)
+    if not rows:
+        return None
+
+    report_id = f"br_{uuid.uuid4().hex[:12]}"
+    path = _bulk_reports_dir() / f"{report_id}.csv"
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=["row", "reference", "status", "reason"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    _cleanup_old_bulk_reports()
+    return report_id
+
+
+def _cleanup_old_bulk_reports() -> None:
+    cutoff = time.time() - _BULK_REPORT_MAX_AGE_SECONDS
+    try:
+        for p in _bulk_reports_dir().glob("br_*.csv"):
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def get_bulk_report_path(report_id: str) -> Optional[Path]:
+    """Return the filesystem path for a valid, existing bulk report id."""
+    if not report_id.startswith("br_") or not report_id[3:].isalnum():
+        return None
+    p = _bulk_reports_dir() / f"{report_id}.csv"
+    return p if p.exists() else None
+
+
+def build_bulk_result(
+    created: List[Any],
+    skipped: List[Dict[str, Any]],
+    errors: List[Dict[str, Any]],
+    total: Optional[int] = None,
+    created_count: Optional[int] = None,
+    skipped_count: Optional[int] = None,
+    error_count: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build the ``data`` payload for a bulk operation response.
+
+    Counts are always full. The per-row ``created`` / ``skipped`` / ``errors``
+    lists are capped at ``BULK_RESULT_INLINE_LIMIT`` so large uploads return a
+    small body; the ``*_truncated`` flags tell the frontend more rows exist and
+    ``error_report_id`` points at a downloadable CSV with every row.
+    """
+    created_capped = created[:BULK_RESULT_INLINE_LIMIT]
+    skipped_capped = skipped[:BULK_RESULT_INLINE_LIMIT]
+    errors_capped = errors[:BULK_RESULT_INLINE_LIMIT]
+
+    report_id = None
+    if len(skipped) + len(errors) > BULK_RESULT_INLINE_LIMIT:
+        report_id = persist_bulk_report(skipped, errors)
+
+    data = {
+        "created_count": len(created) if created_count is None else created_count,
+        "skipped_count": len(skipped) if skipped_count is None else skipped_count,
+        "error_count": len(errors) if error_count is None else error_count,
+        "created_truncated": len(created) > BULK_RESULT_INLINE_LIMIT,
+        "skipped_truncated": len(skipped) > BULK_RESULT_INLINE_LIMIT,
+        "errors_truncated": len(errors) > BULK_RESULT_INLINE_LIMIT,
+        "error_report_id": report_id,
+        "created": created_capped,
+        "skipped": skipped_capped,
+        "errors": errors_capped,
+    }
+    if total is not None:
+        data["total"] = total
+    return data
+
+DIGITAL_IDENTITY_INSERT_SQL = """INSERT INTO digital_identities (
+    user_id, digital_id, broadband_id, is_primary, created_at
+) VALUES (:user_id, :digital_id, :broadband_id, :is_primary, :created_at)"""
 
 
 def check_bulk_upload_file(contents: bytes, filename_lower: str) -> None:
@@ -41,6 +163,130 @@ def check_bulk_upload_file(contents: bytes, filename_lower: str) -> None:
 def chunks(values: List[Any], chunk_size: int) -> Iterable[List[Any]]:
     for i in range(0, len(values), chunk_size):
         yield values[i:i + chunk_size]
+
+
+async def chunked_executemany(
+    session: Any,
+    sql: str,
+    rows: List[Dict[str, Any]],
+    chunk_size: int = 500,
+    *,
+    on_batch_success: Optional[Callable[..., Awaitable[None]]] = None,
+    on_row_duplicate: Optional[Callable[..., Awaitable[None]]] = None,
+    on_row_error: Optional[Callable[..., Awaitable[None]]] = None,
+    on_batch_start: Optional[Callable[[], Awaitable[None]]] = None,
+    on_batch_complete: Optional[Callable[[bool], Awaitable[None]]] = None,
+    abort_on_error: bool = True,
+) -> bool:
+    """Insert ``rows`` in chunks with a binary-split fallback.
+
+    Runs ``session.execute(text(sql), batch)`` for each chunk. When a whole
+    chunk fails (MySQL aborts a multi-VALUES insert atomically, so nothing from
+    the chunk is inserted), the chunk is retried by repeatedly splitting it in
+    half instead of falling back to one round trip per row: error-free runs
+    insert in bulk, so a chunk with a single bad row costs only O(log n) round
+    trips rather than n. Returns ``False`` when a hard error aborted the loop
+    (the caller should roll back the transaction).
+
+    Callbacks (all receive the session, plus:):
+
+      on_batch_success(session, batch)   -- after an entire chunk or sub-batch
+                                            inserts cleanly (also fired for
+                                            single rows that survive a split)
+      on_row_duplicate(session, row, err)-- duplicate/unique-constraint failure
+      on_row_error(session, row, err)    -- any other row failure
+      on_batch_start()                   -- before each chunk is attempted
+      on_batch_complete(ok, can_commit)  -- after each chunk; ``can_commit`` is
+                                          -- whether the loop still intends to commit
+
+    When ``abort_on_error`` is True (users/devices) a hard error stops the loop;
+    when False (external items) the failure is recorded and the next row runs.
+    """
+    should_commit = True
+    for batch in chunks(rows, chunk_size):
+        if on_batch_start:
+            await on_batch_start()
+
+        batch_ok = True
+        try:
+            await session.execute(text(sql), batch)
+        except Exception as batch_error:
+            batch_ok = False
+            aborted = await _retry_split(
+                session, sql, batch,
+                on_batch_success=on_batch_success,
+                on_row_duplicate=on_row_duplicate,
+                on_row_error=on_row_error,
+                abort_on_error=abort_on_error,
+            )
+            if aborted:
+                should_commit = False
+            logger.warning("Batch insert fallback triggered: %s", str(batch_error))
+        else:
+            if on_batch_success:
+                await on_batch_success(session, batch)
+
+        if on_batch_complete:
+            await on_batch_complete(batch_ok, should_commit)
+        await asyncio.sleep(0)
+
+        if not should_commit:
+            break
+    return should_commit
+
+
+async def _retry_split(
+    session: Any,
+    sql: str,
+    subrows: List[Dict[str, Any]],
+    *,
+    on_batch_success,
+    on_row_duplicate,
+    on_row_error,
+    abort_on_error: bool,
+) -> bool:
+    """Insert ``subrows`` after a batch executemany failed.
+
+    Recursively splits the batch in half on each failure so the rows that
+    actually conflict are isolated with O(log n) round trips, while every
+    error-free run inserts in bulk. Returns ``True`` when a hard error aborted
+    the operation (the caller should roll back); duplicates never abort.
+    """
+    if len(subrows) == 1:
+        row = subrows[0]
+        try:
+            await session.execute(text(sql), row)
+        except Exception as single_error:
+            lowered = str(single_error).lower()
+            is_duplicate = "duplicate" in lowered or "unique" in lowered
+            if is_duplicate and on_row_duplicate:
+                await on_row_duplicate(session, row, single_error)
+                return False
+            if on_row_error:
+                await on_row_error(session, row, single_error)
+            return abort_on_error and not is_duplicate
+        else:
+            if on_batch_success:
+                await on_batch_success(session, subrows)
+            return False
+
+    mid = len(subrows) // 2
+    for half in (subrows[:mid], subrows[mid:]):
+        try:
+            await session.execute(text(sql), half)
+        except Exception:
+            if await _retry_split(
+                session, sql, half,
+                on_batch_success=on_batch_success,
+                on_row_duplicate=on_row_duplicate,
+                on_row_error=on_row_error,
+                abort_on_error=abort_on_error,
+            ):
+                return True
+        else:
+            if on_batch_success:
+                await on_batch_success(session, half)
+    return False
 
 
 def parse_file(contents: bytes, ext: str) -> list:
@@ -151,6 +397,15 @@ async def process_bulk_user_upload(
     target_role: Optional[str] = None,
     parent_id: Optional[int] = None,
 ) -> dict:
+    """Bulk-create users from uploaded rows.
+
+    Emails are normalized to lowercase before insertion, and every uniqueness
+    check (duplicate within the file, against existing users, and digital-ID
+    ownership) compares lowercase values. The ``users.email`` column is
+    backed by a case-insensitive collation in the database, so uniqueness is
+    enforced there as well; the service-level normalization keeps the two
+    layers consistent and makes the ``LOWER(email)`` lookups exact.
+    """
     from app.utils.security import get_password_hash as _hash
 
     actor_role = normalize_role(current_user.get("role"))
@@ -332,72 +587,100 @@ async def process_bulk_user_upload(
 
         creator_id = int(current_user.get("id") or 0)
 
-        should_commit = True
-        for batch in chunks(insertable_rows, 500):
-            batch_payload = []
+        payload_rows = []
+        for item in insertable_rows:
+            payload_rows.append({
+                "row": item["row"],
+                "email": item["email"],
+                "password_hash": item["password_hash"],
+                "name": item["name"],
+                "role": target_role,
+                "status": "active",
+                "phone": item["phone"],
+                "designation": None,
+                "address": item["address"],
+                "pincode": item["pincode"],
+                "parent_id": item.get("parent_id"),
+                "created_by": creator_id,
+                "created_at": now,
+                "updated_at": now,
+            })
+
+        async def _user_batch_success(session, batch):
             for item in batch:
-                batch_payload.append({
-                    "email": item["email"],
-                    "password_hash": item["password_hash"],
-                    "name": item["name"],
-                    "role": target_role,
-                    "status": "active",
-                    "phone": item["phone"],
-                    "designation": None,
-                    "address": item["address"],
-                    "pincode": item["pincode"],
-                    "parent_id": item.get("parent_id"),
-                    "created_by": creator_id,
-                    "created_at": now,
-                    "updated_at": now,
-                })
+                created.append({"row": item["row"], "email": item["email"], "role": target_role, "name": item["name"]})
 
-            try:
-                await session.execute(text(insert_sql), batch_payload)
-                for item in batch:
-                    created.append({"row": item["row"], "email": item["email"], "role": target_role, "name": item["name"]})
-            except Exception as batch_error:
-                for item in batch:
-                    row_idx = item["row"]
-                    email = item["email"]
-                    try:
-                        await session.execute(
-                            text(insert_sql),
-                            {
-                                "email": email,
-                                "password_hash": item["password_hash"],
-                                "name": item["name"],
-                                "role": target_role,
-                                "status": "active",
-                                "phone": item["phone"],
-                                "designation": None,
-                                "address": item["address"],
-                                "pincode": item["pincode"],
-                                "parent_id": item.get("parent_id"),
-                                "created_by": creator_id,
-                                "created_at": now,
-                                "updated_at": now,
-                            },
-                        )
-                        created.append({"row": row_idx, "email": email, "role": target_role, "name": item["name"]})
-                    except Exception as single_error:
-                        lowered = str(single_error).lower()
-                        if "duplicate" in lowered or "unique" in lowered:
-                            skipped.append({"row": row_idx, "email": email, "reason": "Email already exists"})
-                        else:
-                            errors.append({"row": row_idx, "email": email, "error": str(single_error)[:200]})
-                            should_commit = False
-                            break
+        async def _user_row_duplicate(session, item, err):
+            skipped.append({"row": item["row"], "email": item["email"], "reason": "Email already exists"})
 
-                if not should_commit:
-                    break
+        async def _user_row_error(session, item, err):
+            errors.append({"row": item["row"], "email": item["email"], "error": str(err)[:200]})
 
-                logger.warning("Batch insert fallback triggered for users due to: %s", str(batch_error))
-
-            await asyncio.sleep(0)
+        should_commit = await chunked_executemany(
+            session,
+            insert_sql,
+            payload_rows,
+            on_batch_success=_user_batch_success,
+            on_row_duplicate=_user_row_duplicate,
+            on_row_error=_user_row_error,
+            abort_on_error=True,
+        )
 
         if should_commit and insertable_rows:
             await bump_cache_version(session)
+
+            # Digital / broadband identities for the created users. Resolve the
+            # numeric user ids once with a chunked lookup, then batch-insert all
+            # identities in the same transaction as the users instead of one
+            # transaction + SELECT round trip per user.
+            identity_candidates = [
+                item for item in insertable_rows
+                if item.get("digital_id") or item.get("broadband_id") or item.get("additional_digital_ids")
+            ]
+            if identity_candidates:
+                email_to_id: Dict[str, int] = {}
+                for batch in chunks([p["email"] for p in identity_candidates], 500):
+                    ph = ",".join([f":e{i}" for i in range(len(batch))])
+                    params = {f"e{i}": e for i, e in enumerate(batch)}
+                    result = await session.execute(
+                        text(f"SELECT id, LOWER(email) AS email FROM users WHERE LOWER(email) IN ({ph})"),
+                        params,
+                    )
+                    for row in result.mappings().all():
+                        email_to_id[str(row["email"]).lower()] = int(row["id"])
+
+                identities_payload: List[Dict[str, Any]] = []
+                for item in identity_candidates:
+                    user_id = email_to_id.get(item["email"])
+                    if user_id is None:
+                        continue
+                    if item.get("digital_id") or item.get("broadband_id"):
+                        identities_payload.append({
+                            "user_id": user_id,
+                            "digital_id": item.get("digital_id"),
+                            "broadband_id": item.get("broadband_id"),
+                            "is_primary": 1,
+                            "created_at": now,
+                        })
+                    for extra in (item.get("additional_digital_ids") or []):
+                        identities_payload.append({
+                            "user_id": user_id,
+                            "digital_id": extra,
+                            "broadband_id": None,
+                            "is_primary": 0,
+                            "created_at": now,
+                        })
+
+                if identities_payload:
+                    try:
+                        for batch in chunks(identities_payload, 500):
+                            await session.execute(text(DIGITAL_IDENTITY_INSERT_SQL), batch)
+                    except Exception as e:
+                        # MySQL keeps the transaction usable after a failed
+                        # statement, so a conflicting identity does not lose the
+                        # user rows created above.
+                        logger.warning("Failed to insert digital identities: %s", str(e))
+
             await session.commit()
         elif not insertable_rows:
             pass
@@ -407,28 +690,6 @@ async def process_bulk_user_upload(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."
             )
-
-    # Create digital identities for each created user
-    from app.services.digital_id_service import create_digital_identities_for_user as _create_identities
-    for item in created:
-        try:
-            async with async_session_factory() as session:
-                result = await session.execute(
-                    text("SELECT id FROM users WHERE email = :email"),
-                    {"email": item["email"]},
-                )
-                row = result.mappings().first()
-                if row:
-                    user_id = int(row["id"])
-                    matched = next((p for p in prepared_rows if p["email"] == item["email"]), None)
-                    await _create_identities(
-                        user_id=user_id,
-                        primary_digital_id=matched["digital_id"] if matched else None,
-                        primary_broadband_id=matched["broadband_id"] if matched else None,
-                        additional_digital_ids=matched.get("additional_digital_ids") if matched else None,
-                    )
-        except Exception as e:
-            logger.warning("Failed to create digital identities for %s: %s", item["email"], e)
 
     await log_business_activity(
         user=current_user,
@@ -459,15 +720,14 @@ def _build_response(
     result = {
         "success": True,
         "message": f"Bulk upload complete: {created_count} created, {skipped_count} skipped, {error_count} errors",
-        "data": {
-            "created_count": created_count,
-            "skipped_count": skipped_count,
-            "error_count": error_count,
-            "created": created,
-            "skipped": skipped,
-            "errors": errors,
-        },
+        "data": build_bulk_result(
+            created,
+            skipped,
+            errors,
+            total=total,
+            created_count=created_count,
+            skipped_count=skipped_count,
+            error_count=error_count,
+        ),
     }
-    if total is not None:
-        result["data"]["total"] = total
     return result

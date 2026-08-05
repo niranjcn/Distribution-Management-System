@@ -15,6 +15,7 @@ from app.models.inventory import (
     InventoryItemUpdate,
 )
 from app.services import notification_service
+from app.services.bulk_upload_service import build_bulk_result, chunks
 from app.utils.helpers import (
     generate_external_distribution_id,
     get_pagination,
@@ -51,6 +52,14 @@ SEARCH_FIELD_MAP = {
     "supplier_name": "supplier_name",
     "location": "location",
 }
+
+_EXTERNAL_HISTORY_INSERT_SQL = """INSERT INTO external_device_history (
+     history_id, item_id, item_name, identifier_type, identifier, device_type, price,
+     quantity, recipient_user_id, recipient_name, previous_quantity, remaining_quantity,
+     distributed_by, distributed_by_name, distributed_at, notes, status
+ ) VALUES (:history_id, :item_id, :item_name, :identifier_type, :identifier, :device_type, :price,
+     :quantity, :recipient_user_id, :recipient_name, :previous_quantity, :remaining_quantity,
+     :distributed_by, :distributed_by_name, :distributed_at, :notes, 'completed')"""
 
 
 def _resolve_actor(user: Dict[str, Any]) -> Dict[str, str]:
@@ -167,6 +176,16 @@ async def create_item(item_data: InventoryItemCreate, user: Dict[str, Any]) -> D
     async with async_session_factory() as session:
         now = datetime.now().replace(tzinfo=None)
 
+        existing = (await session.execute(
+            text("SELECT id FROM external_inventory_items WHERE name = :name"),
+            {"name": item_data.name},
+        )).mappings().first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Item with this name already exists",
+            )
+
         result = await session.execute(
             text("""INSERT INTO external_inventory_items (
                      name, identifier_type, identifier, device_type, price, quantity,
@@ -221,6 +240,17 @@ async def update_item(
         existing = result.mappings().first()
         if not existing:
             return None
+
+        if update_dict.get("name"):
+            conflict = (await session.execute(
+                text("SELECT id FROM external_inventory_items WHERE name = :name AND id != :item_id"),
+                {"name": update_dict["name"], "item_id": int(item_id)},
+            )).mappings().first()
+            if conflict:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Item with this name already exists",
+                )
 
         update_dict["updated_at"] = datetime.now().replace(tzinfo=None)
         set_clause = ", ".join([f"{k} = :{k}" for k in update_dict.keys()])
@@ -294,6 +324,37 @@ async def _notify_recipient(recipient: Dict[str, Any], item: Dict[str, Any], qua
         )
     except Exception:
         logger.warning("Failed to notify recipient for external inventory distribution", exc_info=True)
+
+
+async def _notify_recipient_batch(recipient: Dict[str, Any], records: List[Dict[str, Any]]) -> None:
+    """Send a single aggregated notification for a bulk distribution instead of
+    one notification per distributed record, so a large upload does not create
+    hundreds of rows in the notifications table for the same recipient."""
+    if not records:
+        return
+    try:
+        per_name: Dict[str, int] = {}
+        for r in records:
+            name = str(r.get("item_name") or "item")
+            per_name[name] = per_name.get(name, 0) + int(r.get("quantity") or 0)
+
+        if len(per_name) == 1:
+            (name, qty), = per_name.items()
+            message = f"You have been assigned {qty} x {name} from external inventory."
+        else:
+            parts = ", ".join(f"{qty} x {name}" for name, qty in sorted(per_name.items()))
+            message = f"You have been assigned {len(records)} item(s) from external inventory: {parts}."
+
+        await notification_service.create_notification(
+            user_id=int(recipient["id"]),
+            title="External Inventory Items Assigned",
+            message=message,
+            notification_type="info",
+            category="external_inventory",
+            link="/external-inventory/items",
+        )
+    except Exception:
+        logger.warning("Failed to notify recipient for external inventory bulk distribution", exc_info=True)
 
 
 async def distribute_item(payload: ExternalDistributionCreate, user: Dict[str, Any]) -> Dict[str, Any]:
@@ -403,77 +464,127 @@ async def bulk_distribute(payload: ExternalBulkDistributionCreate, user: Dict[st
     async with async_session_factory() as session:
         now = datetime.now().replace(tzinfo=None)
 
+        # Resolve all referenced items and recipients up front with a handful
+        # of batched queries instead of one round trip per entry. The items are
+        # locked with FOR UPDATE and the locks are held until commit, so the
+        # quantities read here are authoritative and the batched decrement
+        # below cannot oversell even with concurrent requests.
+        parsed_entries = []
         for entry in payload.items:
             try:
-                item_result = await session.execute(
-                    text("SELECT * FROM external_inventory_items WHERE id = :item_id"),
-                    {"item_id": int(entry.item_id)},
-                )
-                item_row = item_result.mappings().first()
-                if not item_row:
-                    errors.append({"item_id": entry.item_id, "error": "Item not found"})
-                    continue
+                item_id = int(entry.item_id)
+            except (ValueError, TypeError):
+                errors.append({"item_id": entry.item_id, "error": "Invalid item id"})
+                continue
+            parsed_entries.append((entry, item_id))
 
-                item = dict(item_row)
+        item_ids = sorted({item_id for _, item_id in parsed_entries})
+        recipient_ids = sorted({int(e.to_user_id) for e in payload.items if e.to_user_id is not None})
+        recipient_emails = sorted({
+            (e.recipient_email or "").strip().lower()
+            for e in payload.items if e.to_user_id is None and (e.recipient_email or "").strip()
+        })
+
+        locked_items: Dict[int, Dict[str, Any]] = {}
+        for batch in chunks(item_ids, 1000):
+            ph = ",".join([f":i_{i}" for i in range(len(batch))])
+            params = {f"i_{i}": v for i, v in enumerate(batch)}
+            rows = (await session.execute(
+                text(f"SELECT * FROM external_inventory_items WHERE id IN ({ph}) FOR UPDATE"),
+                params,
+            )).mappings().all()
+            for row in rows:
+                locked_items[int(row["id"])] = dict(row)
+
+        recipients_by_id: Dict[int, Dict[str, Any]] = {}
+        for batch in chunks(recipient_ids, 1000):
+            ph = ",".join([f":u_{i}" for i in range(len(batch))])
+            params = {f"u_{i}": v for i, v in enumerate(batch)}
+            rows = (await session.execute(
+                text(f"SELECT id, name, email, role, status FROM users WHERE id IN ({ph})"),
+                params,
+            )).mappings().all()
+            for row in rows:
+                recipients_by_id[int(row["id"])] = dict(row)
+
+        recipients_by_email: Dict[str, Dict[str, Any]] = {}
+        for batch in chunks(recipient_emails, 1000):
+            ph = ",".join([f":e_{i}" for i in range(len(batch))])
+            params = {f"e_{i}": v for i, v in enumerate(batch)}
+            rows = (await session.execute(
+                text(f"SELECT id, name, email, role, status FROM users WHERE LOWER(email) IN ({ph})"),
+                params,
+            )).mappings().all()
+            for row in rows:
+                recipients_by_email[str(row.get("email") or "").lower()] = dict(row)
+
+        history_rows: List[Dict[str, Any]] = []
+        # Track the running quantity per item as entries are validated so
+        # repeated entries for the same item cannot oversell within one request
+        # and history records the true previous/remaining quantities.
+        running_qty: Dict[int, int] = {
+            iid: int(item.get("quantity") or 0) for iid, item in locked_items.items()
+        }
+        pending_decrements: Dict[int, int] = {}
+
+        for entry, item_id in parsed_entries:
+            try:
+                item = locked_items.get(item_id)
+                if not item:
+                    errors.append({"item_id": item_id, "error": "Item not found"})
+                    continue
                 if item.get("status") != "active":
-                    errors.append({"item_id": entry.item_id, "error": "Item is not active"})
+                    errors.append({"item_id": item_id, "error": "Item is not active"})
                     continue
 
-                current_qty = int(item.get("quantity") or 0)
+                current_qty = running_qty.get(item_id, 0)
                 if current_qty <= 0:
-                    errors.append({"item_id": entry.item_id, "error": "Item is out of stock"})
+                    errors.append({"item_id": item_id, "error": "Item is out of stock"})
                     continue
                 if entry.quantity > current_qty:
                     errors.append({
-                        "item_id": entry.item_id,
+                        "item_id": item_id,
                         "error": f"Cannot distribute more than the available quantity ({current_qty})",
                     })
                     continue
 
-                recipient = await _resolve_recipient(session, entry.to_user_id, entry.recipient_email)
+                if entry.to_user_id is not None:
+                    recipient = recipients_by_id.get(int(entry.to_user_id))
+                else:
+                    recipient = recipients_by_email.get((entry.recipient_email or "").strip().lower())
+                if not recipient:
+                    errors.append({"item_id": item_id, "error": "Recipient not found"})
+                    continue
                 if recipient.get("status") != "active":
-                    errors.append({"item_id": entry.item_id, "error": "Recipient account is not active"})
+                    errors.append({"item_id": item_id, "error": "Recipient account is not active"})
                     continue
 
-                remaining = current_qty - entry.quantity
-
-                await session.execute(
-                    text("UPDATE external_inventory_items SET quantity = :quantity, updated_at = :updated_at WHERE id = :item_id"),
-                    {"quantity": remaining, "updated_at": now, "item_id": int(entry.item_id)},
-                )
+                running_qty[item_id] = current_qty - entry.quantity
+                pending_decrements[item_id] = pending_decrements.get(item_id, 0) + entry.quantity
+                remaining = running_qty[item_id]
 
                 history_id = generate_external_distribution_id()
-                await session.execute(
-                    text("""INSERT INTO external_device_history (
-                             history_id, item_id, item_name, identifier_type, identifier, device_type, price,
-                             quantity, recipient_user_id, recipient_name, previous_quantity, remaining_quantity,
-                             distributed_by, distributed_by_name, distributed_at, notes, status
-                         ) VALUES (:history_id, :item_id, :item_name, :identifier_type, :identifier, :device_type, :price,
-                             :quantity, :recipient_user_id, :recipient_name, :previous_quantity, :remaining_quantity,
-                             :distributed_by, :distributed_by_name, :distributed_at, :notes, 'completed')"""),
-                    {
-                        "history_id": history_id,
-                        "item_id": int(item["id"]),
-                        "item_name": item["name"],
-                        "identifier_type": item.get("identifier_type"),
-                        "identifier": item.get("identifier"),
-                        "device_type": item.get("device_type"),
-                        "price": item.get("price"),
-                        "quantity": entry.quantity,
-                        "recipient_user_id": int(recipient["id"]),
-                        "recipient_name": recipient.get("name") or recipient.get("email"),
-                        "previous_quantity": current_qty,
-                        "remaining_quantity": remaining,
-                        "distributed_by": int(actor["id"]),
-                        "distributed_by_name": actor["name"],
-                        "distributed_at": now,
-                        "notes": entry.notes,
-                    },
-                )
-
+                history_rows.append({
+                    "history_id": history_id,
+                    "item_id": item_id,
+                    "item_name": item["name"],
+                    "identifier_type": item.get("identifier_type"),
+                    "identifier": item.get("identifier"),
+                    "device_type": item.get("device_type"),
+                    "price": item.get("price"),
+                    "quantity": entry.quantity,
+                    "recipient_user_id": int(recipient["id"]),
+                    "recipient_name": recipient.get("name") or recipient.get("email"),
+                    "previous_quantity": current_qty,
+                    "remaining_quantity": remaining,
+                    "distributed_by": int(actor["id"]),
+                    "distributed_by_name": actor["name"],
+                    "distributed_at": now,
+                    "notes": entry.notes,
+                })
                 created.append({
                     "history_id": history_id,
-                    "item_id": int(item["id"]),
+                    "item_id": item_id,
                     "item_name": item["name"],
                     "quantity": entry.quantity,
                     "recipient_id": int(recipient["id"]),
@@ -481,28 +592,42 @@ async def bulk_distribute(payload: ExternalBulkDistributionCreate, user: Dict[st
                     "previous_quantity": current_qty,
                     "remaining_quantity": remaining,
                 })
-            except HTTPException as exc:
-                errors.append({"item_id": entry.item_id, "error": exc.detail})
             except Exception as exc:
                 logger.exception("Bulk external inventory distribution row failed")
                 errors.append({"item_id": entry.item_id, "error": "An internal error occurred"})
 
+        if pending_decrements:
+            # Apply all decrements in one multi-row UPDATE per batch. The rows
+            # are already locked (FOR UPDATE above), so no guard is needed and
+            # each id is subtracted exactly by its validated quantity.
+            for batch in chunks(sorted(pending_decrements), 500):
+                case_clauses = []
+                params: Dict[str, Any] = {"updated_at": now}
+                for i, iid in enumerate(batch):
+                    case_clauses.append(f"WHEN :did_{i} THEN :dqty_{i}")
+                    params[f"did_{i}"] = iid
+                    params[f"dqty_{i}"] = pending_decrements[iid]
+                await session.execute(
+                    text(f"""UPDATE external_inventory_items
+                            SET quantity = quantity - CASE id {' '.join(case_clauses)} ELSE 0 END,
+                                updated_at = :updated_at
+                            WHERE id IN ({', '.join(f':did_{i}' for i in range(len(batch)))})"""),
+                    params,
+                )
+
+        for batch in chunks(history_rows, 500):
+            await session.execute(text(_EXTERNAL_HISTORY_INSERT_SQL), batch)
+
         await bump_cache_version(session)
         await session.commit()
 
+    by_recipient: Dict[int, List[Dict[str, Any]]] = {}
     for record in created:
-        await _notify_recipient(
-            {"id": record["recipient_id"]},
-            {"name": record["item_name"]},
-            record["quantity"],
-        )
+        by_recipient.setdefault(int(record["recipient_id"]), []).append(record)
+    for recipient_id, records in by_recipient.items():
+        await _notify_recipient_batch({"id": recipient_id}, records)
 
-    return {
-        "created_count": len(created),
-        "error_count": len(errors),
-        "created": created,
-        "errors": errors,
-    }
+    return build_bulk_result(created, [], errors)
 
 
 async def bulk_distribute_from_file(
@@ -537,7 +662,8 @@ async def bulk_distribute_from_file(
                 detail="Recipient account is not active",
             )
 
-        resolved_items: dict = {}
+        # Parse rows once, isolating per-row validation errors.
+        entries: List[Dict[str, Any]] = []
         for entry in identifier_rows:
             row_idx = int(entry["row"])
             try:
@@ -548,53 +674,59 @@ async def bulk_distribute_from_file(
                 errors.append({"row": row_idx, "name": "", "error": "Missing or invalid item id"})
                 continue
 
-            if item_id in resolved_items:
-                errors.append({"row": row_idx, "name": "", "error": f"Duplicate item id in file ({item_id})"})
-                continue
-
-            item_result = await session.execute(
-                text("SELECT * FROM external_inventory_items WHERE id = :item_id"),
-                {"item_id": item_id},
-            )
-            item_row = item_result.mappings().first()
-            if not item_row:
-                errors.append({"row": row_idx, "name": "", "error": f"Item not found (id {item_id})"})
-                continue
-            resolved_items[item_id] = dict(item_row)
-
-        seen_items = set()
-        for entry in identifier_rows:
-            row_idx = int(entry["row"])
-            try:
-                item_id = int(entry.get("id"))
-                if item_id < 1:
-                    raise ValueError
-            except (ValueError, TypeError):
-                continue
-
             try:
                 quantity_raw = entry.get("quantity")
-                if quantity_raw in (None, ""):
-                    quantity_value = 1
-                else:
-                    quantity_value = int(quantity_raw)
-                    if quantity_value < 1:
-                        raise ValueError
+                quantity_value = 1 if quantity_raw in (None, "") else int(quantity_raw)
+                if quantity_value < 1:
+                    raise ValueError
             except (ValueError, TypeError):
-                errors.append({"row": row_idx, "name": resolved_items.get(item_id, {}).get("name", ""), "error": "Quantity must be a positive integer"})
+                errors.append({"row": row_idx, "name": "", "error": "Quantity must be a positive integer"})
                 continue
 
-            item = resolved_items.get(item_id)
+            entries.append({
+                "row": row_idx,
+                "item_id": item_id,
+                "quantity": quantity_value,
+                "notes": entry.get("notes"),
+            })
+
+        # Lock the referenced items in batched queries instead of one SELECT
+        # per row. The locks are held until commit, so the quantities read here
+        # are authoritative and the batched decrement below cannot oversell.
+        item_ids = sorted({e["item_id"] for e in entries})
+        locked_items: Dict[int, Dict[str, Any]] = {}
+        for batch in chunks(item_ids, 1000):
+            ph = ",".join([f":i_{i}" for i in range(len(batch))])
+            params = {f"i_{i}": v for i, v in enumerate(batch)}
+            rows = (await session.execute(
+                text(f"SELECT * FROM external_inventory_items WHERE id IN ({ph}) FOR UPDATE"),
+                params,
+            )).mappings().all()
+            for row in rows:
+                locked_items[int(row["id"])] = dict(row)
+
+        history_rows: List[Dict[str, Any]] = []
+        pending_decrements: Dict[int, int] = {}
+        seen_items: set = set()
+        for entry in entries:
+            row_idx = entry["row"]
+            item_id = entry["item_id"]
+            quantity_value = entry["quantity"]
+
+            if item_id in seen_items:
+                errors.append({"row": row_idx, "name": "", "error": "Duplicate item id in file"})
+                continue
+
+            item = locked_items.get(item_id)
             if not item:
+                errors.append({"row": row_idx, "name": "", "error": f"Item not found (id {item_id})"})
                 continue
 
-            # A single recipient already resolved above; an item already
+            # A single recipient is resolved above; an item already
             # distributed in this batch is rejected to avoid distributing the
             # same item twice.
             row_error = None
-            if item_id in seen_items:
-                row_error = "Duplicate item id in file"
-            elif item.get("status") != "active":
+            if item.get("status") != "active":
                 row_error = "Item is not active"
             else:
                 current_qty = int(item.get("quantity") or 0)
@@ -608,46 +740,33 @@ async def bulk_distribute_from_file(
                 continue
 
             seen_items.add(item_id)
+
             current_qty = int(item.get("quantity") or 0)
             remaining = current_qty - quantity_value
-
-            await session.execute(
-                text("UPDATE external_inventory_items SET quantity = :quantity, updated_at = :updated_at WHERE id = :item_id"),
-                {"quantity": remaining, "updated_at": now, "item_id": int(item["id"])},
-            )
+            pending_decrements[item_id] = quantity_value
 
             history_id = generate_external_distribution_id()
-            await session.execute(
-                text("""INSERT INTO external_device_history (
-                         history_id, item_id, item_name, identifier_type, identifier, device_type, price,
-                         quantity, recipient_user_id, recipient_name, previous_quantity, remaining_quantity,
-                         distributed_by, distributed_by_name, distributed_at, notes, status
-                     ) VALUES (:history_id, :item_id, :item_name, :identifier_type, :identifier, :device_type, :price,
-                         :quantity, :recipient_user_id, :recipient_name, :previous_quantity, :remaining_quantity,
-                         :distributed_by, :distributed_by_name, :distributed_at, :notes, 'completed')"""),
-                {
-                    "history_id": history_id,
-                    "item_id": int(item["id"]),
-                    "item_name": item["name"],
-                    "identifier_type": item.get("identifier_type"),
-                    "identifier": item.get("identifier"),
-                    "device_type": item.get("device_type"),
-                    "price": item.get("price"),
-                    "quantity": quantity_value,
-                    "recipient_user_id": int(recipient["id"]),
-                    "recipient_name": recipient.get("name") or recipient.get("email"),
-                    "previous_quantity": current_qty,
-                    "remaining_quantity": remaining,
-                    "distributed_by": int(actor["id"]),
-                    "distributed_by_name": actor["name"],
-                    "distributed_at": now,
-                    "notes": entry.get("notes"),
-                },
-            )
-
+            history_rows.append({
+                "history_id": history_id,
+                "item_id": item_id,
+                "item_name": item["name"],
+                "identifier_type": item.get("identifier_type"),
+                "identifier": item.get("identifier"),
+                "device_type": item.get("device_type"),
+                "price": item.get("price"),
+                "quantity": quantity_value,
+                "recipient_user_id": int(recipient["id"]),
+                "recipient_name": recipient.get("name") or recipient.get("email"),
+                "previous_quantity": current_qty,
+                "remaining_quantity": remaining,
+                "distributed_by": int(actor["id"]),
+                "distributed_by_name": actor["name"],
+                "distributed_at": now,
+                "notes": entry["notes"],
+            })
             created.append({
                 "history_id": history_id,
-                "item_id": int(item["id"]),
+                "item_id": item_id,
                 "item_name": item["name"],
                 "quantity": quantity_value,
                 "recipient_id": int(recipient["id"]),
@@ -656,25 +775,38 @@ async def bulk_distribute_from_file(
                 "remaining_quantity": remaining,
             })
 
+        if pending_decrements:
+            # Apply all decrements in one multi-row UPDATE per batch. The rows
+            # are already locked (FOR UPDATE above), so no guard is needed.
+            for batch in chunks(sorted(pending_decrements), 500):
+                case_clauses = []
+                params: Dict[str, Any] = {"updated_at": now}
+                for i, iid in enumerate(batch):
+                    case_clauses.append(f"WHEN :did_{i} THEN :dqty_{i}")
+                    params[f"did_{i}"] = iid
+                    params[f"dqty_{i}"] = pending_decrements[iid]
+                await session.execute(
+                    text(f"""UPDATE external_inventory_items
+                            SET quantity = quantity - CASE id {' '.join(case_clauses)} ELSE 0 END,
+                                updated_at = :updated_at
+                            WHERE id IN ({', '.join(f':did_{i}' for i in range(len(batch)))})"""),
+                    params,
+                )
+
+        for batch in chunks(history_rows, 500):
+            await session.execute(text(_EXTERNAL_HISTORY_INSERT_SQL), batch)
+
         await bump_cache_version(session)
         await session.commit()
 
-    for record in created:
-        await _notify_recipient(
-            {"id": record["recipient_id"]},
-            {"name": record["item_name"]},
-            record["quantity"],
-        )
+    if created:
+        await _notify_recipient_batch(recipient, created)
 
-    return {
-        "total_rows": total_rows,
-        "created_count": len(created),
-        "error_count": len(errors),
-        "recipient_id": int(recipient["id"]),
-        "recipient_name": recipient.get("name") or recipient.get("email"),
-        "created": created,
-        "errors": errors,
-    }
+    data = build_bulk_result(created, [], errors)
+    data["total_rows"] = total_rows
+    data["recipient_id"] = int(recipient["id"])
+    data["recipient_name"] = recipient.get("name") or recipient.get("email")
+    return data
 
 
 async def get_distribution_history(

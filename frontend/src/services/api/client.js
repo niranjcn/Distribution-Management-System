@@ -187,4 +187,24 @@ const apiRequest = async (endpoint, options = {}) => {
   }
 };
 
-export { API_BASE_URL, apiRequest, buildCsrfHeader, getCookieValue, isDev, log, logError };
+// Downloads a bulk operation error report (CSV) via the cookie-authenticated
+// API. Returns nothing on success and throws on failure.
+const downloadBulkReport = async (reportId, filename = 'bulk-report.csv') => {
+  const response = await fetch(`${API_BASE_URL}/bulk-reports/${reportId}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to download report');
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+export { API_BASE_URL, apiRequest, buildCsrfHeader, getCookieValue, isDev, log, logError, downloadBulkReport };

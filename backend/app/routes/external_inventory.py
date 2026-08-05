@@ -16,6 +16,7 @@ from app.models.inventory import (
     InventoryItemUpdate,
 )
 from app.services import inventory_service
+from app.services.bulk_upload_service import build_bulk_result, chunked_executemany, chunks
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -245,52 +246,42 @@ async def bulk_upload_external_inventory_items(
                     insertable_rows.append(row)
 
                 if insertable_rows:
-                    for batch in _chunks(insertable_rows, 500):
-                        batch_payload = []
-                        for item in batch:
-                            batch_payload.append({
-                                "name": item["name"],
-                                "identifier_type": item["identifier_type"],
-                                "identifier": item["identifier"],
-                                "device_type": item["device_type"],
-                                "price": item["price"],
-                                "quantity": item["quantity"],
-                                "supplier_name": item["supplier_name"],
-                                "location": item["location"],
-                                "notes": item["notes"],
-                                "created_by": actor_id,
-                                "created_at": now,
-                                "updated_at": now,
-                            })
+                    payload_rows = []
+                    for item in insertable_rows:
+                        payload_rows.append({
+                            "row": item["row"],
+                            "name": item["name"],
+                            "identifier_type": item["identifier_type"],
+                            "identifier": item["identifier"],
+                            "device_type": item["device_type"],
+                            "price": item["price"],
+                            "quantity": item["quantity"],
+                            "supplier_name": item["supplier_name"],
+                            "location": item["location"],
+                            "notes": item["notes"],
+                            "created_by": actor_id,
+                            "created_at": now,
+                            "updated_at": now,
+                        })
 
-                        try:
-                            await session.execute(text(insert_sql), batch_payload)
-                            created.extend(item["name"] for item in batch)
-                        except Exception as batch_error:
-                            for item in batch:
-                                try:
-                                    await session.execute(text(insert_sql), {
-                                        "name": item["name"],
-                                        "identifier_type": item["identifier_type"],
-                                        "identifier": item["identifier"],
-                                        "device_type": item["device_type"],
-                                        "price": item["price"],
-                                        "quantity": item["quantity"],
-                                        "supplier_name": item["supplier_name"],
-                                        "location": item["location"],
-                                        "notes": item["notes"],
-                                        "created_by": actor_id,
-                                        "created_at": now,
-                                        "updated_at": now,
-                                    })
-                                    created.append(item["name"])
-                                except Exception as single_error:
-                                    errors.append({
-                                        "row": item["row"],
-                                        "name": item["name"],
-                                        "error": str(single_error),
-                                    })
-                            logger.warning("External inventory bulk insert fallback triggered: %s", str(batch_error))
+                    async def _item_batch_success(session, batch):
+                        created.extend(item["name"] for item in batch)
+
+                    async def _item_row_error(session, item, err):
+                        errors.append({
+                            "row": item["row"],
+                            "name": item["name"],
+                            "error": str(err),
+                        })
+
+                    await chunked_executemany(
+                        session,
+                        insert_sql,
+                        payload_rows,
+                        on_batch_success=_item_batch_success,
+                        on_row_error=_item_row_error,
+                        abort_on_error=False,
+                    )
 
                     await bump_cache_version(session)
                     await session.commit()
@@ -308,14 +299,7 @@ async def bulk_upload_external_inventory_items(
         return {
             "success": True,
             "message": f"Import complete: {len(created)} created, {len(skipped)} skipped, {len(errors)} errors",
-            "data": {
-                "created_count": len(created),
-                "skipped_count": len(skipped),
-                "error_count": len(errors),
-                "created": created,
-                "skipped": skipped,
-                "errors": errors,
-            },
+            "data": build_bulk_result(created, skipped, errors),
         }
     except HTTPException:
         raise
@@ -648,17 +632,12 @@ async def get_external_inventory_distributions(
         )
 
 
-def _chunks(values, chunk_size: int):
-    for i in range(0, len(values), chunk_size):
-        yield values[i:i + chunk_size]
-
-
 async def _fetch_existing_names(session, values: list[str]) -> set:
     if not values:
         return set()
 
     existing = set()
-    for batch in _chunks(values, 500):
+    for batch in chunks(values, 500):
         named_params = {f"val{i}": v for i, v in enumerate(batch)}
         placeholder_list = [f":val{i}" for i in range(len(batch))]
         placeholders = ",".join(placeholder_list)

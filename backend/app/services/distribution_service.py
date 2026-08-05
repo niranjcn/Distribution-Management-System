@@ -12,6 +12,7 @@ from app.database_sqlalchemy import async_session_factory
 from app.models.distribution import DistributionCreate, DistributionStatus
 from app.models.device import DeviceStatus
 from app.services import device_service, notification_service
+from app.services.bulk_upload_service import build_bulk_result, chunks
 from app.services.digital_id_search import build_identity_search_clause
 from app.utils.helpers import get_pagination, generate_distribution_id
 
@@ -448,6 +449,190 @@ async def get_distribution_by_code(distribution_code: str) -> Optional[Dict[str,
         return await _attach_device_ids(session, dict(row))
 
 
+async def _load_and_validate_recipient(
+    session, dist_data: DistributionCreate, from_user: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Validate the recipient exists and the actor is allowed to distribute to
+    them. Returns the recipient user row as a dict."""
+    to_user = (await session.execute(
+        text("SELECT * FROM users WHERE id = :id"), {"id": int(dist_data.to_user_id)}
+    )).mappings().first()
+    if not to_user:
+        raise ValueError("Recipient user not found")
+    to_user = dict(to_user)
+
+    from_role = from_user["role"]
+    to_role = to_user["role"]
+    from_user_id = int(from_user.get("id", from_user.get("_id", 0)))
+
+    if from_role in {"super_admin", "manager", "pdic_staff"}:
+        if to_role not in {"sub_distributor", "cluster", "operator"}:
+            raise ValueError("Management can only distribute to sub-distributors, clusters, or operators")
+
+    if from_role == "sub_distribution_manager":
+        if to_role == "cluster":
+            if int(to_user.get("parent_id", 0)) != from_user_id:
+                raise ValueError("You can only distribute to clusters directly under your account")
+        elif to_role == "operator":
+            parent_cluster = (await session.execute(
+                text("SELECT * FROM users WHERE id = :id"), {"id": int(to_user.get("parent_id") or 0)}
+            )).mappings().first()
+            if not parent_cluster:
+                raise ValueError("Operator's cluster not found")
+            parent_cluster = dict(parent_cluster)
+            if int(parent_cluster.get("parent_id", 0)) != from_user_id:
+                raise ValueError("You can only distribute to operators within your sub-distribution manager chain")
+        else:
+            raise ValueError("Sub distribution managers can only distribute to clusters or operators")
+
+    elif from_role == "sub_distributor":
+        if to_role == "cluster":
+            if int(to_user.get("parent_id", 0)) != from_user_id:
+                raise ValueError("You can only distribute to clusters directly under your account")
+        elif to_role == "operator":
+            parent_cluster = (await session.execute(
+                text("SELECT * FROM users WHERE id = :id"), {"id": int(to_user.get("parent_id") or 0)}
+            )).mappings().first()
+            if not parent_cluster:
+                raise ValueError("Operator's cluster not found")
+            parent_cluster = dict(parent_cluster)
+            if int(parent_cluster.get("parent_id", 0)) != from_user_id:
+                raise ValueError("You can only distribute to operators within your sub-distribution")
+        else:
+            raise ValueError("Sub-distributors can only distribute to clusters or operators")
+
+    elif from_role == "cluster":
+        if to_role == "operator":
+            if int(to_user.get("parent_id", 0)) != from_user_id:
+                raise ValueError("You can only distribute to operators directly under your cluster")
+        else:
+            raise ValueError("Clusters can only distribute to operators")
+
+    elif from_role == "operator":
+        if to_role == "operator":
+            if int(dist_data.to_user_id) == from_user_id:
+                raise ValueError("You cannot distribute to yourself")
+            if str(to_user.get("parent_id", "")) != str(from_user.get("parent_id", "")):
+                raise ValueError("You can only distribute to operators in the same cluster")
+        else:
+            raise ValueError("Operators can only distribute to other operators in the same cluster")
+
+    return to_user
+
+
+async def _insert_distribution_record(
+    session,
+    dist_data: DistributionCreate,
+    from_user: Dict[str, Any],
+    to_user: Dict[str, Any],
+    validated_devices: List[Dict[str, Any]],
+) -> tuple[str, int, Optional[str]]:
+    """Insert the distribution row, link the devices, and write the manifest.
+
+    Returns ``(distribution_id, numeric_row_id, manifest_file)``. The manifest
+    file is written inside the transaction; the caller must delete it if the
+    transaction rolls back so no orphan file is left behind.
+    """
+    role_to_type = {
+        "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
+        "sub_distribution_manager": "sub_distribution_manager",
+        "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
+    }
+
+    now_dt = datetime.now().replace(tzinfo=None)
+    now = now_dt
+    today = now_dt.date()
+    distribution_date = dist_data.date_of_distribution if dist_data.date_of_distribution else today
+    dist_id = generate_distribution_id()
+
+    from_user_id = int(from_user.get("id", from_user.get("_id", 0)))
+
+    result = await session.execute(
+        text("""INSERT INTO distributions (distribution_id, device_count,
+            from_user_id, from_user_name, from_user_type, to_user_id, to_user_name, to_user_type,
+            status, request_date, date_of_distribution,
+            notes, created_by, created_at, updated_at)
+        VALUES (:dist_id, :device_count, :from_user_id, :from_user_name, :from_user_type,
+            :to_user_id, :to_user_name, :to_user_type, :status, :request_date, :date_of_distribution,
+            :notes, :created_by, :created_at, :updated_at)"""),
+        {
+            "dist_id": dist_id,
+            "device_count": len(dist_data.device_ids),
+            "from_user_id": from_user_id,
+            "from_user_name": from_user["name"],
+            "from_user_type": role_to_type.get(from_user["role"], "noc"),
+            "to_user_id": int(to_user["id"]),
+            "to_user_name": to_user["name"],
+            "to_user_type": role_to_type.get(to_user["role"], "pdic_staff"),
+            "status": DistributionStatus.PENDING_RECEIPT.value,
+            "request_date": now,
+            "date_of_distribution": distribution_date,
+            "notes": dist_data.notes,
+            "created_by": from_user_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    new_id = result.lastrowid
+
+    dd_rows = [{"dist_id": dist_id, "device_id": int(dev_id), "now": now} for dev_id in dist_data.device_ids]
+    if dd_rows:
+        for batch in chunks(dd_rows, 1000):
+            uph = ",".join([f":u_{i}" for i in range(len(batch))])
+            uparams = {f"u_{i}": int(row["device_id"]) for i, row in enumerate(batch)}
+            uparams["dist_id"] = dist_id
+            uparams["now"] = now
+            await session.execute(
+                text(f"""UPDATE devices
+                    SET current_distribution_id = :dist_id, updated_at = :now
+                    WHERE id IN ({uph})"""),
+                uparams
+            )
+
+    manifest_file: Optional[str] = None
+    try:
+        manifest_file = _build_distribution_manifest(
+            distribution_id=dist_id,
+            devices=validated_devices,
+            from_user_name=from_user.get("name", "Unknown"),
+            to_user_name=to_user.get("name", "Unknown"),
+            created_at_iso=now,
+        )
+        await session.execute(
+            text("UPDATE distributions SET manifest_file = :mf WHERE id = :id"),
+            {"mf": manifest_file, "id": int(new_id)}
+        )
+    except Exception:
+        pass
+
+    return dist_id, new_id, manifest_file
+
+
+def _remove_manifest_file(manifest_file: Optional[str]) -> None:
+    """Delete a manifest written during a distribution transaction that rolled back."""
+    if not manifest_file:
+        return
+    try:
+        (_distribution_manifest_dir() / str(manifest_file)).unlink(missing_ok=True)
+    except Exception:
+        logger.exception("Failed to clean up orphan manifest file %s", manifest_file)
+
+
+async def _notify_recipient(
+    dist_id: str, to_user: Dict[str, Any], from_user: Dict[str, Any], device_count: int
+) -> None:
+    sender_label = _sender_display_name(from_user)
+    await notification_service.create_notification(
+        user_id=str(to_user["id"]),
+        title="Action Required: Confirm Device Receipt",
+        message=f"{device_count} device(s) have been sent to you by {sender_label}. "
+            f"An Excel manifest is available in Delivery Confirmations. "
+            f"Please confirm receipt on your Delivery Confirmations page (Distribution ID: {dist_id}).",
+        notification_type="warning", category="distribution",
+        link="/delivery-confirmations"
+    )
+
+
 async def create_distribution_from_identifiers(
     to_user_id: str,
     identifier_rows: List[Dict[str, Any]],
@@ -461,6 +646,7 @@ async def create_distribution_from_identifiers(
     """
     errors: List[Dict[str, Any]] = []
     resolved_device_ids: List[str] = []
+    resolved_devices: List[Dict[str, Any]] = []
     seen_device_ids = set()
 
     all_macs: List[str] = []
@@ -504,9 +690,9 @@ async def create_distribution_from_identifiers(
         all_serials = list(set(all_serials))
         all_nuids = list(set(all_nuids))
 
-        if all_macs:
-            ph = ",".join([f":mac_{i}" for i in range(len(all_macs))])
-            params = {f"mac_{i}": m for i, m in enumerate(all_macs)}
+        for batch in chunks(all_macs, 1000):
+            ph = ",".join([f":mac_{i}" for i in range(len(batch))])
+            params = {f"mac_{i}": m for i, m in enumerate(batch)}
             rows = (await session.execute(
                 text(f"SELECT * FROM devices WHERE lower(trim(mac_address)) IN ({ph})"),
                 params
@@ -514,9 +700,9 @@ async def create_distribution_from_identifiers(
             for dev in rows:
                 mac_map[dev["mac_address"].strip().lower()] = dict(dev)
 
-        if all_serials:
-            ph = ",".join([f":ser_{i}" for i in range(len(all_serials))])
-            params = {f"ser_{i}": s for i, s in enumerate(all_serials)}
+        for batch in chunks(all_serials, 1000):
+            ph = ",".join([f":ser_{i}" for i in range(len(batch))])
+            params = {f"ser_{i}": s for i, s in enumerate(batch)}
             rows = (await session.execute(
                 text(f"SELECT * FROM devices WHERE lower(trim(serial_number)) IN ({ph})"),
                 params
@@ -524,9 +710,9 @@ async def create_distribution_from_identifiers(
             for dev in rows:
                 serial_map[dev["serial_number"].strip().lower()] = dict(dev)
 
-        if all_nuids:
-            ph = ",".join([f":nuid_{i}" for i in range(len(all_nuids))])
-            params = {f"nuid_{i}": n for i, n in enumerate(all_nuids)}
+        for batch in chunks(all_nuids, 1000):
+            ph = ",".join([f":nuid_{i}" for i in range(len(batch))])
+            params = {f"nuid_{i}": n for i, n in enumerate(batch)}
             rows = (await session.execute(
                 text(f"SELECT * FROM devices WHERE lower(trim(nuid)) IN ({ph})"),
                 params
@@ -669,101 +855,64 @@ async def create_distribution_from_identifiers(
 
             seen_device_ids.add(resolved_id)
             resolved_device_ids.append(resolved_id)
+            resolved_devices.append(resolved_device)
 
-    if not resolved_device_ids:
-        return {
-            "created": False,
-            "distribution": None,
-            "created_count": 0,
-            "error_count": len(errors),
-            "errors": errors,
-            "total_rows": len(identifier_rows),
-            "valid_count": len(resolved_device_ids),
-        }
+        if not resolved_device_ids:
+            data = build_bulk_result([], [], errors, total=len(identifier_rows))
+            data.update({
+                "created": False,
+                "distribution": None,
+                "created_count": 0,
+                "total_rows": len(identifier_rows),
+                "valid_count": 0,
+            })
+            return data
 
-    dist_data = DistributionCreate(
-        to_user_id=str(to_user_id),
-        device_ids=resolved_device_ids,
-        notes=notes,
-        date_of_distribution=date_of_distribution,
-    )
-    distribution = await create_distribution(dist_data=dist_data, from_user=from_user)
+        dist_data = DistributionCreate(
+            to_user_id=str(to_user_id),
+            device_ids=resolved_device_ids,
+            notes=notes,
+            date_of_distribution=date_of_distribution,
+        )
 
-    return {
+        # Recipient + role validation and the insert run in the SAME transaction
+        # as the identifier resolution, so the devices cannot change between
+        # validation and commit and the validation pass is never duplicated.
+        to_user = await _load_and_validate_recipient(session, dist_data, from_user)
+        dist_id, new_id, manifest_file = await _insert_distribution_record(
+            session, dist_data, from_user, to_user, resolved_devices
+        )
+        try:
+            await bump_cache_version(session)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            _remove_manifest_file(manifest_file)
+            raise
+
+    await _notify_recipient(dist_id, to_user, from_user, len(resolved_device_ids))
+
+    distribution = await get_distribution_by_id(new_id)
+    if not distribution:
+        distribution = await get_distribution_by_code(dist_id)
+
+    data = build_bulk_result([], [], errors, total=len(identifier_rows))
+    data["created_count"] = len(resolved_device_ids)
+    data.update({
         "created": True,
         "distribution": distribution,
-        "created_count": len(resolved_device_ids),
-        "error_count": len(errors),
-        "errors": errors,
         "total_rows": len(identifier_rows),
         "valid_count": len(resolved_device_ids),
-    }
+    })
+    return data
 
 
 async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str, Any]) -> Dict[str, Any]:
     async with async_session_factory() as session:
-        to_user = (await session.execute(
-            text("SELECT * FROM users WHERE id = :id"), {"id": int(dist_data.to_user_id)}
-        )).mappings().first()
-        if not to_user:
-            raise ValueError("Recipient user not found")
-        to_user = dict(to_user)
+        to_user = await _load_and_validate_recipient(session, dist_data, from_user)
 
         from_role = from_user["role"]
-        to_role = to_user["role"]
         from_user_id = int(from_user.get("id", from_user.get("_id", 0)))
-
-        if from_role in {"super_admin", "manager", "pdic_staff"}:
-            if to_role not in {"sub_distributor", "cluster", "operator"}:
-                raise ValueError("Management can only distribute to sub-distributors, clusters, or operators")
-
-        if from_role == "sub_distribution_manager":
-            if to_role == "cluster":
-                if int(to_user.get("parent_id", 0)) != from_user_id:
-                    raise ValueError("You can only distribute to clusters directly under your account")
-            elif to_role == "operator":
-                parent_cluster = (await session.execute(
-                    text("SELECT * FROM users WHERE id = :id"), {"id": int(to_user.get("parent_id") or 0)}
-                )).mappings().first()
-                if not parent_cluster:
-                    raise ValueError("Operator's cluster not found")
-                parent_cluster = dict(parent_cluster)
-                if int(parent_cluster.get("parent_id", 0)) != from_user_id:
-                    raise ValueError("You can only distribute to operators within your sub-distribution manager chain")
-            else:
-                raise ValueError("Sub distribution managers can only distribute to clusters or operators")
-
-        elif from_role == "sub_distributor":
-            if to_role == "cluster":
-                if int(to_user.get("parent_id", 0)) != from_user_id:
-                    raise ValueError("You can only distribute to clusters directly under your account")
-            elif to_role == "operator":
-                parent_cluster = (await session.execute(
-                    text("SELECT * FROM users WHERE id = :id"), {"id": int(to_user.get("parent_id") or 0)}
-                )).mappings().first()
-                if not parent_cluster:
-                    raise ValueError("Operator's cluster not found")
-                parent_cluster = dict(parent_cluster)
-                if int(parent_cluster.get("parent_id", 0)) != from_user_id:
-                    raise ValueError("You can only distribute to operators within your sub-distribution")
-            else:
-                raise ValueError("Sub-distributors can only distribute to clusters or operators")
-
-        elif from_role == "cluster":
-            if to_role == "operator":
-                if int(to_user.get("parent_id", 0)) != from_user_id:
-                    raise ValueError("You can only distribute to operators directly under your cluster")
-            else:
-                raise ValueError("Clusters can only distribute to operators")
-
-        elif from_role == "operator":
-            if to_role == "operator":
-                if int(dist_data.to_user_id) == from_user_id:
-                    raise ValueError("You cannot distribute to yourself")
-                if str(to_user.get("parent_id", "")) != str(from_user.get("parent_id", "")):
-                    raise ValueError("You can only distribute to operators in the same cluster")
-            else:
-                raise ValueError("Operators can only distribute to other operators in the same cluster")
 
         validated_devices: List[Dict[str, Any]] = []
         open_lock_device_ids: Set[str] = set()
@@ -781,28 +930,32 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 pending_blocked.add(str(r["device_id"]))
 
         lock_ids_int = [int(x) for x in dist_data.device_ids]
-        lph = ",".join([f":l_{i}" for i in range(len(lock_ids_int))])
-        lparams = {f"l_{i}": did for i, did in enumerate(lock_ids_int)}
-        lparams["s1"] = DistributionStatus.PENDING_RECEIPT.value
-        lparams["s2"] = DistributionStatus.DISPUTED.value
-        lock_rows = (await session.execute(
-            text(f"""SELECT d.id AS device_id
-                FROM devices d
-                INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
-                WHERE dist.status IN (:s1, :s2)
-                  AND d.id IN ({lph})"""),
-            lparams
-        )).mappings().all()
-        for lr in lock_rows:
-            open_lock_device_ids.add(str(lr["device_id"]))
+        for batch in chunks(lock_ids_int, 1000):
+            lph = ",".join([f":l_{i}" for i in range(len(batch))])
+            lparams = {f"l_{i}": did for i, did in enumerate(batch)}
+            lparams["s1"] = DistributionStatus.PENDING_RECEIPT.value
+            lparams["s2"] = DistributionStatus.DISPUTED.value
+            lock_rows = (await session.execute(
+                text(f"""SELECT d.id AS device_id
+                    FROM devices d
+                    INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
+                    WHERE dist.status IN (:s1, :s2)
+                      AND d.id IN ({lph})"""),
+                lparams
+            )).mappings().all()
+            for lr in lock_rows:
+                open_lock_device_ids.add(str(lr["device_id"]))
 
+        device_rows: Dict[str, Dict[str, Any]] = {}
         device_ids_int = [int(x) for x in dist_data.device_ids]
-        dph = ",".join([f":d_{i}" for i in range(len(device_ids_int))])
-        dparams = {f"d_{i}": did for i, did in enumerate(device_ids_int)}
-        dev_rows = (await session.execute(
-            text(f"SELECT * FROM devices WHERE id IN ({dph})"), dparams
-        )).mappings().all()
-        device_rows = {str(r["id"]): dict(r) for r in dev_rows}
+        for batch in chunks(device_ids_int, 1000):
+            dph = ",".join([f":d_{i}" for i in range(len(batch))])
+            dparams = {f"d_{i}": did for i, did in enumerate(batch)}
+            dev_rows = (await session.execute(
+                text(f"SELECT * FROM devices WHERE id IN ({dph})"), dparams
+            )).mappings().all()
+            for r in dev_rows:
+                device_rows[str(r["id"])] = dict(r)
 
         for dev_id in dist_data.device_ids:
             device = device_rows.get(str(dev_id))
@@ -825,88 +978,19 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                     )
             validated_devices.append(device)
 
-        role_to_type = {
-            "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
-            "sub_distribution_manager": "sub_distribution_manager",
-            "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
-        }
-
-        now_dt = datetime.now().replace(tzinfo=None)
-        now = now_dt
-        today = now_dt.date()
-        distribution_date = dist_data.date_of_distribution if dist_data.date_of_distribution else today
-        dist_id = generate_distribution_id()
-
-        result = await session.execute(
-            text("""INSERT INTO distributions (distribution_id, device_count,
-                from_user_id, from_user_name, from_user_type, to_user_id, to_user_name, to_user_type,
-                status, request_date, date_of_distribution,
-                notes, created_by, created_at, updated_at)
-            VALUES (:dist_id, :device_count, :from_user_id, :from_user_name, :from_user_type,
-                :to_user_id, :to_user_name, :to_user_type, :status, :request_date, :date_of_distribution,
-                :notes, :created_by, :created_at, :updated_at)"""),
-            {
-                "dist_id": dist_id,
-                "device_count": len(dist_data.device_ids),
-                "from_user_id": from_user_id,
-                "from_user_name": from_user["name"],
-                "from_user_type": role_to_type.get(from_user["role"], "noc"),
-                "to_user_id": int(to_user["id"]),
-                "to_user_name": to_user["name"],
-                "to_user_type": role_to_type.get(to_user["role"], "pdic_staff"),
-                "status": DistributionStatus.PENDING_RECEIPT.value,
-                "request_date": now,
-                "date_of_distribution": distribution_date,
-                "notes": dist_data.notes,
-                "created_by": from_user_id,
-                "created_at": now,
-                "updated_at": now,
-            }
+        dist_id, new_id, manifest_file = await _insert_distribution_record(
+            session, dist_data, from_user, to_user, validated_devices
         )
-        new_id = result.lastrowid
 
-        dd_rows = [{"dist_id": dist_id, "device_id": int(dev_id), "now": now} for dev_id in dist_data.device_ids]
-        if dd_rows:
-            uph = ",".join([f":u_{i}" for i in range(len(dd_rows))])
-            uparams = {f"u_{i}": int(row["device_id"]) for i, row in enumerate(dd_rows)}
-            uparams["dist_id"] = dist_id
-            uparams["now"] = now
-            await session.execute(
-                text(f"""UPDATE devices
-                    SET current_distribution_id = :dist_id, updated_at = :now
-                    WHERE id IN ({uph})"""),
-                uparams
-            )
-
-        manifest_file = None
         try:
-            manifest_file = _build_distribution_manifest(
-                distribution_id=dist_id,
-                devices=validated_devices,
-                from_user_name=from_user.get("name", "Unknown"),
-                to_user_name=to_user.get("name", "Unknown"),
-                created_at_iso=now,
-            )
-            await session.execute(
-                text("UPDATE distributions SET manifest_file = :mf WHERE id = :id"),
-                {"mf": manifest_file, "id": int(new_id)}
-            )
+            await bump_cache_version(session)
+            await session.commit()
         except Exception:
-            manifest_file = None
+            await session.rollback()
+            _remove_manifest_file(manifest_file)
+            raise
 
-        await bump_cache_version(session)
-        await session.commit()
-
-    sender_label = _sender_display_name(from_user)
-    await notification_service.create_notification(
-        user_id=str(to_user["id"]),
-        title="Action Required: Confirm Device Receipt",
-        message=f"{len(dist_data.device_ids)} device(s) have been sent to you by {sender_label}. "
-            f"An Excel manifest is available in Delivery Confirmations. "
-            f"Please confirm receipt on your Delivery Confirmations page (Distribution ID: {dist_id}).",
-        notification_type="warning", category="distribution",
-        link="/delivery-confirmations"
-    )
+    await _notify_recipient(dist_id, to_user, from_user, len(dist_data.device_ids))
 
     distribution = await get_distribution_by_id(new_id)
     if not distribution:
