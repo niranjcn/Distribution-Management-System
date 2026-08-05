@@ -133,11 +133,6 @@ const Devices = () => {
     });
   }, [activeTab, appliedSearch, hasHierarchy, isAllDevicesView, tableFilters, dateRange]);
 
-  const loadOverviewCards = async () => {
-    const response = await devicesAPI.getMyOverview({ page: 1, page_size: 1 });
-    setOverview(response?.data || null);
-  };
-
   const loadDefectMappings = async () => {
     const defectsResponse = await defectsAPI.getDefects({ page_size: 100 });
     const replacementIds = new Set();
@@ -252,6 +247,10 @@ const Devices = () => {
 
       setTableTotalCount(totalCount);
       loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
+
+      if (windowPage === 1) {
+        setOverview(response?.data || null);
+      }
     } finally {
       loadingWindowsRef.current.delete(windowPage);
       if (withLoading) setTableLoading(false);
@@ -273,7 +272,7 @@ const Devices = () => {
     const run = async () => {
       try {
         setLoading(true);
-        await Promise.all([loadOverviewCards(), loadDefectMappings(), loadHolderInsights()]);
+        await Promise.all([loadDefectMappings(), loadHolderInsights()]);
       } catch (error) {
         console.error('Failed to load overview data:', error);
         showToast('Failed to load devices', 'error');
@@ -292,7 +291,7 @@ const Devices = () => {
   const refreshAllData = async () => {
     try {
       setLoading(true);
-      await Promise.all([loadOverviewCards(), loadDefectMappings(), loadHolderInsights()]);
+      await Promise.all([loadDefectMappings(), loadHolderInsights()]);
       await resetAndLoadTable();
     } catch (error) {
       console.error('Failed to refresh devices:', error);
@@ -704,7 +703,7 @@ const Devices = () => {
       </div>
 
       {/* Stats Cards */}
-      {!loading && (
+      {!loading && overview && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {isManagement ? (
             <>
@@ -783,7 +782,7 @@ const Devices = () => {
       )}
 
       {/* Tabs for hierarchy roles */}
-      {!loading && hasHierarchy && (
+      {!loading && overview && hasHierarchy && (
         <div className="flex border-b border-gray-200">
           {[
             { key: 'all', label: `All in Chain (${overviewStats.total_in_chain || 0})` },
@@ -805,7 +804,7 @@ const Devices = () => {
         </div>
       )}
 
-      {!loading && isAllDevicesView && (
+      {!loading && overview && isAllDevicesView && (
         <>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <Card className="!p-4">

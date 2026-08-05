@@ -375,26 +375,77 @@ async def get_my_device_overview(
                 }
             }
         else:
-            # Paginated requests must slice the FULL scoped chain so the in-memory
-            # page offsets and the reported total_count are accurate. Capping by
-            # page_size previously truncated the chain to 100 devices, which made
-            # pagination stop at page 10 for sub-distributor/cluster/operator roles.
+            scope_normalized = str(scope or "all").strip().lower()
+
+            # Paginated requests slice the scoped chain in SQL (LIMIT/OFFSET in
+            # MySQL) so only one page of rows is loaded per request. This avoids
+            # loading the entire chain into memory for every page / "load more".
+            if paginate:
+                result = await device_service.get_user_device_page(
+                    user_id=current_user["id"],
+                    user_role=role,
+                    page=page,
+                    page_size=page_size,
+                    show_all=show_all,
+                    scope=scope_normalized,
+                    status=req_status,
+                    device_type=device_type,
+                    manufacturer=manufacturer,
+                    search_by=search_by,
+                    search=search,
+                    start_date=start_date,
+                    end_date=end_date,
+                    sub_distributor_id=sub_distributor_id,
+                    cluster_id=cluster_id,
+                )
+                page_devices = result["page_devices"]
+                total_count = int(result["total_count"])
+                effective_page_size = result["page_size_used"]
+                holder_id_str = str(current_user["id"])
+                held = [
+                    d for d in page_devices
+                    if str(d.get("current_holder_id") or "") == holder_id_str
+                ]
+                subordinate = [
+                    d for d in page_devices
+                    if str(d.get("current_holder_id") or "") != holder_id_str
+                ]
+                has_next = (not show_all) and ((page * effective_page_size) < total_count)
+
+                return {
+                    "success": True,
+                    "data": {
+                        "held_by_me": held,
+                        "under_subordinates": subordinate,
+                        "all_under_me": page_devices,
+                        "meta": {
+                            "page": page,
+                            "page_size": effective_page_size,
+                            "show_all": show_all,
+                            "loaded_count": len(page_devices),
+                            "total_count": total_count,
+                            "has_next": has_next,
+                        },
+                        "stats": result["stats"],
+                    },
+                }
+
+            # Non-paginated overview (overview cards / dashboards): fetch a small
+            # window plus cheap aggregate stats.
             effective_limit = limit if limit is not None else (
-                1_000_000 if paginate else (10 if show_all else min(page_size, 1000))
+                10 if show_all else min(page_size, 1000)
             )
             overview = await device_service.get_user_device_overview(
                 user_id=current_user["id"],
                 user_role=role,
                 limit=effective_limit
             )
-            scope_normalized = str(scope or "all").strip().lower()
             if scope_normalized == "mine":
-                scoped_devices = overview.get("held_by_me") or []
+                chain_devices = overview.get("held_by_me") or []
             elif scope_normalized == "hierarchy":
-                scoped_devices = overview.get("under_subordinates") or []
+                chain_devices = overview.get("under_subordinates") or []
             else:
-                scoped_devices = overview.get("all_under_me") or []
-            chain_devices = scoped_devices
+                chain_devices = overview.get("all_under_me") or []
 
             if start_date:
                 chain_devices = [
@@ -406,104 +457,6 @@ async def get_my_device_overview(
                     d for d in chain_devices
                     if str(d.get("created_at") or "") <= end_date
                 ]
-
-            # Track Devices uses paginate=true to avoid loading the full chain in one payload.
-            if paginate:
-                filtered_devices = chain_devices
-                if req_status:
-                    filtered_devices = [d for d in filtered_devices if d.get("status") == req_status]
-                if device_type:
-                    filtered_devices = [d for d in filtered_devices if d.get("device_type") == device_type]
-                if manufacturer:
-                    filtered_devices = [
-                        d for d in filtered_devices
-                        if str(d.get("manufacturer") or "").strip() == str(manufacturer).strip()
-                    ]
-
-                if start_date:
-                    filtered_devices = [
-                        d for d in filtered_devices
-                        if str(d.get("created_at") or "") >= start_date
-                    ]
-                if end_date:
-                    filtered_devices = [
-                        d for d in filtered_devices
-                        if str(d.get("created_at") or "") <= end_date
-                    ]
-
-                if sub_distributor_id:
-                    sub_id = str(sub_distributor_id).strip()
-                    filtered_devices = [
-                        d for d in filtered_devices
-                        if str(d.get("current_holder_id") or "") == sub_id
-                    ]
-
-                if cluster_id:
-                    cluster_filter = str(cluster_id).strip()
-                    filtered_devices = [
-                        d for d in filtered_devices
-                        if str(d.get("current_holder_id") or "") == cluster_filter
-                    ]
-
-                if search:
-                    needle = str(search).strip().lower()
-                    field_alias = {
-                        "nuid": "nuid",
-                        "mac": "mac_address",
-                        "mac_address": "mac_address",
-                        "serial": "serial_number",
-                        "serial_number": "serial_number",
-                        "vendor": "manufacturer",
-                        "manufacturer": "manufacturer",
-                        "type": "device_type",
-                        "device_type": "device_type",
-                        "device_id": "device_id",
-                        "model": "model",
-                    }
-                    selected_field = field_alias.get(str(search_by or "").strip().lower())
-
-                    def _matches(device: Dict[str, Any]) -> bool:
-                        if selected_field:
-                            return needle in str(device.get(selected_field) or "").lower()
-
-                        search_fields = [
-                            "device_id",
-                            "serial_number",
-                            "mac_address",
-                            "model",
-                            "nuid",
-                            "manufacturer",
-                            "device_type",
-                        ]
-                        return any(needle in str(device.get(field) or "").lower() for field in search_fields)
-
-                    filtered_devices = [d for d in filtered_devices if _matches(d)]
-
-                total_count = len(filtered_devices)
-                effective_page_size = total_count if show_all else min(page_size, 1000)
-                start = 0 if show_all else max((page - 1) * effective_page_size, 0)
-                end = total_count if show_all else (start + effective_page_size)
-                page_devices = filtered_devices[start:end]
-                has_next = (not show_all) and (end < total_count)
-
-                overview["held_by_me"] = [
-                    d for d in page_devices
-                    if str(d.get("current_holder_id") or "") == str(current_user["id"])
-                ]
-                overview["under_subordinates"] = [
-                    d for d in page_devices
-                    if str(d.get("current_holder_id") or "") != str(current_user["id"])
-                ]
-                overview["all_under_me"] = page_devices
-                overview["meta"] = {
-                    "page": page,
-                    "page_size": effective_page_size,
-                    "show_all": show_all,
-                    "loaded_count": len(page_devices),
-                    "total_count": total_count,
-                    "has_next": has_next,
-                }
-                return {"success": True, "data": overview}
 
             stats = overview.get("stats") or {}
             total_count = int(stats.get("total_in_chain", len(chain_devices)) or len(chain_devices))
