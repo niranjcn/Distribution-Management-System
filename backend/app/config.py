@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     
     # API
     API_V1_PREFIX: str = "/api"
+
+    # Cache version failsafe re-sync interval (seconds). The in-memory
+    # CacheVersionManager is normally refreshed after every successful write
+    # commit; this periodic re-read is an infrequent failsafe against drift.
+    CACHE_VERSION_REFRESH_SECONDS: int = int(os.getenv("CACHE_VERSION_REFRESH_SECONDS", "60"))
     
     @property
     def cors_origins_list(self) -> List[str]:

@@ -528,7 +528,7 @@ Phase 4f: approval_service.py + notification_service.py
 Phase 4g: report_service.py + inventory_service.py
 Phase 4h: dashboard_service/* (all submodules)
 Phase 4i: bulk_upload_service.py + reassignment_request_service.py
-Phase 4j: backup_scheduler.py + metrics_collector.py + activity_log_cleanup.py
+Phase 4j: backup_scheduler.py + activity_log_cleanup.py
 ```
 
 **Per service checklist:**

@@ -15,7 +15,7 @@ from starlette_csrf import CSRFMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.core.cache_version_manager import cache_version_manager
+from app.core.cache_version_manager import cache_version_manager, cache_version_sync_loop
 from app.routes import (
     auth, users, devices, distributions, 
     defects, returns, operators,
@@ -109,9 +109,9 @@ async def lifespan(app: FastAPI):
     from app.services.activity_log_cleanup import start_activity_log_cleanup_scheduler, shutdown_activity_log_cleanup_scheduler
     app.state.activity_log_cleanup_scheduler = await start_activity_log_cleanup_scheduler()
 
-    from app.services.metrics_collector import metrics_collector_loop
-    metrics_task = asyncio.create_task(metrics_collector_loop())
-    app.state.metrics_collector_task = metrics_task
+    # Failsafe periodic re-sync of the in-memory cache version with MySQL.
+    cache_version_sync_task = asyncio.create_task(cache_version_sync_loop())
+    app.state.cache_version_sync_task = cache_version_sync_task
 
     yield
     
@@ -132,11 +132,11 @@ async def lifespan(app: FastAPI):
     if log_scheduler:
         shutdown_activity_log_cleanup_scheduler()
 
-    metrics_task = getattr(app.state, "metrics_collector_task", None)
-    if metrics_task:
-        metrics_task.cancel()
+    cache_version_sync_task = getattr(app.state, "cache_version_sync_task", None)
+    if cache_version_sync_task:
+        cache_version_sync_task.cancel()
         try:
-            await metrics_task
+            await cache_version_sync_task
         except asyncio.CancelledError:
             pass
 

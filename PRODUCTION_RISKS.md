@@ -138,7 +138,7 @@
 ### 26. 🆕 Silent background task death ✅ FIXED
 **File:** `backend/app/main.py:79,85`
 **Why:** `asyncio.create_task` without outer try/except could kill tasks permanently.
-**Verified:** Fixed — both background tasks (`monthly_backup_scheduler_loop`, `metrics_collector_loop`) have `try/except Exception` with `logger.exception()`.
+**Verified:** Fixed — both background tasks (`monthly_backup_scheduler_loop`, `cache_version_sync_loop`) have `try/except Exception` with `logger.exception()`.
 
 ### 27. 🆕 Prometheus metric re-registration panic 📋
 **File:** `backend/app/core/metrics.py:12-138`
@@ -304,7 +304,7 @@
 ### 59. 🆕 Race condition on shared metrics state ✅ FIXED
 **File:** `backend/app/core/metrics_collector.py`
 **Why:** Global counters modified from multiple coroutines without synchronization.
-**Verified:** File fully rewritten — consolidated from 16 queries + 4 connections per 60s tick to 2 queries + 1 connection per 300s tick. All mutations happen within a single coroutine function, eliminating interleaving in the async single-threaded event loop. 96% reduction in metrics DB load.
+**Verified:** Fixed — collector consolidated to 2 queries + 1 connection per 300s tick. The business-metrics collector was later removed entirely in the monitoring overhaul; Prometheus MySQL metrics are now recorded live via SQLAlchemy engine event listeners in `backend/app/database_sqlalchemy.py`, which touch only per-connection state and require no background task.
 
 ### 60. 🆕 Bulk upload holds DB transaction during entire file parse 📋
 **Files:** `backend/app/routes/users.py:811-838`, `backend/app/routes/devices.py:746-1182`
