@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { authAPI } from '../services/api';
-import { getStoredUser, saveStoredUser, clearStoredUser } from '../utils/authStorage';
+import { getStoredUser, saveStoredUser, clearStoredUser, clearLastPath } from '../utils/authStorage';
 import { normalizeRole } from '../utils/roles';
 
 const AuthContext = createContext(null);
@@ -17,6 +17,7 @@ export const AuthProvider = ({ children }) => {
   const handleInactivityLogout = useCallback(() => {
     setUser(null);
     clearStoredUser();
+    clearLastPath();
     isAuthenticatedRef.current = false;
     if (inactivityTimerRef.current) {
       clearTimeout(inactivityTimerRef.current);
@@ -68,35 +69,35 @@ export const AuthProvider = ({ children }) => {
   }, [user, resetInactivityTimer]);
 
   useEffect(() => {
-    // Check for stored user session and validate with backend
+    // Always validate the cookie-backed session with the backend so an active
+    // session is detected even when sessionStorage is empty (e.g. a new tab or
+    // a browser restart). The refresh cookie persists for days, so a valid
+    // login must never be hidden behind a fresh-tab login page.
     const initAuth = async () => {
-      const storedUser = getStoredUser();
-      if (storedUser) {
-        try {
-          // Validate cookie-backed auth session with backend
-          const response = await authAPI.getCurrentUser();
-          if (response.success) {
-            const validatedUser = response.data;
-            validatedUser.role = normalizeRole(validatedUser.role);
-            // Add avatar initials
-            validatedUser.avatar = validatedUser.name.split(' ').map(n => n[0]).join('').toUpperCase();
-            setUser(validatedUser);
-          } else {
-            // Invalid token, clear stored session
-            clearStoredUser();
-          }
-        } catch (error) {
-          console.error('[AuthContext] Auth validation error:', error);
-          // Only clear storage if it's an auth error (401), not a network error
-          if (error.message && (error.message.includes('Invalid') || error.message.includes('expired') || error.message.includes('401'))) {
-            clearStoredUser();
-          } else {
-            // Network error or server error - keep the stored session
-            const userData = getStoredUser();
-            if (userData) {
-              userData.avatar = userData.name.split(' ').map(n => n[0]).join('').toUpperCase();
-              setUser(userData);
-            }
+      try {
+        const response = await authAPI.getCurrentUser();
+        if (response.success) {
+          const validatedUser = response.data;
+          validatedUser.role = normalizeRole(validatedUser.role);
+          // Add avatar initials
+          validatedUser.avatar = validatedUser.name.split(' ').map(n => n[0]).join('').toUpperCase();
+          saveStoredUser(validatedUser);
+          setUser(validatedUser);
+        } else {
+          // Invalid token, clear stored session
+          clearStoredUser();
+        }
+      } catch (error) {
+        console.error('[AuthContext] Auth validation error:', error);
+        // Only clear storage if it's an auth error (401), not a network error
+        if (error.message && (error.message.includes('Invalid') || error.message.includes('expired') || error.message.includes('401'))) {
+          clearStoredUser();
+        } else {
+          // Network error or server error - keep the stored session
+          const userData = getStoredUser();
+          if (userData) {
+            userData.avatar = userData.name.split(' ').map(n => n[0]).join('').toUpperCase();
+            setUser(userData);
           }
         }
       }
@@ -148,6 +149,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setUser(null);
       clearStoredUser();
+      clearLastPath();
     }
   };
 
