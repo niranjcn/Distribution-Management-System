@@ -95,6 +95,98 @@ class TestDashboardRecentActivities:
         )
 
 
+class TestDashboardAdminActivities:
+    ACTIVITIES_URL = "/api/dashboard/activities"
+
+    def _fake_result(self, page=1, page_size=10, total=25):
+        data = [
+            {
+                "id": f"device-{i}",
+                "category": "device",
+                "action": "registered",
+                "actor": "Admin",
+                "description": f"Activity {i}",
+                "date": f"2025-01-{i + 1:02d}T00:00:00",
+                "link": None,
+            }
+            for i in range(1, 6)
+        ]
+        return {
+            "data": data,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size,
+            },
+        }
+
+    def test_success_returns_activities(self, client, mock_dashboard_services):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_admin_activities = AsyncMock(
+            return_value=self._fake_result()
+        )
+
+        resp = client.get(self.ACTIVITIES_URL)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["message"] == "Activities retrieved successfully"
+        assert len(body["data"]) == 5
+        assert body["pagination"]["total"] == 25
+
+    def test_passes_pagination_and_filters(self, client, mock_dashboard_services):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_admin_activities = AsyncMock(
+            return_value=self._fake_result()
+        )
+
+        client.get(
+            self.ACTIVITIES_URL,
+            params={
+                "page": 2,
+                "page_size": 50,
+                "actor": "Admin",
+                "category": "device",
+                "search": "registered",
+                "start_date": "2025-01-01",
+                "end_date": "2025-01-31",
+            },
+        )
+
+        dash_mod.dashboard_service.get_admin_activities.assert_awaited_once_with(
+            page=2,
+            page_size=50,
+            actor="Admin",
+            category="device",
+            search="registered",
+            start_date="2025-01-01",
+            end_date="2025-01-31",
+        )
+
+    def test_unauthenticated_returns_401(self, client, test_app):
+        from app.middleware.auth_middleware import get_current_user
+
+        test_app.dependency_overrides.pop(get_current_user, None)
+        resp = client.get(self.ACTIVITIES_URL)
+        assert resp.status_code == 401
+
+    def test_service_error_returns_500(self, client, mock_dashboard_services):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_admin_activities = AsyncMock(
+            side_effect=RuntimeError("Activities service error")
+        )
+
+        resp = client.get(self.ACTIVITIES_URL)
+
+        assert resp.status_code == 500
+        assert "internal error" in resp.json()["detail"].lower()
+
+
 class TestDashboardUserKpi:
     KPI_URL = "/api/dashboard/user-kpi/10"
 
