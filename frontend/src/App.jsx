@@ -1,6 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { getLastPath, setLastPath } from './utils/authStorage';
 import Layout from './components/layout/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -80,7 +82,7 @@ const ProtectedRoute = ({ children, allowedRoles = [] }) => {
   return children;
 };
 
-// Public Route Component (redirect to dashboard if already logged in)
+// Public Route Component (redirect to dashboard or last page if already logged in)
 const PublicRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
 
@@ -96,10 +98,30 @@ const PublicRoute = ({ children }) => {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={getLastPath() || '/'} replace />;
   }
 
   return children;
+};
+
+// Remembers the last authenticated page so an authenticated visit to /login
+// (or a fresh tab with a live session) can return the user where they were.
+const RouteTracker = () => {
+  const location = useLocation();
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (
+      isAuthenticated &&
+      location.pathname !== '/login' &&
+      location.pathname !== '/unauthorized' &&
+      location.pathname !== '/force-update-credentials'
+    ) {
+      setLastPath(location.pathname + location.search);
+    }
+  }, [location, isAuthenticated]);
+
+  return null;
 };
 
 function AppRoutes() {
@@ -454,6 +476,7 @@ function App() {
                 </div>
               }
             >
+              <RouteTracker />
               <AppRoutes />
             </ErrorBoundary>
             <InstallBanner />

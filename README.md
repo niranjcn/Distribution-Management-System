@@ -117,7 +117,6 @@ distribution-management-system/
 │   │   ├── models/          # Pydantic models
 │   │   ├── routes/          # API endpoints
 │   │   ├── services/
-│   │   │   ├── metrics_collector.py # Background Prometheus metric updater
 │   │   │   └── ...
 │   │   ├── middleware/      # Auth & error handling
 │   │   ├── utils/           # Helper functions
@@ -201,12 +200,11 @@ distribution-management-system/
 - Role-specific views with live statistics, activity feeds, charts, and system alerts
 
 ### Monitoring (Prometheus + Grafana)
-- **Prometheus** scrapes the backend `/metrics` endpoint every 10s for HTTP, database, and business metrics
+- **Prometheus** scrapes the backend `/metrics` endpoint every 10s for HTTP and database performance metrics
 - **Grafana** provisions dashboards automatically on startup:
-  - **Business Metrics** — total/active users, operators, clusters, sub-distributors, device inventory, distributions, login activity
-  - **Database Dashboard** — MySQL query throughput, durations, failure rates, active connections
-  - **Backend API Dashboard** — HTTP request rates, latencies, error rates, in-flight requests
-- A background **metrics collector** (`app/services/metrics_collector.py`) syncs database state to Prometheus gauges every 60s
+  - **Backend API** — HTTP request rates, latencies, error rates, in-flight requests
+  - **Database** — MySQL query throughput, durations, failure rates, active connections
+- No business-domain metrics are exported; monitoring is scoped to performance signals used when investigating issues
 
 ---
 
@@ -571,13 +569,12 @@ Grafana is available at **http://localhost:3000** when running via Docker Compos
 | Username | `admin` |
 | Password | Set via `GRAFANA_ADMIN_PASSWORD` in `.env` (defaults to `admin`) |
 
-Three dashboards are provisioned automatically on startup:
+Two dashboards are provisioned automatically on startup:
 
 | Dashboard | UID | Key Panels |
 |---|---|---|
-| **Business Metrics** | `business-metrics` | Total/Active Users, Operators, Clusters, Sub-Distributors, Distributions, Login Activity |
-| **Backend API** | `backend-api` | HTTP request rate, latency (P50/P95/P99), error rate, in-flight requests |
-| **Database** | `database` | MySQL query throughput, duration, failure rate, active connections |
+| **Backend API** | `backend-api` | HTTP request rate, latency, error rate, in-flight requests, uptime |
+| **Database** | `database-metrics` | MySQL query throughput, duration, failure rate, active connections |
 
 ### Prometheus Metrics Endpoint
 
@@ -596,48 +593,28 @@ curl http://localhost:8080/metrics
 │  /metrics       │                   │ :9090      │             │ :3000   │
 └────────┬────────┘                   └────────────┘             └─────────┘
          │
-    ┌────┴────┐
-    │ metrics │  <── background loop (60s)
-    │ collector│       updates gauges from DB
-    └─────────┘
+         └── SQLAlchemy engine events record MySQL query metrics live
 ```
 
-- **`app/core/metrics.py`** — Declares all Prometheus metric objects (Counters, Gauges, Histograms) for HTTP requests, database queries, authentication, and business data.
-- **`app/services/metrics_collector.py`** — Background task that runs every 60 seconds, queries the database for current counts (total/active users by role, device inventory, distribution stats, login activity), and updates the corresponding Prometheus gauge/counter metrics.
+- **`app/core/metrics.py`** — Declares the Prometheus metric objects (HTTP request metrics, MySQL query metrics, uptime).
+- **`app/database_sqlalchemy.py`** — Registers SQLAlchemy engine event listeners that record MySQL query count, duration, failures, and active connections live (no background collector).
 - **Prometheus** scrapes the `/metrics` HTTP endpoint every 10 seconds (configured in `monitoring/prometheus/prometheus.yml`).
 - **Grafana** uses Prometheus as a data source (configured in `monitoring/grafana/datasources/datasource.yml`) and loads dashboards from `monitoring/grafana/dashboards/`.
 
-### Exported Business Metrics
+### Exported Metrics
 
 | Metric | Type | Description |
 |---|---|---|
-| `total_users` | Gauge | Total registered users |
-| `active_users` | Gauge | Users with status `active` |
-| `new_users_created_total` | Counter | Cumulative new user creations |
-| `total_operators` | Gauge | Users with role `operator` |
-| `active_operators` | Gauge | Active operators |
-| `total_clusters` | Gauge | Users with role `cluster` |
-| `active_clusters` | Gauge | Active clusters |
-| `total_sub_distributors` | Gauge | Users with role `sub_distributor` |
-| `active_sub_distributors` | Gauge | Active sub-distributors |
-| `inventory_items_total` | Gauge | Total devices registered |
-| `low_stock_items_total` | Gauge | Devices below low-stock threshold |
-| `distributions_created_total` | Counter | Cumulative distributions created |
-| `distributions_completed_total` | Counter | Distributions marked delivered |
-| `distributions_failed_total` | Counter | Distributions marked rejected |
-| `device_distributions_total` | Counter | Per-status distribution count |
-| `successful_logins_total` | Counter | Successful login events |
-| `failed_logins_total` | Counter | Failed login attempts |
-| `operator_logins_total` | Counter | Operator login events |
 | `http_requests_total` | Counter | Total HTTP requests by method/endpoint/status |
 | `http_request_duration_seconds` | Histogram | HTTP latency distribution |
 | `http_requests_in_progress` | Gauge | Concurrent in-flight requests |
 | `http_errors_total` | Counter | HTTP 4xx/5xx responses |
-| `login_attempts_total` | Counter | Login attempts by status |
 | `mysql_queries_total` | Counter | MySQL queries by operation type |
 | `mysql_query_duration_seconds` | Histogram | MySQL query latency |
 | `mysql_query_failures_total` | Counter | Failed MySQL queries |
 | `mysql_active_connections` | Gauge | Active DB connections |
+| `app_uptime_seconds` | Gauge | Seconds since last restart |
+| `app_info` | Info | App metadata (name, framework, Python version) |
 
 ---
 
@@ -727,10 +704,10 @@ npm install
 
 ### Monitoring Issues
 
-**Grafana shows 0 for all business metrics:**
+**Grafana shows no HTTP/DB metric data:**
 - Ensure the backend is running and Prometheus can reach `backend:8080/metrics`
 - Check Prometheus targets at http://localhost:9090/targets — the `backend` job should be UP
-- The metrics collector runs every 60s; wait at least one minute after startup for first sync
+- HTTP metrics appear on the first request; MySQL metrics appear as soon as queries run (recorded live via SQLAlchemy engine events — no collector to wait for)
 - Verify `monitoring/prometheus/prometheus.yml` has `targets: ["backend:8080"]`
 
 **Grafana dashboards not appearing:**

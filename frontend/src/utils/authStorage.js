@@ -1,4 +1,5 @@
 const AUTH_USER_KEY = 'dms_user';
+const LAST_PATH_KEY = 'dms-last-path';
 
 const hasWindow = () => typeof window !== 'undefined';
 
@@ -45,6 +46,21 @@ export const clearStoredUser = () => {
   if (!hasWindow()) return;
   sessionStorage.removeItem(AUTH_USER_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
+};
+
+export const getLastPath = () => {
+  if (!hasWindow()) return null;
+  return sessionStorage.getItem(LAST_PATH_KEY);
+};
+
+export const setLastPath = (path) => {
+  if (!hasWindow() || !path) return;
+  sessionStorage.setItem(LAST_PATH_KEY, path);
+};
+
+export const clearLastPath = () => {
+  if (!hasWindow()) return;
+  sessionStorage.removeItem(LAST_PATH_KEY);
 };
 
 export const updateStoredUser = (updates) => {

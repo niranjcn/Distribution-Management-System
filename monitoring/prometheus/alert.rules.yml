@@ -56,15 +56,6 @@ groups:
           summary: "Database query failures ({{ $value | humanize }} per second)"
           description: "Query failure rate on backend {{ $labels.instance }} exceeds 0.1/s."
 
-      - alert: LoginFailureSpike
-        expr: rate(failed_logins_total[5m]) > 1
-        for: 1m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Login failure spike ({{ $value | humanize }} per second)"
-          description: "More than 1 failed login per second over the last 5 minutes."
-
       - alert: AppRestarted
         expr: app_uptime_seconds < 60
         for: 0s

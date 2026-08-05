@@ -1,10 +1,12 @@
 """Unit tests for the in-memory CacheVersionManager."""
 
+import asyncio
 import threading
 
 import pytest
 
-from app.core.cache_version_manager import CacheVersionManager
+from app.config import settings
+from app.core.cache_version_manager import CacheVersionManager, cache_version_sync_loop
 
 
 def _async_cm_factory(session):
@@ -124,3 +126,50 @@ class TestCacheVersionManager:
 
         await mgr.refresh_from_db()
         assert mgr.get_version() == 9
+
+
+@pytest.mark.asyncio
+async def test_cache_version_sync_loop_refreshes_periodically(monkeypatch):
+    refreshes = []
+
+    async def _fake_refresh():
+        refreshes.append(1)
+        if len(refreshes) >= 3:
+            raise asyncio.CancelledError
+
+    async def _fake_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(
+        "app.core.cache_version_manager.cache_version_manager.refresh_from_db",
+        _fake_refresh,
+    )
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await cache_version_sync_loop(interval_seconds=1)
+
+    assert refreshes == [1, 1, 1]
+
+
+@pytest.mark.asyncio
+async def test_cache_version_sync_loop_uses_configured_interval(monkeypatch):
+    sleeps = []
+
+    async def _fake_sleep(seconds):
+        sleeps.append(seconds)
+        raise asyncio.CancelledError
+
+    async def _fake_refresh():
+        return None
+
+    monkeypatch.setattr(
+        "app.core.cache_version_manager.cache_version_manager.refresh_from_db",
+        _fake_refresh,
+    )
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await cache_version_sync_loop()
+
+    assert sleeps == [settings.CACHE_VERSION_REFRESH_SECONDS]

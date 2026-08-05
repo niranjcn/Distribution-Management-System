@@ -1,7 +1,6 @@
 from prometheus_client import Counter, Histogram, Gauge, Info, generate_latest, CONTENT_TYPE_LATEST
 from prometheus_client import REGISTRY
 from fastapi import Response
-from typing import Dict
 import time
 import platform
 
@@ -35,31 +34,6 @@ http_errors_total = Counter(
 )
 
 # ──────────────────────────────────────────────
-# Authentication Metrics
-# ──────────────────────────────────────────────
-
-login_attempts_total = Counter(
-    "login_attempts_total",
-    "Total login attempts",
-    labelnames=["status"],  # success / failure
-)
-
-successful_logins_total = Counter(
-    "successful_logins_total",
-    "Total successful logins",
-)
-
-failed_logins_total = Counter(
-    "failed_logins_total",
-    "Total failed logins",
-)
-
-token_validation_failures_total = Counter(
-    "token_validation_failures_total",
-    "Total token validation failures",
-)
-
-# ──────────────────────────────────────────────
 # Database Metrics
 # ──────────────────────────────────────────────
 
@@ -88,56 +62,6 @@ mysql_active_connections = Gauge(
 )
 
 # ──────────────────────────────────────────────
-# Business Metrics — Users
-# ──────────────────────────────────────────────
-
-total_users = Gauge("total_users", "Total number of users")
-active_users = Gauge("active_users", "Number of active users")
-new_users_created_total = Counter("new_users_created_total", "Total new users created")
-
-# ──────────────────────────────────────────────
-# Business Metrics — Operators
-# ──────────────────────────────────────────────
-
-total_operators = Gauge("total_operators", "Total number of operators")
-active_operators = Gauge("active_operators", "Number of active operators")
-operator_logins_total = Counter("operator_logins_total", "Total operator logins")
-
-# ──────────────────────────────────────────────
-# Business Metrics — Clusters
-# ──────────────────────────────────────────────
-
-total_clusters = Gauge("total_clusters", "Total number of clusters")
-active_clusters = Gauge("active_clusters", "Number of active clusters")
-
-# ──────────────────────────────────────────────
-# Business Metrics — Sub Distributors
-# ──────────────────────────────────────────────
-
-total_sub_distributors = Gauge("total_sub_distributors", "Total number of sub distributors")
-active_sub_distributors = Gauge("active_sub_distributors", "Number of active sub distributors")
-
-# ──────────────────────────────────────────────
-# Business Metrics — Inventory / Devices
-# ──────────────────────────────────────────────
-
-inventory_items_total = Gauge("inventory_items_total", "Total inventory items")
-device_distributions_total = Counter(
-    "device_distributions_total",
-    "Total device distributions",
-    labelnames=["status"],
-)
-low_stock_items_total = Gauge("low_stock_items_total", "Items below reorder level")
-
-# ──────────────────────────────────────────────
-# Business Metrics — Orders / Distributions
-# ──────────────────────────────────────────────
-
-distributions_created_total = Counter("distributions_created_total", "Total distributions created")
-distributions_completed_total = Counter("distributions_completed_total", "Total distributions completed")
-distributions_failed_total = Counter("distributions_failed_total", "Total distributions failed")
-
-# ──────────────────────────────────────────────
 # System Metrics
 # ──────────────────────────────────────────────
 
@@ -156,11 +80,9 @@ def get_uptime_seconds() -> float:
     return time.time() - _app_start_time
 
 
-# ──────────────────────────────────────────────
-# Utilities
-# ──────────────────────────────────────────────
-
-def _classify_sql_operation(query: str) -> str:
+def classify_sql_operation(query) -> str:
+    if not query:
+        return "other"
     upper = query.strip().upper()
     if upper.startswith("SELECT"):
         return "select"

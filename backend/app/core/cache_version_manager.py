@@ -17,11 +17,14 @@ instances, replace this in-memory manager with either:
   - a shared invalidation mechanism (e.g. Redis pub/sub or a shared cache).
 """
 
+import asyncio
 import logging
 import threading
+from typing import Optional
 
 from sqlalchemy import text
 
+from app.config import settings
 from app.core.cache_version import CACHE_VERSION_ID, get_cache_version
 from app.database_sqlalchemy import async_session_factory
 
@@ -92,6 +95,29 @@ class CacheVersionManager:
         if version is not None:
             self.update(version)
             logger.debug("cache_version refreshed: %d", version)
+
+
+async def cache_version_sync_loop(interval_seconds: Optional[int] = None) -> None:
+    """Background failsafe that periodically re-syncs the in-memory version.
+
+    Normally the in-memory CacheVersionManager is refreshed from MySQL after
+    every successful write commit (see CacheAwareAsyncSession.commit). This
+    loop is a simple, infrequent failsafe: it re-reads the committed
+    cache_version on a timer so the ETag served by ConditionalCacheMiddleware
+    cannot drift from the database indefinitely (e.g. if a commit refresh was
+    skipped, or the database changed outside the backend). Requests still only
+    hit the backend exactly as before; this loop touches MySQL only on its own
+    timer and never intercepts or serves requests.
+    """
+    interval = (
+        interval_seconds
+        if interval_seconds is not None
+        else settings.CACHE_VERSION_REFRESH_SECONDS
+    )
+    logger.info("cache_version sync loop started (interval=%ds)", interval)
+    while True:
+        await asyncio.sleep(interval)
+        await cache_version_manager.refresh_from_db()
 
 
 cache_version_manager = CacheVersionManager()

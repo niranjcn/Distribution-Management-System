@@ -10,10 +10,10 @@ This document describes the Prometheus + Grafana monitoring stack instrumented i
 │  /metrics         │                     │  (:9090)     │                   │(:3000)  │
 └──────────────────┘                     └──────────────┘                   └────────┘
                                                   │                              │
-                                          ┌───────┴───────┐                     │
-                                          │  alert.rules   │                     │
-                                          │  (8 rules)     │                     │
-                                          └───────────────┘                     │
+                                           ┌───────┴───────┐                     │
+                                           │  alert.rules   │                     │
+                                           │  (7 rules)     │                     │
+                                           └───────────────┘                     │
                                                                                 │
                                                     nginx reverse proxy (:443) ◄┘
                                                     /grafana/* ──────────────────┘
@@ -21,7 +21,7 @@ This document describes the Prometheus + Grafana monitoring stack instrumented i
 
 - Backend exposes Prometheus metrics at `/metrics` (raw text, `Content-Type: text/plain`).
 - Prometheus scrapes the backend every 10s, stores 30 days of history.
-- Grafana is provisioned with a Prometheus datasource and 3 dashboards.
+- Grafana is provisioned with a Prometheus datasource and 2 dashboards (HTTP + database performance only).
 - Grafana is accessible via nginx at `https://localhost/grafana/`.
 
 ## Services
@@ -75,7 +75,7 @@ http_requests_total{endpoint="/docs",method="GET",status_code="200"} 2.0
   GRAFANA_ADMIN_PASSWORD=your-secure-password
   ```
 
-The Prometheus datasource and 3 dashboards are auto-provisioned.
+The Prometheus datasource and 2 dashboards are auto-provisioned.
 
 ## Dashboards
 
@@ -88,18 +88,6 @@ The Prometheus datasource and 3 dashboards are auto-provisioned.
 | In-Flight Requests | Concurrent requests by method |
 | Error Ratio (%) | Error % with thresholds (5% orange, 10% red) |
 | Uptime | Seconds since last restart |
-
-### Business Metrics (`uid: business-metrics`)
-| Panel | Description |
-|-------|-------------|
-| Total / Active Users | Current counts |
-| New Users Created | 24h rate |
-| Total / Active Operators | Current counts + 24h login rate |
-| Clusters & Sub Distributors | Collapsible row |
-| Distributions Over Time | Created / Completed / Failed rates |
-| Inventory Items | Total + low-stock trend |
-| Device Distribution by Status | 24h pie chart |
-| Login Activity | Success vs failure rate |
 
 ### Database (`uid: database-metrics`)
 | Panel | Description |
@@ -119,14 +107,6 @@ The Prometheus datasource and 3 dashboards are auto-provisioned.
 | `http_requests_in_progress` | Gauge | `method` |
 | `http_errors_total` | Counter | `method`, `endpoint`, `status_code` |
 
-### Authentication
-| Metric | Type | Labels |
-|--------|------|--------|
-| `login_attempts_total` | Counter | `status` (success/failure) |
-| `successful_logins_total` | Counter | — |
-| `failed_logins_total` | Counter | — |
-| `token_validation_failures_total` | Counter | — |
-
 ### Database
 | Metric | Type | Labels |
 |--------|------|--------|
@@ -134,22 +114,6 @@ The Prometheus datasource and 3 dashboards are auto-provisioned.
 | `mysql_query_duration_seconds` | Histogram | `operation` |
 | `mysql_query_failures_total` | Counter | `operation` |
 | `mysql_active_connections` | Gauge | — |
-
-### Business
-| Metric | Type | Labels |
-|--------|------|--------|
-| `total_users` / `active_users` | Gauge | — |
-| `new_users_created_total` | Counter | — |
-| `total_operators` / `active_operators` | Gauge | — |
-| `operator_logins_total` | Counter | — |
-| `total_clusters` / `active_clusters` | Gauge | — |
-| `total_sub_distributors` / `active_sub_distributors` | Gauge | — |
-| `inventory_items_total` | Gauge | — |
-| `device_distributions_total` | Counter | `status` |
-| `low_stock_items_total` | Gauge | — |
-| `distributions_created_total` | Counter | — |
-| `distributions_completed_total` | Counter | — |
-| `distributions_failed_total` | Counter | — |
 
 ### System
 | Metric | Type | Labels |
@@ -167,7 +131,6 @@ The Prometheus datasource and 3 dashboards are auto-provisioned.
 | ManyInProgressRequests | warning | in-flight > 50 | 1m |
 | SlowQueries | warning | P95 query > 1s | 2m |
 | QueryFailures | critical | failure rate > 0.1/s | 2m |
-| LoginFailureSpike | warning | > 1 failed login/s | 1m |
 | AppRestarted | info | uptime < 60s | 0s |
 
 Rules are defined in `monitoring/prometheus/alert.rules.yml`.
@@ -205,20 +168,26 @@ Rules are defined in `monitoring/prometheus/alert.rules.yml`.
 monitoring/
 ├── prometheus/
 │   ├── prometheus.yml        # Scrape config
-│   └── alert.rules.yml       # Alert rules (8 alerts)
+│   └── alert.rules.yml       # Alert rules (7 alerts)
 └── grafana/
     ├── datasources/
     │   └── datasource.yml    # Prometheus datasource
     └── dashboards/
         ├── dashboard.yml     # Dashboard provisioning config
         ├── backend-api-dashboard.json
-        ├── business-metrics-dashboard.json
         └── database-dashboard.json
 backend/app/
 ├── core/
 │   └── metrics.py            # All metric definitions + middleware + /metrics handler
 ├── middleware/
 │   └── metrics_middleware.py  # (metrics defined in core/metrics.py instead)
-├── database.py                # Wrapped execute/executemany with DB metrics
+├── database_sqlalchemy.py     # Engine event listeners record live MySQL metrics
 └── main.py                    # Registers middleware, /metrics route, CSRF exemption
 ```
+
+## How Metrics Are Collected
+
+- **HTTP metrics** are recorded per request by `MetricsMiddleware` in `app/core/metrics.py`.
+- **MySQL metrics** are recorded live by SQLAlchemy engine event listeners registered in `app/database_sqlalchemy.py` (`before_cursor_execute` / `after_cursor_execute` / `handle_error` / pool `checkout` / `checkin`). No background collector is required — there is no polling loop, and the DB metrics appear in Prometheus as soon as queries run.
+- **Uptime / app metadata** are set on each `/metrics` scrape.
+- No business-domain metrics are exported (users, operators, distributions, inventory, logins, etc.). Monitoring is scoped to performance signals used when investigating issues.
