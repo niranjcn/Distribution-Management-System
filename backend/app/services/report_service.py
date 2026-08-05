@@ -76,25 +76,33 @@ async def get_inventory_report(start_date: Optional[str] = None, end_date: Optio
     """Generate device inventory report"""
     async with async_session_factory() as session:
         cond, prm = _build_date_filter("1=1", {}, start_date, end_date)
-        total = await _count(session, "devices", cond, prm)
 
-        by_status = {}
-        result = await session.execute(text(f"SELECT status, COUNT(*) as cnt FROM devices WHERE {cond} GROUP BY status"), prm)
-        for row in result.fetchall():
-            by_status[row[0]] = row[1]
-
-        by_type = {}
-        result = await session.execute(text(f"SELECT device_type, COUNT(*) as cnt FROM devices WHERE {cond} GROUP BY device_type"), prm)
-        for row in result.fetchall():
-            by_type[row[0]] = row[1]
-
-        by_location = {}
+        # Single-pass aggregation: one query groups by status, device_type and
+        # current_holder_type together. The result is split below into the three
+        # summary buckets, so we scan the device table exactly once instead of
+        # running four separate COUNT/GROUP BY queries. Rows with a NULL
+        # current_holder_type still count toward by_status/by_type and the
+        # total, but are excluded from by_location (matching the prior query
+        # which filtered current_holder_type IS NOT NULL).
         result = await session.execute(
-            text(f"SELECT current_holder_type, COUNT(*) as cnt FROM devices WHERE {cond} AND current_holder_type IS NOT NULL GROUP BY current_holder_type"),
+            text(f"SELECT status, device_type, current_holder_type, COUNT(*) as cnt FROM devices WHERE {cond} GROUP BY status, device_type, current_holder_type"),
             prm,
         )
+
+        total = 0
+        by_status = {}
+        by_type = {}
+        by_location = {}
         for row in result.fetchall():
-            by_location[row[0]] = row[1]
+            status = row[0]
+            device_type = row[1]
+            holder_type = row[2]
+            cnt = int(row[3])
+            total += cnt
+            by_status[status] = by_status.get(status, 0) + cnt
+            by_type[device_type] = by_type.get(device_type, 0) + cnt
+            if holder_type is not None:
+                by_location[holder_type] = by_location.get(holder_type, 0) + cnt
 
         return {
             "total_devices": total,
@@ -739,17 +747,6 @@ async def get_sub_distribution_report(start_date: Optional[str] = None, end_date
     restricted to devices created within that window (matching the dashboard
     date-filter semantics).
     """
-    sub_tree = """
-        WITH RECURSIVE hierarchy AS (
-            SELECT id, role, id AS sub_id
-            FROM users WHERE role = 'sub_distributor'
-            UNION ALL
-            SELECT u.id, u.role, h.sub_id
-            FROM users u
-            INNER JOIN hierarchy h ON u.parent_id = h.id
-        )
-    """
-
     async with async_session_factory() as session:
         sub_result = await session.execute(text("""
             SELECT u.id, u.name, u.email, u.phone
@@ -813,49 +810,85 @@ async def get_sub_distribution_report(start_date: Optional[str] = None, end_date
         }
 
         if sub_ids:
-            member_result = await session.execute(text(f"""
-                {sub_tree}
-                SELECT sub_id, id AS user_id, role FROM hierarchy
-            """))
-            for row in member_result.mappings().all():
-                sub_id = int(row["sub_id"])
-                role = str(row["role"] or "")
-                if role == "operator":
-                    member_counts[sub_id]["operators"].add(int(row["user_id"]))
-                elif role == "cluster":
-                    member_counts[sub_id]["clusters"] += 1
+            # Load the user hierarchy once instead of running the recursive
+            # CTE in three separate queries. The users table is small (it holds
+            # accounts, not devices), so one flat read plus in-memory traversal
+            # is far cheaper than re-walking the tree per rollup.
+            user_result = await session.execute(text("SELECT id, parent_id, role FROM users"))
+            role_by_id = {}
+            children_by_parent = {}
+            for row in user_result.mappings().all():
+                uid = int(row["id"])
+                role_by_id[uid] = str(row["role"] or "")
+                parent_id = row["parent_id"]
+                if parent_id is not None:
+                    children_by_parent.setdefault(int(parent_id), []).append(uid)
 
-            identity_result = await session.execute(text(f"""
-                {sub_tree}
-                SELECT h.sub_id, di.user_id,
-                       MAX(CASE WHEN TRIM(COALESCE(di.digital_id, '')) != '' THEN 1 ELSE 0 END) AS has_digital,
-                       MAX(CASE WHEN TRIM(COALESCE(di.broadband_id, '')) != '' THEN 1 ELSE 0 END) AS has_broadband
-                FROM hierarchy h
-                INNER JOIN digital_identities di ON di.user_id = h.id
-                WHERE h.role = 'operator'
-                GROUP BY h.sub_id, di.user_id
-            """))
-            for row in identity_result.mappings().all():
-                sub_id = int(row["sub_id"])
-                if row["has_digital"]:
-                    operator_identities[sub_id]["with_digital"].add(int(row["user_id"]))
-                if row["has_broadband"]:
-                    operator_identities[sub_id]["with_broadband"].add(int(row["user_id"]))
+            sub_to_members = {}
+            sub_to_operators = {}
+            holder_to_sub = {}
+            for sub_id in sub_ids:
+                members = set()
+                stack = [sub_id]
+                while stack:
+                    uid = stack.pop()
+                    if uid in members:
+                        continue
+                    members.add(uid)
+                    holder_to_sub[uid] = sub_id
+                    stack.extend(children_by_parent.get(uid, []))
+                sub_to_members[sub_id] = members
+                sub_to_operators[sub_id] = {
+                    uid for uid in members if role_by_id.get(uid) == "operator"
+                }
 
+            for sub_id, members in sub_to_members.items():
+                for uid in members:
+                    role = role_by_id.get(uid)
+                    if role == "operator":
+                        member_counts[sub_id]["operators"].add(uid)
+                    elif role == "cluster":
+                        member_counts[sub_id]["clusters"] += 1
+
+            all_operator_ids = [uid for ids in sub_to_operators.values() for uid in ids]
+            if all_operator_ids:
+                identity_result = await session.execute(
+                    text("""
+                        SELECT di.user_id,
+                               MAX(CASE WHEN TRIM(COALESCE(di.digital_id, '')) != '' THEN 1 ELSE 0 END) AS has_digital,
+                               MAX(CASE WHEN TRIM(COALESCE(di.broadband_id, '')) != '' THEN 1 ELSE 0 END) AS has_broadband
+                        FROM digital_identities di
+                        WHERE di.user_id IN :operator_ids
+                        GROUP BY di.user_id
+                    """).bindparams(bindparam("operator_ids", expanding=True)),
+                    {"operator_ids": all_operator_ids},
+                )
+                for row in identity_result.mappings().all():
+                    uid = int(row["user_id"])
+                    for sub_id, op_ids in sub_to_operators.items():
+                        if uid not in op_ids:
+                            continue
+                        if row["has_digital"]:
+                            operator_identities[sub_id]["with_digital"].add(uid)
+                        if row["has_broadband"]:
+                            operator_identities[sub_id]["with_broadband"].add(uid)
+
+            all_holder_ids = list(holder_to_sub.keys())
             device_date_params = {}
             device_date_cond = _build_device_date_filter(device_date_params, start_date, end_date)
-            device_result = await session.execute(text(f"""
-                {sub_tree}
-                SELECT h.sub_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
-                FROM hierarchy h
-                INNER JOIN devices d ON CAST(d.current_holder_id AS CHAR) = CAST(h.id AS CHAR)
-                WHERE d.current_holder_id IS NOT NULL
-                  AND TRIM(CAST(d.current_holder_id AS CHAR)) != ''
-                  AND {device_date_cond}
-                GROUP BY h.sub_id, d.device_type, d.manufacturer
-            """), device_date_params)
+            device_result = await session.execute(
+                text(f"""
+                    SELECT d.current_holder_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
+                    FROM devices d
+                    WHERE d.current_holder_id IS NOT NULL
+                      AND d.current_holder_id IN :holder_ids
+                      AND {device_date_cond}
+                    GROUP BY d.current_holder_id, d.device_type, d.manufacturer
+                """).bindparams(bindparam("holder_ids", expanding=True)),
+                {**device_date_params, "holder_ids": all_holder_ids},
+            )
             for row in device_result.mappings().all():
-                sub_id = int(row["sub_id"])
+                sub_id = holder_to_sub[int(row["current_holder_id"])]
                 device_type = str(row["device_type"] or "")
                 vendor = str(row["manufacturer"] or "").strip() or "Unknown"
                 count = int(row["cnt"])
@@ -916,17 +949,6 @@ async def get_cluster_report(scope: Optional[dict] = None, start_date: Optional[
     ``end_date`` are provided, device counts are restricted to devices created
     within that window (matching the dashboard date-filter semantics).
     """
-    cluster_tree = """
-        WITH RECURSIVE hierarchy AS (
-            SELECT id, role, id AS cluster_id
-            FROM users WHERE role = 'cluster'
-            UNION ALL
-            SELECT u.id, u.role, h.cluster_id
-            FROM users u
-            INNER JOIN hierarchy h ON u.parent_id = h.id
-        )
-    """
-
     async with async_session_factory() as session:
         cluster_result = await session.execute(text("""
             SELECT c.id, c.name, c.email, c.phone, p.id AS sub_id, p.name AS sub_name
@@ -1006,46 +1028,86 @@ async def get_cluster_report(scope: Optional[dict] = None, start_date: Optional[
         }
 
         if cluster_ids:
-            member_result = await session.execute(text(f"""
-                {cluster_tree}
-                SELECT cluster_id, id AS user_id, role FROM hierarchy
-            """))
-            for row in member_result.mappings().all():
-                cluster_id = int(row["cluster_id"])
-                role = str(row["role"] or "")
-                if role == "operator":
-                    member_counts[cluster_id]["operators"].add(int(row["user_id"]))
+            active_cluster_ids = (
+                [cid for cid in cluster_ids if cid in allowed_cluster_ids]
+                if allowed_cluster_ids is not None
+                else cluster_ids
+            )
 
-            identity_result = await session.execute(text(f"""
-                {cluster_tree}
-                SELECT h.cluster_id, di.user_id,
-                       MAX(CASE WHEN TRIM(COALESCE(di.digital_id, '')) != '' THEN 1 ELSE 0 END) AS has_digital,
-                       MAX(CASE WHEN TRIM(COALESCE(di.broadband_id, '')) != '' THEN 1 ELSE 0 END) AS has_broadband
-                FROM hierarchy h
-                INNER JOIN digital_identities di ON di.user_id = h.id
-                WHERE h.role = 'operator'
-                GROUP BY h.cluster_id, di.user_id
-            """))
-            for row in identity_result.mappings().all():
-                cluster_id = int(row["cluster_id"])
-                if row["has_digital"]:
-                    operator_identities[cluster_id]["with_digital"].add(int(row["user_id"]))
-                if row["has_broadband"]:
-                    operator_identities[cluster_id]["with_broadband"].add(int(row["user_id"]))
+            # Load the user hierarchy once instead of running the recursive
+            # CTE in three separate queries (see get_sub_distribution_report).
+            user_result = await session.execute(text("SELECT id, parent_id, role FROM users"))
+            role_by_id = {}
+            children_by_parent = {}
+            for row in user_result.mappings().all():
+                uid = int(row["id"])
+                role_by_id[uid] = str(row["role"] or "")
+                parent_id = row["parent_id"]
+                if parent_id is not None:
+                    children_by_parent.setdefault(int(parent_id), []).append(uid)
 
+            cluster_to_members = {}
+            cluster_to_operators = {}
+            holder_to_cluster = {}
+            for cluster_id in active_cluster_ids:
+                members = set()
+                stack = [cluster_id]
+                while stack:
+                    uid = stack.pop()
+                    if uid in members:
+                        continue
+                    members.add(uid)
+                    holder_to_cluster[uid] = cluster_id
+                    stack.extend(children_by_parent.get(uid, []))
+                cluster_to_members[cluster_id] = members
+                cluster_to_operators[cluster_id] = {
+                    uid for uid in members if role_by_id.get(uid) == "operator"
+                }
+
+            for cluster_id, members in cluster_to_members.items():
+                for uid in members:
+                    if role_by_id.get(uid) == "operator":
+                        member_counts[cluster_id]["operators"].add(uid)
+
+            all_operator_ids = [uid for ids in cluster_to_operators.values() for uid in ids]
+            if all_operator_ids:
+                identity_result = await session.execute(
+                    text("""
+                        SELECT di.user_id,
+                               MAX(CASE WHEN TRIM(COALESCE(di.digital_id, '')) != '' THEN 1 ELSE 0 END) AS has_digital,
+                               MAX(CASE WHEN TRIM(COALESCE(di.broadband_id, '')) != '' THEN 1 ELSE 0 END) AS has_broadband
+                        FROM digital_identities di
+                        WHERE di.user_id IN :operator_ids
+                        GROUP BY di.user_id
+                    """).bindparams(bindparam("operator_ids", expanding=True)),
+                    {"operator_ids": all_operator_ids},
+                )
+                for row in identity_result.mappings().all():
+                    uid = int(row["user_id"])
+                    for cluster_id, op_ids in cluster_to_operators.items():
+                        if uid not in op_ids:
+                            continue
+                        if row["has_digital"]:
+                            operator_identities[cluster_id]["with_digital"].add(uid)
+                        if row["has_broadband"]:
+                            operator_identities[cluster_id]["with_broadband"].add(uid)
+
+            all_holder_ids = list(holder_to_cluster.keys())
             device_date_params = {}
             device_date_cond = _build_device_date_filter(device_date_params, start_date, end_date)
-            device_result = await session.execute(text(f"""
-                {cluster_tree}
-                SELECT h.cluster_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
-                FROM hierarchy h
-                INNER JOIN devices d ON d.current_holder_id = h.id
-                WHERE d.current_holder_id IS NOT NULL
-                  AND {device_date_cond}
-                GROUP BY h.cluster_id, d.device_type, d.manufacturer
-            """), device_date_params)
+            device_result = await session.execute(
+                text(f"""
+                    SELECT d.current_holder_id, d.device_type, d.manufacturer, COUNT(*) AS cnt
+                    FROM devices d
+                    WHERE d.current_holder_id IS NOT NULL
+                      AND d.current_holder_id IN :holder_ids
+                      AND {device_date_cond}
+                    GROUP BY d.current_holder_id, d.device_type, d.manufacturer
+                """).bindparams(bindparam("holder_ids", expanding=True)),
+                {**device_date_params, "holder_ids": all_holder_ids},
+            )
             for row in device_result.mappings().all():
-                cluster_id = int(row["cluster_id"])
+                cluster_id = holder_to_cluster[int(row["current_holder_id"])]
                 device_type = str(row["device_type"] or "")
                 vendor = str(row["manufacturer"] or "").strip() or "Unknown"
                 count = int(row["cnt"])

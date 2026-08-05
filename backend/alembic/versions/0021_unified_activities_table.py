@@ -58,8 +58,11 @@ def upgrade() -> None:
     """)
 
     # --- Backfill existing rows (same exclusions the feed applied at read time) ---
+    # INSERT IGNORE makes the backfill idempotent: if a previous startup died
+    # mid-migration (rows already inserted but version not yet stamped), a
+    # re-run skips existing rows instead of failing on the unique key.
     op.execute("""
-    INSERT INTO activities
+    INSERT IGNORE INTO activities
         (activity_id, category, action, actor, description, search_text, activity_date, method, path)
     SELECT
         CONCAT('device-', id),
@@ -81,7 +84,7 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-    INSERT INTO activities
+    INSERT IGNORE INTO activities
         (activity_id, category, action, actor, description, search_text, activity_date, method, path)
     SELECT
         CONCAT('inventory-', id),
@@ -101,7 +104,7 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-    INSERT INTO activities
+    INSERT IGNORE INTO activities
         (activity_id, category, action, actor, description, search_text, activity_date, method, path)
     SELECT
         CONCAT('api-', id),
