@@ -6,7 +6,6 @@ import {
   isDev as _isDev,
   log as _log,
   logError as _logError,
-  downloadBulkReport as _downloadBulkReport,
   authAPI as _authAPI,
   usersAPI as _usersAPI,
   adminUpdateCredentials as _adminUpdateCredentials,
@@ -31,7 +30,6 @@ export const getCookieValue = _getCookieValue;
 export const isDev = _isDev;
 export const log = _log;
 export const logError = _logError;
-export const downloadBulkReport = _downloadBulkReport;
 export const authAPI = _authAPI;
 export const usersAPI = _usersAPI;
 export const adminUpdateCredentials = _adminUpdateCredentials;

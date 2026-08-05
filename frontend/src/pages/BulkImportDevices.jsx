@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
-import { dashboardAPI, devicesAPI, downloadBulkReport } from '../services/api';
+import { dashboardAPI, devicesAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertCircle, Download, ArrowLeft } from 'lucide-react';
 
@@ -60,15 +60,6 @@ const BulkImportDevices = () => {
       showToast(err.message || 'Upload failed', 'error');
     } finally {
       setUploading(false);
-    }
-  };
-
-  const handleDownloadReport = async () => {
-    if (!result?.error_report_id) return;
-    try {
-      await downloadBulkReport(result.error_report_id, `device-bulk-upload-report-${result.error_report_id}.csv`);
-    } catch {
-      showToast('Failed to download report', 'error');
     }
   };
 
@@ -199,17 +190,11 @@ const BulkImportDevices = () => {
             </div>
           </div>
 
-          {(result.skipped_truncated || result.errors_truncated || result.error_report_id) && (
+          {(result.skipped_truncated || result.errors_truncated) && (
             <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 mb-4">
               <p className="text-sm text-slate-600">
-                {result.skipped_count + result.error_count} rows need attention. Only the first{' '}
-                {result.skipped_truncated || result.errors_truncated ? '500' : ''} are shown below.
+                {result.skipped_count + result.error_count} rows need attention. Only the first 500 are shown below.
               </p>
-              {result.error_report_id && (
-                <Button variant="outline" icon={Download} onClick={handleDownloadReport}>
-                  Download Full Report
-                </Button>
-              )}
             </div>
           )}
 

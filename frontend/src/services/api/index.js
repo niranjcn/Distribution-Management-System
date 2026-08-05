@@ -1,4 +1,4 @@
-export { apiRequest, buildCsrfHeader, getCookieValue, API_BASE_URL, isDev, log, logError, downloadBulkReport } from './client';
+export { apiRequest, buildCsrfHeader, getCookieValue, API_BASE_URL, isDev, log, logError } from './client';
 
 export { authAPI } from './auth';
 export { usersAPI, adminUpdateCredentials } from './users';

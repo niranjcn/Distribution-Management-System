@@ -2,11 +2,8 @@ import asyncio
 import csv
 import io
 import logging
-import time
-import uuid
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Set
 
 from fastapi import HTTPException, status
@@ -31,72 +28,9 @@ _MAX_XLSX_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500 MB
 BULK_UPLOAD_CHUNKED_COMMIT_THRESHOLD = 10000
 
 # How many per-row results are embedded in the bulk upload response body.
-# Anything beyond this count is available via the downloadable error report so a
-# 150k-row upload never returns a giant JSON body.
+# Anything beyond this count is omitted so a 150k-row upload never returns a
+# giant JSON body.
 BULK_RESULT_INLINE_LIMIT = 500
-
-_BULK_REPORT_MAX_AGE_SECONDS = 86400  # 1 day
-
-
-def _bulk_reports_dir() -> Path:
-    d = Path(__file__).resolve().parents[2] / "bulk_reports"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _report_row(entry: Dict[str, Any], status: str) -> Dict[str, Any]:
-    return {
-        "row": entry.get("row", ""),
-        "reference": (
-            entry.get("serial") or entry.get("name") or entry.get("email")
-            or entry.get("identifier") or entry.get("item_id") or ""
-        ),
-        "status": status,
-        "reason": entry.get("error") or entry.get("reason") or "",
-    }
-
-
-def persist_bulk_report(skipped: List[Dict[str, Any]], errors: List[Dict[str, Any]]) -> Optional[str]:
-    """Write skipped + error rows to a CSV file and return its report id.
-
-    Returns ``None`` when there is nothing to report. Old reports are cleaned up
-    opportunistically so the directory does not grow without bound.
-    """
-    rows = [_report_row(e, "skipped") for e in skipped]
-    rows.extend(_report_row(e, "error") for e in errors)
-    if not rows:
-        return None
-
-    report_id = f"br_{uuid.uuid4().hex[:12]}"
-    path = _bulk_reports_dir() / f"{report_id}.csv"
-    with open(path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=["row", "reference", "status", "reason"])
-        writer.writeheader()
-        writer.writerows(rows)
-
-    _cleanup_old_bulk_reports()
-    return report_id
-
-
-def _cleanup_old_bulk_reports() -> None:
-    cutoff = time.time() - _BULK_REPORT_MAX_AGE_SECONDS
-    try:
-        for p in _bulk_reports_dir().glob("br_*.csv"):
-            try:
-                if p.stat().st_mtime < cutoff:
-                    p.unlink()
-            except OSError:
-                pass
-    except OSError:
-        pass
-
-
-def get_bulk_report_path(report_id: str) -> Optional[Path]:
-    """Return the filesystem path for a valid, existing bulk report id."""
-    if not report_id.startswith("br_") or not report_id[3:].isalnum():
-        return None
-    p = _bulk_reports_dir() / f"{report_id}.csv"
-    return p if p.exists() else None
 
 
 def build_bulk_result(
@@ -112,16 +46,11 @@ def build_bulk_result(
 
     Counts are always full. The per-row ``created`` / ``skipped`` / ``errors``
     lists are capped at ``BULK_RESULT_INLINE_LIMIT`` so large uploads return a
-    small body; the ``*_truncated`` flags tell the frontend more rows exist and
-    ``error_report_id`` points at a downloadable CSV with every row.
+    small body; the ``*_truncated`` flags tell the frontend more rows exist.
     """
     created_capped = created[:BULK_RESULT_INLINE_LIMIT]
     skipped_capped = skipped[:BULK_RESULT_INLINE_LIMIT]
     errors_capped = errors[:BULK_RESULT_INLINE_LIMIT]
-
-    report_id = None
-    if len(skipped) + len(errors) > BULK_RESULT_INLINE_LIMIT:
-        report_id = persist_bulk_report(skipped, errors)
 
     data = {
         "created_count": len(created) if created_count is None else created_count,
@@ -130,7 +59,6 @@ def build_bulk_result(
         "created_truncated": len(created) > BULK_RESULT_INLINE_LIMIT,
         "skipped_truncated": len(skipped) > BULK_RESULT_INLINE_LIMIT,
         "errors_truncated": len(errors) > BULK_RESULT_INLINE_LIMIT,
-        "error_report_id": report_id,
         "created": created_capped,
         "skipped": skipped_capped,
         "errors": errors_capped,
