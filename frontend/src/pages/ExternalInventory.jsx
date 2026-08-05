@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import DataTable from '../components/ui/DataTable';
-import { externalInventoryAPI, usersAPI } from '../services/api';
+import { externalInventoryAPI, usersAPI, downloadBulkReport } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { useQueryClient } from '@tanstack/react-query';
@@ -81,6 +81,7 @@ const ExternalInventory = ({ tab }) => {
   const [itemForm, setItemForm] = useState(initialItemForm);
   const [submitting, setSubmitting] = useState(false);
   const [importingItems, setImportingItems] = useState(false);
+const [importResult, setImportResult] = useState(null);
   const importInputRef = useRef(null);
 
   // ----- Recipients for distribution -----
@@ -316,6 +317,7 @@ const ExternalInventory = ({ tab }) => {
     try {
       setImportingItems(true);
       const result = await externalInventoryAPI.bulkUploadItems(file);
+      setImportResult(result.data || {});
       showToast(result.message || 'Import completed', 'success');
       refreshAll();
     } catch (error) {
@@ -551,6 +553,36 @@ const ExternalInventory = ({ tab }) => {
           </Card>
 
           <Card title="Inventory Items" subtitle="Individual distribution items" padding={false}>
+            {importResult && (importResult.error_count > 0 || importResult.skipped_count > 0) && (
+              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm text-slate-600">
+                  Import finished: {importResult.created_count} created, {importResult.skipped_count} skipped,{' '}
+                  {importResult.error_count} errors.
+                  {importResult.errors_truncated || importResult.skipped_truncated
+                    ? ' Only the first 500 failed rows are shown in the download.'
+                    : ''}
+                </p>
+                {importResult.error_report_id && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={Download}
+                    onClick={async () => {
+                      try {
+                        await downloadBulkReport(
+                          importResult.error_report_id,
+                          `items-bulk-import-report-${importResult.error_report_id}.csv`
+                        );
+                      } catch {
+                        showToast('Failed to download report', 'error');
+                      }
+                    }}
+                  >
+                    Download Full Report
+                  </Button>
+                )}
+              </div>
+            )}
             <DataTable
               columns={itemColumns}
               data={items}

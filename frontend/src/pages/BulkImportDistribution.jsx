@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
-import { dashboardAPI, distributionsAPI, usersAPI } from '../services/api';
+import { dashboardAPI, distributionsAPI, usersAPI, downloadBulkReport } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import {
@@ -473,6 +473,27 @@ const BulkImportDistribution = () => {
           ) : (
             <div className="p-3 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-900 text-sm mb-4">
               Distribution was not created because some rows are invalid or unregistered.
+            </div>
+          )}
+
+          {result.error_report_id && (
+            <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 mb-4">
+              <p className="text-sm text-slate-600">
+                {result.error_count} rows need attention. Only the first 500 are shown below.
+              </p>
+              <Button
+                variant="outline"
+                icon={Download}
+                onClick={async () => {
+                  try {
+                    await downloadBulkReport(result.error_report_id, `distribution-bulk-report-${result.error_report_id}.csv`);
+                  } catch {
+                    showToast('Failed to download report', 'error');
+                  }
+                }}
+              >
+                Download Full Report
+              </Button>
             </div>
           )}
 

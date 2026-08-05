@@ -66,28 +66,34 @@ async def _run(identifier_rows, from_user, devices, open_lock_ids=None,
                pending_blocked_ids=None, expected_distribution=None):
     """Run create_distribution_from_identifiers against a mocked session.
 
-    Returns (result, create_distribution_mock).
+    Returns (result, insert_mock).
     """
     session = _build_session(
         devices, open_lock_ids=open_lock_ids, pending_blocked_ids=pending_blocked_ids
     )
+    session.commit = AsyncMock()
 
     cm = AsyncMock()
     cm.__aenter__.return_value = session
     cm.__aexit__.return_value = None
     session_factory = MagicMock(return_value=cm)
 
-    create_distribution_mock = AsyncMock(return_value=expected_distribution)
+    recipient = {"id": 200, "role": "operator", "name": "Operator A"}
+    insert_mock = AsyncMock(return_value=("DIST-2026-0001", 1, None))
+    get_dist_mock = AsyncMock(return_value=expected_distribution)
 
     with patch.object(distribution_service, "async_session_factory", session_factory), \
-         patch.object(distribution_service, "create_distribution", create_distribution_mock):
+         patch.object(distribution_service, "_load_and_validate_recipient", AsyncMock(return_value=recipient)), \
+         patch.object(distribution_service, "_insert_distribution_record", insert_mock), \
+         patch.object(distribution_service, "_notify_recipient", AsyncMock()), \
+         patch.object(distribution_service, "get_distribution_by_id", get_dist_mock):
         result = await distribution_service.create_distribution_from_identifiers(
             to_user_id="200",
             identifier_rows=identifier_rows,
             from_user=from_user,
         )
 
-    return result, create_distribution_mock
+    return result, insert_mock
 
 
 class TestManagementUploaderAvailabilityErrors:
@@ -119,7 +125,7 @@ class TestManagementUploaderAvailabilityErrors:
         assert any("Device DEV-TAKEN is not available" in m for m in error_msgs)
 
         create_mock.assert_awaited_once()
-        device_ids = create_mock.await_args.kwargs["dist_data"].device_ids
+        device_ids = create_mock.await_args.args[1].device_ids
         assert device_ids == [str(available["id"])]
 
     async def test_defective_device_becomes_row_error(self):
@@ -164,7 +170,7 @@ class TestManagementUploaderAvailabilityErrors:
         assert result["created_count"] == 1
         assert result["error_count"] == 1
         create_mock.assert_awaited_once()
-        device_ids = create_mock.await_args.kwargs["dist_data"].device_ids
+        device_ids = create_mock.await_args.args[1].device_ids
         assert device_ids == [str(available["id"])]
 
 

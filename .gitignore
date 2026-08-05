@@ -28,6 +28,7 @@ backend/uploads/
 backend/db_backups/
 backend/monthly_backups/
 backend/distribution_manifests/
+backend/bulk_reports/
 
 # OS / IDE
 .DS_Store
