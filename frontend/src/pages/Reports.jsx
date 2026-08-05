@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import jsPDF from 'jspdf';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { devicesAPI, reportsAPI, dashboardAPI, changeRequestsAPI } from '../services/api';
+import { reportsAPI, dashboardAPI, changeRequestsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { 
@@ -90,7 +90,6 @@ const Reports = () => {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [reportType, setReportType] = useState('overview');
-  const [deviceReportRows, setDeviceReportRows] = useState([]);
   const [inventoryReport, setInventoryReport] = useState(null);
   const [distributionSummary, setDistributionSummary] = useState(null);
   const [defectSummary, setDefectSummary] = useState(null);
@@ -109,14 +108,12 @@ const Reports = () => {
           params.start_date = start.toISOString();
         }
 
-        const [devRes, invRes, distRes, defRes, retRes] = await Promise.all([
-          devicesAPI.getDevices({ page: 1, page_size: 100, ...params }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: [] }; }),
+        const [invRes, distRes, defRes, retRes] = await Promise.all([
           reportsAPI.getInventoryReport(params).catch(err => { console.error('Failed to load inventory report:', err); showToast('Failed to load inventory report', 'error'); return { data: null }; }),
           reportsAPI.getDistributionSummary(params).catch(err => { console.error('Failed to load distribution summary:', err); showToast('Failed to load distribution summary', 'error'); return { data: null }; }),
           reportsAPI.getDefectSummary(params).catch(err => { console.error('Failed to load defect summary:', err); showToast('Failed to load defect summary', 'error'); return { data: null }; }),
           reportsAPI.getReturnSummary(params).catch(err => { console.error('Failed to load return summary:', err); showToast('Failed to load return summary', 'error'); return { data: null }; })
         ]);
-        setDeviceReportRows(devRes.data || []);
         setInventoryReport(invRes.data || null);
         setDistributionSummary(distRes.data || null);
         setDefectSummary(defRes.data || null);
