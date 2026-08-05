@@ -101,8 +101,10 @@ export const defectsAPI = {
     return response;
   },
 
-  getPendingDueUsers: async () => {
-    const response = await apiRequest('/defects/pending-dues/users');
+  getPendingDueUsers: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    const endpoint = queryString ? `/defects/pending-dues/users?${queryString}` : '/defects/pending-dues/users';
+    const response = await apiRequest(endpoint);
     return response;
   },
 

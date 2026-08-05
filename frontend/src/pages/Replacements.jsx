@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import Card from '../components/ui/Card';
+import DataTable from '../components/ui/DataTable';
 import Modal from '../components/ui/Modal';
 import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
@@ -9,29 +10,117 @@ import { defectsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { ArrowLeftRight, Loader2 } from 'lucide-react';
 
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+const EXPORT_PAGE_SIZE = 1000;
+
 const Replacements = () => {
   const { showToast } = useNotifications();
   const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [tablePage, setTablePage] = useState(1);
   const [selectedRow, setSelectedRow] = useState(null);
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const queryVersionRef = useRef(0);
 
-  const fetchReplacements = async () => {
+  const buildReplacementParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
+    return {
+      page: windowPage,
+      page_size: pageSize,
+      ...buildDateParams(dateRange),
+    };
+  };
+
+  const loadReplacementWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = queryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setLoading(true);
+
     try {
-      setLoading(true);
-      const response = await defectsAPI.getReplacements({ page_size: 100, ...buildDateParams(dateRange) });
-      setRows(response.data || []);
+      const response = await defectsAPI.getReplacements(buildReplacementParams(windowPage));
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const fetchedRows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || fetchedRows.length);
+
+      setRows((prev) => {
+        const merged = reset ? fetchedRows : [...prev, ...fetchedRows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || row?._id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setTableTotalCount(total);
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
     } catch (error) {
       showToast(error.message || 'Failed to load replacements', 'error');
-      setRows([]);
     } finally {
-      setLoading(false);
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setLoading(false);
+    }
+  };
+
+  const resetAndLoadReplacements = async () => {
+    queryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setRows([]);
+    setTableTotalCount(0);
+    setTablePage(1);
+    await loadReplacementWindow(1, { reset: true, withLoading: true });
+  };
+
+  const handleTablePageChange = async (nextPage) => {
+    setTablePage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(rows.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && rows.length < tableTotalCount;
+    if (needsNextWindow) {
+      await loadReplacementWindow(loadedWindowRef.current + 1, { withLoading: true });
     }
   };
 
   useEffect(() => {
-    fetchReplacements();
+    resetAndLoadReplacements();
   }, [dateRange]);
+
+  useEffect(() => {
+    const handler = () => {
+      resetAndLoadReplacements();
+    };
+    window.addEventListener('appDataMutation', handler);
+    return () => window.removeEventListener('appDataMutation', handler);
+  }, []);
+
+  const getExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+
+    while (true) {
+      const response = await defectsAPI.getReplacements(buildReplacementParams(page, EXPORT_PAGE_SIZE));
+      const fetchedRows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || fetchedRows.length);
+      collected = collected.concat(fetchedRows);
+
+      if (!fetchedRows.length || collected.length >= total) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    return collected;
+  };
 
   const sortedRows = useMemo(() => {
     return [...rows].sort((a, b) => {
@@ -40,6 +129,42 @@ const Replacements = () => {
       return bTime - aTime;
     });
   }, [rows]);
+
+  const columns = [
+    { key: 'report_id', label: 'Defect Report ID' },
+    {
+      key: 'defective_device',
+      label: 'Defective Device',
+      render: (value, row) => {
+        const defective = value || {};
+        return (
+          <DeviceIdentity
+            device={{
+              ...row,
+              ...defective,
+              serial_number: defective.serial_number || row.device_serial,
+            }}
+          />
+        );
+      },
+    },
+    { key: 'mapping', label: 'Mapping', render: () => <span className="text-gray-500">-&gt;</span> },
+    {
+      key: 'replacement_device',
+      label: 'Replacement Device',
+      render: (value) => <DeviceIdentity device={value || {}} />,
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (value) => <StatusBadge status={value} size="sm" />,
+    },
+    {
+      key: 'updated_at',
+      label: 'Date',
+      render: (value) => (value ? new Date(value).toLocaleDateString() : '-'),
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -50,7 +175,7 @@ const Replacements = () => {
         </div>
         <div className="flex items-center gap-2">
           <DateRangeFilter value={dateRange} onChange={setDateRange} />
-          <Button variant="secondary" onClick={fetchReplacements}>Refresh</Button>
+          <Button variant="secondary" onClick={resetAndLoadReplacements}>Refresh</Button>
         </div>
       </div>
 
@@ -60,67 +185,21 @@ const Replacements = () => {
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
             <span className="ml-3 text-gray-500">Loading replacement mappings...</span>
           </div>
-        ) : sortedRows.length === 0 ? (
-          <div className="text-center py-10">
-            <ArrowLeftRight className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-700 font-medium">No replacement mappings found</p>
-            <p className="text-gray-500 text-sm mt-1">Replacement assignments will appear here.</p>
-          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left border-b border-gray-200 text-gray-600">
-                  <th className="py-3 px-3">Defect Report ID</th>
-                  <th className="py-3 px-3">Defective Device</th>
-                  <th className="py-3 px-3 text-center">Mapping</th>
-                  <th className="py-3 px-3">Replacement Device</th>
-                  <th className="py-3 px-3">Status</th>
-                  <th className="py-3 px-3">Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map((row) => {
-                  const id = row._id || row.id;
-                  const defective = row.defective_device || {};
-                  const replacement = row.replacement_device || {};
-                  const confirmed = row.status === 'resolved';
-                  return (
-                    <tr
-                      key={id}
-                      onClick={() => setSelectedRow(row)}
-                      className={`border-b border-gray-100 cursor-pointer transition-colors ${
-                        confirmed
-                          ? 'bg-emerald-50 hover:bg-emerald-100'
-                          : 'bg-amber-50 hover:bg-amber-100'
-                      }`}
-                    >
-                      <td className="py-3 px-3 font-semibold text-gray-800">{row.report_id}</td>
-                      <td className="py-3 px-3">
-                        <DeviceIdentity
-                          device={{
-                            ...row,
-                            ...defective,
-                            serial_number: defective.serial_number || row.device_serial,
-                          }}
-                        />
-                      </td>
-                      <td className="py-3 px-3 text-center text-gray-500">-&gt;</td>
-                      <td className="py-3 px-3">
-                        <DeviceIdentity device={replacement} />
-                      </td>
-                      <td className="py-3 px-3">
-                        <StatusBadge status={row.status} size="sm" />
-                      </td>
-                      <td className="py-3 px-3 text-gray-700">
-                        {row.updated_at ? new Date(row.updated_at).toLocaleDateString() : '-'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={columns}
+            data={sortedRows}
+            searchable={false}
+            pageSize={TABLE_PAGE_SIZE}
+            totalItems={tableTotalCount || sortedRows.length}
+            currentPage={tablePage}
+            onPageChange={handleTablePageChange}
+            getExportRows={getExportRows}
+            getRowClassName={(row) =>
+              row.status === 'resolved' ? 'bg-emerald-50 hover:bg-emerald-100' : 'bg-amber-50 hover:bg-amber-100'
+            }
+            onRowClick={(row) => setSelectedRow(row)}
+          />
         )}
       </Card>
 

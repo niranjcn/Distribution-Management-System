@@ -183,7 +183,8 @@ async def get_pending_replacement_defects(
             "success": True,
             "message": "Pending replacement defects retrieved successfully",
             "data": result["data"],
-            "pagination": result["pagination"]
+            "pagination": result["pagination"],
+            "counts": result["counts"],
         }
     except HTTPException:
         raise
@@ -197,15 +198,27 @@ async def get_pending_replacement_defects(
 
 @router.get("/pending-dues/users", summary="Get hierarchy-scoped pending dues summary for returned defective devices")
 async def get_pending_due_users(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=1000),
+    search: Optional[str] = None,
+    search_by: Optional[str] = Query("all"),
     current_user: dict = Depends(require_any_role)
 ):
     """Get hierarchy-scoped pending dues summary for returned defective devices."""
     try:
-        rows = await defect_service.get_pending_dues_users(current_user=current_user)
+        result = await defect_service.get_pending_dues_users(
+            current_user=current_user,
+            page=page,
+            page_size=page_size,
+            search=search,
+            search_by=search_by,
+        )
         return {
             "success": True,
             "message": "Pending dues users retrieved successfully",
-            "data": rows,
+            "data": result["data"],
+            "pagination": result["pagination"],
+            "summary": result["summary"],
         }
     except HTTPException:
         raise
