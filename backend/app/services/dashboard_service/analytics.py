@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
+import asyncio
 
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
@@ -164,13 +165,15 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
     effective_start = start_date or month_start.isoformat()
     effective_year_start = start_date or year_start.isoformat()
 
-    device_stats = await device_service.get_device_stats(start_date, end_date)
-    user_stats = await user_service.get_user_stats()
-    defect_stats = await defect_service.get_defect_stats(start_date, end_date)
-    return_stats = await return_service.get_return_stats(start_date, end_date)
-    dist_stats = await distribution_service.get_distribution_stats(start_date, end_date)
+    device_stats, user_stats, defect_stats, return_stats, dist_stats, alerts = await asyncio.gather(
+        device_service.get_device_stats(start_date, end_date),
+        user_service.get_user_stats(),
+        defect_service.get_defect_stats(start_date, end_date),
+        return_service.get_return_stats(start_date, end_date),
+        distribution_service.get_distribution_stats(start_date, end_date),
+        get_system_alerts(user),
+    )
     approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
-    alerts = await get_system_alerts(user)
 
     async with async_session_factory() as session:
         # Defect month/year totals (respect range if provided)

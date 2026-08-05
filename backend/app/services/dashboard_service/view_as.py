@@ -107,7 +107,7 @@ async def get_view_as_dashboard(
         ret_dc = f"def.reported_by IN ({str_ph})" if str_scope_ids else "1=0"
 
         rows = (await session.execute(
-            text(f"SELECT r.* FROM returns r LEFT JOIN defects def ON def.id = r.defect_id WHERE {ret_dc} AND {date_clause.replace('created_at', 'r.created_at')} LIMIT 1000"), ret_params
+            text(f"SELECT r.* FROM returns r LEFT JOIN defects def ON r.defect_id = CAST(def.id AS CHAR) WHERE {ret_dc} AND {date_clause.replace('created_at', 'r.created_at')} LIMIT 1000"), ret_params
         )).mappings().all()
         target_returns = [dict(r) for r in rows]
 

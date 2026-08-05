@@ -156,7 +156,7 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str,
         # Defects reported by this user
         params4 = {"ruid": target_user["id"]}
         date_clause4 = _build_named_date_filter(params4, start_date, end_date)
-        dfc = f"CAST(reported_by AS CHAR) = :ruid AND {date_clause4}"
+        dfc = f"reported_by = :ruid AND {date_clause4}"
         total_defects = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {dfc}"), params4)).scalar()
 
         # Defect/distribution trend (aggregated, not N+1)
@@ -172,7 +172,7 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str,
             reported_by_month = {
                 str(row["m"]): int(row["total"])
                 for row in (await session.execute(
-                    text("SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = :ruid AND created_at >= :ts AND created_at < :te GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m"),
+                    text("SELECT SUBSTRING(created_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE reported_by = :ruid AND created_at >= :ts AND created_at < :te GROUP BY SUBSTRING(created_at, 1, 7) ORDER BY m"),
                     {"ruid": target_user["id"], "ts": trend_start.isoformat(), "te": trend_end.isoformat()}
                 )).mappings().all()
             }
@@ -180,7 +180,7 @@ async def get_user_kpi(current_user: Dict[str, Any], target_user_id: str,
             resolved_by_month = {
                 str(row["m"]): int(row["total"])
                 for row in (await session.execute(
-                    text("SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE CAST(reported_by AS CHAR) = :ruid AND status = 'resolved' AND resolved_at >= :ts AND resolved_at < :te GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m"),
+                    text("SELECT SUBSTRING(resolved_at, 1, 7) AS m, COUNT(*) AS total FROM defects WHERE reported_by = :ruid AND status = 'resolved' AND resolved_at >= :ts AND resolved_at < :te GROUP BY SUBSTRING(resolved_at, 1, 7) ORDER BY m"),
                     {"ruid": target_user["id"], "ts": trend_start.isoformat(), "te": trend_end.isoformat()}
                 )).mappings().all()
             }
