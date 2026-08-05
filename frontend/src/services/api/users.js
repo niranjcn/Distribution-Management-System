@@ -7,6 +7,11 @@ export const usersAPI = {
     return response;
   },
 
+  getUserStats: async () => {
+    const response = await apiRequest('/users/stats');
+    return response;
+  },
+
   getUser: async (userId) => {
     const response = await apiRequest(`/users/${userId}`);
     return response;

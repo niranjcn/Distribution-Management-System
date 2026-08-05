@@ -1,10 +1,21 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Numeric
+from sqlalchemy import Column, Integer, String, Text, DateTime, Numeric, Index
 from sqlalchemy import Boolean as SqlBool
 from app.db_models.base import Base
 
 
 class Defect(Base):
     __tablename__ = "defects"
+
+    __table_args__ = (
+        Index("idx_defects_status_created", "status", "created_at"),
+        Index("idx_defects_device_status", "device_id", "status"),
+        Index("idx_defects_reported_by_created", "reported_by", "created_at"),
+        Index("idx_defects_created_at", "created_at"),
+        Index("idx_defects_resolved_at", "resolved_at"),
+        Index("idx_defects_return_approved_at", "return_approved_at"),
+        Index("idx_defects_replacement_device_id", "replacement_device_id"),
+        Index("idx_defects_payment_confirmed", "payment_confirmed", "return_amount"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     report_id = Column(String(128), unique=True, nullable=False)

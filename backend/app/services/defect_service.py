@@ -271,10 +271,11 @@ async def get_defects(
             role = visibility_user.get("role")
             if role not in ["super_admin", "md_director", "manager", "pdic_staff"]:
                 scoped_user_ids = await _get_report_scope_user_ids(session, visibility_user)
-                if scoped_user_ids:
-                    ph = ",".join([f":sr_{i}" for i in range(len(scoped_user_ids))])
-                    conditions.append(f"CAST(reported_by AS CHAR) IN ({ph})")
-                    for i, sid in enumerate(sorted(scoped_user_ids)):
+                scoped_ids_int = sorted({int(s) for s in scoped_user_ids if str(s).isdigit()}) if scoped_user_ids else []
+                if scoped_ids_int:
+                    ph = ",".join([f":sr_{i}" for i in range(len(scoped_ids_int))])
+                    conditions.append(f"reported_by IN ({ph})")
+                    for i, sid in enumerate(scoped_ids_int):
                         params[f"sr_{i}"] = sid
                 else:
                     conditions.append("1=0")
@@ -702,11 +703,17 @@ async def confirm_defect_payment(
     return await get_defect_by_id(defect_id)
 
 
-async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+async def get_pending_dues_users(
+    current_user: Optional[Dict[str, Any]] = None,
+    page: int = 1,
+    page_size: int = 100,
+    search: Optional[str] = None,
+    search_by: Optional[str] = "all",
+) -> Dict[str, Any]:
     async with async_session_factory() as session:
         scope_user_ids = await _get_report_scope_user_ids(session, current_user) if current_user else None
         if scope_user_ids is not None and len(scope_user_ids) == 0:
-            return []
+            return {"data": [], "pagination": get_pagination(page, page_size, 0)}
 
         conditions = [
             "COALESCE(d.return_amount, 0) > 0",
@@ -723,8 +730,98 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
             for i, sid in enumerate(sorted(scope_user_ids)):
                 params[f"sr_{i}"] = sid
 
+        search_conditions: List[str] = []
+        normalized_search_by = str(search_by or "all").strip().lower()
+        if search:
+            like = f"%{search}%"
+            if normalized_search_by == "user_name":
+                search_conditions.append(
+                    "COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name, due.name) LIKE :search_like"
+                )
+                params["search_like"] = like
+            elif normalized_search_by == "user_role":
+                search_conditions.append("due.role LIKE :search_like")
+                params["search_like"] = like
+            elif normalized_search_by == "parent_name":
+                search_conditions.append("parent.name LIKE :search_like")
+                params["search_like"] = like
+            elif normalized_search_by == "digital_id":
+                search_conditions.append(
+                    "EXISTS (SELECT 1 FROM digital_identities di WHERE di.user_id = due.id AND di.digital_id LIKE :search_like)"
+                )
+                params["search_like"] = like
+            elif normalized_search_by == "broadband_id":
+                search_conditions.append(
+                    "EXISTS (SELECT 1 FROM digital_identities di WHERE di.user_id = due.id AND di.broadband_id LIKE :search_like)"
+                )
+                params["search_like"] = like
+            elif normalized_search_by == "total_due":
+                search_conditions.append("(SUM(COALESCE(d.return_amount, 0)) LIKE :search_like)")
+                params["search_like"] = like
+            else:
+                search_conditions.append(
+                    "("
+                    "COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name, due.name) LIKE :search_like1 "
+                    "OR due.role LIKE :search_like2 "
+                    "OR parent.name LIKE :search_like3 "
+                    "OR (SUM(COALESCE(d.return_amount, 0)) LIKE :search_like4) "
+                    "OR EXISTS (SELECT 1 FROM digital_identities di WHERE di.user_id = due.id "
+                    "  AND (di.digital_id LIKE :search_like5 OR di.broadband_id LIKE :search_like6))"
+                    ")"
+                )
+                params["search_like1"] = like
+                params["search_like2"] = like
+                params["search_like3"] = like
+                params["search_like4"] = like
+                params["search_like5"] = like
+                params["search_like6"] = like
+
+        base_where_clause = " AND ".join(conditions)
+
+        # Aggregate summary across the full scoped set (unaffected by search/pagination).
+        summary = {"users_count": 0, "total_due": 0, "total_items": 0}
+        summary_params = {k: v for k, v in params.items() if not k.startswith("search_like")}
+        summary_rows = (await session.execute(
+            text(f"""
+                SELECT COUNT(DISTINCT due.id) AS users_count,
+                       COALESCE(SUM(COALESCE(d.return_amount, 0)), 0) AS total_due,
+                       COUNT(*) AS total_items
+                FROM defects d
+                LEFT JOIN returns r ON ((r.defect_id = CAST(d.id AS CHAR)) OR r.return_id = d.auto_return_id)
+                LEFT JOIN users due ON due.id = COALESCE(d.payment_due_user_id, d.reported_by)
+                LEFT JOIN users parent ON parent.id = due.parent_id
+                WHERE {base_where_clause}
+            """),
+            summary_params
+        )).mappings().first()
+        if summary_rows:
+            summary = {
+                "users_count": int(summary_rows["users_count"] or 0),
+                "total_due": float(summary_rows["total_due"] or 0),
+                "total_items": int(summary_rows["total_items"] or 0),
+            }
+
+        conditions.extend(search_conditions)
+
         where_clause = " AND ".join(conditions)
 
+        total_result = (await session.execute(
+            text(f"""
+                SELECT COUNT(*) FROM (
+                    SELECT due.id
+                    FROM defects d
+                    LEFT JOIN returns r ON ((r.defect_id = CAST(d.id AS CHAR)) OR r.return_id = d.auto_return_id)
+                    LEFT JOIN users due ON due.id = COALESCE(d.payment_due_user_id, d.reported_by)
+                    LEFT JOIN users parent ON parent.id = due.parent_id
+                    WHERE {where_clause}
+                    GROUP BY due.id
+                ) AS pending_due_users
+            """),
+            params
+        )).scalar() or 0
+
+        offset = (page - 1) * page_size
+        limit_params = {**params, "_limit": page_size, "_offset": offset}
         rows = (await session.execute(
             text(f"""
                 SELECT
@@ -736,7 +833,7 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
                     COUNT(*) AS due_count,
                     SUM(COALESCE(d.return_amount, 0)) AS total_due
                 FROM defects d
-                LEFT JOIN returns r ON ((CAST(r.defect_id AS UNSIGNED) = d.id) OR r.return_id = d.auto_return_id)
+                LEFT JOIN returns r ON ((r.defect_id = CAST(d.id AS CHAR)) OR r.return_id = d.auto_return_id)
                 LEFT JOIN users due ON due.id = COALESCE(d.payment_due_user_id, d.reported_by)
                 LEFT JOIN users parent ON parent.id = due.parent_id
                 WHERE {where_clause}
@@ -746,8 +843,9 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
                          due.parent_id,
                          parent.name
                 ORDER BY total_due DESC, due_count DESC
+                LIMIT :_limit OFFSET :_offset
             """),
-            params
+            limit_params
         )).mappings().all()
         result = [dict(r) for r in rows]
 
@@ -770,7 +868,11 @@ async def get_pending_dues_users(current_user: Optional[Dict[str, Any]] = None) 
             for row in result:
                 row["digital_ids"] = []
 
-        return result
+        return {
+            "data": result,
+            "pagination": get_pagination(page, page_size, total_result),
+            "summary": summary,
+        }
 
 
 async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -806,7 +908,7 @@ async def get_pending_dues_for_user(user_id: str, current_user: Optional[Dict[st
                     dev.model AS device_model,
                     dev.manufacturer AS device_manufacturer
                 FROM defects d
-                LEFT JOIN returns r ON ((CAST(r.defect_id AS UNSIGNED) = d.id) OR r.return_id = d.auto_return_id)
+                LEFT JOIN returns r ON ((r.defect_id = CAST(d.id AS CHAR)) OR r.return_id = d.auto_return_id)
                 LEFT JOIN devices dev ON dev.id = d.device_id
                 WHERE COALESCE(d.payment_due_user_id, d.reported_by) = :uid
                   AND COALESCE(d.return_amount, 0) > 0
@@ -1417,10 +1519,14 @@ async def get_replacement_defects(
 
         scoped_user_ids = await _get_report_scope_user_ids(session, current_user)
         if scoped_user_ids is not None:
-            ph = ",".join([f":sr_{i}" for i in range(len(scoped_user_ids))])
-            conditions.append(f"CAST(reported_by AS CHAR) IN ({ph})")
-            for i, sid in enumerate(scoped_user_ids):
-                params[f"sr_{i}"] = sid
+            scoped_ids_int = sorted({int(s) for s in scoped_user_ids if str(s).isdigit()})
+            if not scoped_ids_int:
+                conditions.append("1=0")
+            else:
+                ph = ",".join([f":sr_{i}" for i in range(len(scoped_ids_int))])
+                conditions.append(f"reported_by IN ({ph})")
+                for i, sid in enumerate(scoped_ids_int):
+                    params[f"sr_{i}"] = sid
 
         where = " AND ".join(conditions)
 
@@ -1458,15 +1564,35 @@ async def get_pending_replacement_defects(
 
         scoped_user_ids = await _get_report_scope_user_ids(session, current_user)
         if scoped_user_ids is not None:
-            ph = ",".join([f":sr_{i}" for i in range(len(scoped_user_ids))])
-            conditions.append(f"CAST(reported_by AS CHAR) IN ({ph})")
-            for i, sid in enumerate(scoped_user_ids):
-                params[f"sr_{i}"] = sid
+            scoped_ids_int = sorted({int(s) for s in scoped_user_ids if str(s).isdigit()})
+            if not scoped_ids_int:
+                conditions.append("1=0")
+            else:
+                ph = ",".join([f":sr_{i}" for i in range(len(scoped_ids_int))])
+                conditions.append(f"reported_by IN ({ph})")
+                for i, sid in enumerate(scoped_ids_int):
+                    params[f"sr_{i}"] = sid
 
         where = " AND ".join(conditions)
 
         total = (await session.execute(
             text(f"SELECT COUNT(*) FROM defects WHERE {where}"), params
+        )).scalar() or 0
+
+        # Count readiness across the full pending set (not just the requested page).
+        # auto_return_status is derived in Python from the linked return row, so
+        # derive it here with a LEFT JOIN instead of referencing a column.
+        ready_where = " AND ".join(
+            f"d.{c}" if not c.startswith("d.") else c for c in conditions
+        )
+        ready_total = (await session.execute(
+            text(f"""
+                SELECT COUNT(*) FROM defects d
+                LEFT JOIN returns r ON r.return_id = d.auto_return_id
+                WHERE {ready_where}
+                  AND (r.status IS NULL OR r.status = 'received')
+            """),
+            params
         )).scalar() or 0
 
         offset = (page - 1) * page_size
@@ -1485,7 +1611,12 @@ async def get_pending_replacement_defects(
 
         return {
             "data": data,
-            "pagination": get_pagination(page, page_size, total)
+            "pagination": get_pagination(page, page_size, total),
+            "counts": {
+                "awaiting": total,
+                "ready": ready_total,
+                "waiting": total - ready_total,
+            },
         }
 
 

@@ -13,16 +13,24 @@ async def get_recent_activities(user: Dict[str, Any], limit: int = 10) -> list:
 
     async with async_session_factory() as session:
         if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+            # Management feed reads the denormalised activities table (migration
+            # 0021, kept in sync by AFTER INSERT triggers) so the hot path is a
+            # single index-ordered scan instead of a scan over device_history.
             rows = (await session.execute(
-                text("SELECT * FROM device_history WHERE action NOT IN ('bulk_registered', 'bulk_distributed') ORDER BY timestamp DESC LIMIT :lim"),
+                text("""SELECT activity_id AS id, action, actor AS performed_by_name,
+                               activity_date AS timestamp
+                        FROM activities
+                        WHERE category = 'device'
+                        ORDER BY activity_date DESC, activity_id DESC
+                        LIMIT :lim"""),
                 {"lim": limit}
             )).mappings().all()
         else:
             rows = (await session.execute(
-                text("""SELECT * FROM device_history
+                text("""SELECT id, action, performed_by_name, timestamp FROM device_history
                 WHERE (performed_by = :uid OR from_user_id = :uid2 OR to_user_id = :uid3)
                   AND action NOT IN ('bulk_registered', 'bulk_distributed')
-                ORDER BY timestamp DESC LIMIT :lim"""),
+                ORDER BY timestamp DESC, id DESC LIMIT :lim"""),
                 {"uid": user_id, "uid2": user_id, "uid3": user_id, "lim": limit}
             )).mappings().all()
 
@@ -40,6 +48,26 @@ async def get_recent_activities(user: Dict[str, Any], limit: int = 10) -> list:
     return activities
 
 
+def _build_api_activity_link(path_value: str) -> Optional[str]:
+    if path_value.startswith("/activity/devices"):
+        return "/devices"
+    if path_value.startswith("/activity/distributions"):
+        return "/distributions"
+    if path_value.startswith("/activity/users"):
+        return "/users"
+    if path_value.startswith("/activity/defects"):
+        return "/defects"
+    if path_value.startswith("/activity/returns"):
+        return "/returns"
+    if path_value.startswith("/activity/pending-dues"):
+        return "/defects"
+    if path_value.startswith("/activity/reports"):
+        return "/backup"
+    if path_value.startswith("/activity/external-inventory"):
+        return "/external-inventory"
+    return None
+
+
 async def get_admin_activities(
     page: int = 1,
     page_size: int = 50,
@@ -49,207 +77,102 @@ async def get_admin_activities(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """SQL-paginated admin-wide activities.
+
+    Reads from the denormalised ``activities`` table, which is maintained by
+    AFTER INSERT triggers on ``device_history``, ``external_device_history``
+    and ``api_activity_logs`` (migration 0021). The whole feed is therefore a
+    single indexed SELECT + COUNT instead of a UNION over three audit tables.
+    """
     normalized_category = (category or "all").strip().lower()
-    activities: List[Dict[str, Any]] = []
-    fetch_limit = (page + 1) * page_size
-    table_total = 0
+
+    category_filter = {
+        "all": "('device', 'inventory', 'api')",
+        "device": "('device')",
+        "inventory": "('inventory')",
+        "api": "('api')",
+    }.get(normalized_category)
+
+    if not category_filter:
+        return {
+            "data": [],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": 0,
+                "total_pages": 0,
+            },
+        }
+
+    conditions = ["category IN " + category_filter]
+    params: Dict[str, Any] = {}
+
+    # Defense in depth: the triggers already exclude these rows, but keep the
+    # filters here too so rows missed by a backfill can never surface.
+    conditions.append("NOT (category = 'device' AND action IN ('bulk_registered', 'bulk_distributed'))")
+    conditions.append("NOT (category = 'api' AND description LIKE '% returned %')")
+
+    if actor:
+        conditions.append("actor LIKE :actor")
+        params["actor"] = f"%{actor}%"
+
+    if search:
+        conditions.append("search_text LIKE :search")
+        params["search"] = f"%{search}%"
+
+    if start_date:
+        conditions.append("activity_date >= :start_date")
+        params["start_date"] = start_date
+
+    if end_date:
+        conditions.append("activity_date <= :end_date")
+        params["end_date"] = end_date
+
+    where = " AND ".join(conditions)
 
     async with async_session_factory() as session:
-        if normalized_category in {"all", "device"}:
-            conditions = ["1=1"]
-            params: Dict[str, Any] = {}
+        total = (await session.execute(
+            text(f"SELECT COUNT(*) FROM activities WHERE {where}"),
+            params,
+        )).scalar() or 0
 
-            conditions.append("action != :bulk_action")
-            params["bulk_action"] = "bulk_registered"
+        offset = max((page - 1) * page_size, 0)
+        rows = (await session.execute(
+            text(
+                "SELECT activity_id, category, action, actor, description, "
+                "activity_date AS date, method, path "
+                f"FROM activities WHERE {where} "
+                "ORDER BY activity_date DESC, "
+                "FIELD(category, 'device', 'inventory', 'api'), activity_id DESC "
+                "LIMIT :offset, :page_size"
+            ),
+            {**params, "offset": offset, "page_size": page_size},
+        )).mappings().all()
 
-            # Bulk distribution receipts write one per-device history row for
-            # tracking purposes but must surface as a single activity entry.
-            conditions.append("action != :bulk_action2")
-            params["bulk_action2"] = "bulk_distributed"
-
-            conditions.append("(notes IS NULL OR notes NOT LIKE :excl1)")
-            params["excl1"] = "Device replaced by % for defect %"
-            conditions.append("(notes IS NULL OR notes NOT LIKE :excl2)")
-            params["excl2"] = "Device serviced and reassigned for defect %"
-
-            if actor:
-                conditions.append("performed_by_name LIKE :actor")
-                params["actor"] = f"%{actor}%"
-
-            if search:
-                like = f"%{search}%"
-                conditions.append("(action LIKE :sl1 OR notes LIKE :sl2 OR device_id LIKE :sl3 OR performed_by_name LIKE :sl4)")
-                for i, key in enumerate(["sl1", "sl2", "sl3", "sl4"]):
-                    params[key] = like
-
-            if start_date:
-                conditions.append("timestamp >= :start_date")
-                params["start_date"] = start_date
-
-            if end_date:
-                conditions.append("timestamp <= :end_date")
-                params["end_date"] = end_date
-
-            where = " AND ".join(conditions)
-            table_total += (await session.execute(
-                text(f"SELECT COUNT(*) FROM device_history WHERE {where}"), params
-            )).scalar() or 0
-
-            rows = (await session.execute(
-                text(f"""SELECT id, device_id, action, notes, performed_by_name, timestamp
-                    FROM device_history
-                    WHERE {where}
-                    ORDER BY timestamp DESC
-                    LIMIT :lim"""),
-                {**params, "lim": fetch_limit}
-            )).mappings().all()
-            for item in rows:
-                actor_name = item.get("performed_by_name") or "Unknown"
-                description = (
-                    item.get("notes")
-                    or f"{item.get('action', 'updated')} on device {item.get('device_id', '-')}."
-                )
-                activities.append({
-                    "id": f"device-{item.get('id')}",
-                    "category": "device",
-                    "action": item.get("action") or "device_update",
-                    "actor": actor_name,
-                    "description": description,
-                    "date": item.get("timestamp"),
-                    "link": None,
-                })
-
-        if normalized_category in {"all", "inventory"}:
-            conditions = ["1=1"]
-            params: Dict[str, Any] = {}
-
-            if actor:
-                conditions.append("distributed_by_name LIKE :actor")
-                params["actor"] = f"%{actor}%"
-
-            if search:
-                like = f"%{search}%"
-                conditions.append("(history_id LIKE :sl1 OR item_name LIKE :sl2 OR recipient_name LIKE :sl3 OR distributed_by_name LIKE :sl4 OR notes LIKE :sl5)")
-                for i, key in enumerate([f"sl{i+1}" for i in range(5)]):
-                    params[key] = like
-
-            if start_date:
-                conditions.append("distributed_at >= :start_date")
-                params["start_date"] = start_date
-
-            if end_date:
-                conditions.append("distributed_at <= :end_date")
-                params["end_date"] = end_date
-
-            where = " AND ".join(conditions)
-            table_total += (await session.execute(
-                text(f"SELECT COUNT(*) FROM external_device_history WHERE {where}"), params
-            )).scalar() or 0
-
-            rows = (await session.execute(
-                text(f"""SELECT id, history_id, item_name, quantity, recipient_name, distributed_by_name, distributed_at, notes
-                    FROM external_device_history
-                    WHERE {where}
-                    ORDER BY distributed_at DESC
-                    LIMIT :lim"""),
-                {**params, "lim": fetch_limit}
-            )).mappings().all()
-            for item in rows:
-                actor_name = item.get("distributed_by_name") or "Unknown"
-                description = (
-                    item.get("notes")
-                    or f"Distributed {item.get('item_name', '-')} to {item.get('recipient_name') or '-'}."
-                )
-                activities.append({
-                    "id": f"inventory-{item.get('id')}",
-                    "category": "inventory",
-                    "action": "distribution",
-                    "actor": actor_name,
-                    "description": description,
-                    "date": item.get("distributed_at"),
-                    "link": None,
-                })
-
-        if normalized_category in {"all", "api"}:
-            conditions = ["1=1"]
-            params: Dict[str, Any] = {}
-
-            conditions.append("description NOT LIKE :excl")
-            params["excl"] = "% returned %"
-
-            if actor:
-                conditions.append("actor_name LIKE :actor")
-                params["actor"] = f"%{actor}%"
-
-            if search:
-                like = f"%{search}%"
-                conditions.append("(description LIKE :sl1 OR path LIKE :sl2 OR method LIKE :sl3 OR actor_name LIKE :sl4)")
-                for i, key in enumerate([f"sl{i+1}" for i in range(4)]):
-                    params[key] = like
-
-            if start_date:
-                conditions.append("created_at >= :start_date")
-                params["start_date"] = start_date
-
-            if end_date:
-                conditions.append("created_at <= :end_date")
-                params["end_date"] = end_date
-
-            where = " AND ".join(conditions)
-            table_total += (await session.execute(
-                text(f"SELECT COUNT(*) FROM api_activity_logs WHERE {where}"), params
-            )).scalar() or 0
-
-            rows = (await session.execute(
-                text(f"""SELECT id, actor_name, method, path, status_code, description, created_at
-                    FROM api_activity_logs
-                    WHERE {where}
-                    ORDER BY created_at DESC
-                    LIMIT :lim"""),
-                {**params, "lim": fetch_limit}
-            )).mappings().all()
-            for item in rows:
-                path_value = str(item.get("path") or "")
-                link = None
-                if path_value.startswith("/activity/devices"):
-                    link = "/devices"
-                elif path_value.startswith("/activity/distributions"):
-                    link = "/distributions"
-                elif path_value.startswith("/activity/users"):
-                    link = "/users"
-                elif path_value.startswith("/activity/defects"):
-                    link = "/defects"
-                elif path_value.startswith("/activity/returns"):
-                    link = "/returns"
-                elif path_value.startswith("/activity/pending-dues"):
-                    link = "/defects"
-                elif path_value.startswith("/activity/reports"):
-                    link = "/backup"
-                elif path_value.startswith("/activity/external-inventory"):
-                    link = "/external-inventory"
-
-                activities.append({
-                    "id": f"api-{item.get('id')}",
-                    "category": "api",
-                    "action": f"{item.get('method', 'API')} {item.get('path', '')}",
-                    "actor": item.get("actor_name") or "Anonymous",
-                    "description": item.get("description") or "API activity",
-                    "date": item.get("created_at"),
-                    "link": link,
-                })
-
-    activities.sort(key=lambda x: str(x.get("date") or ""), reverse=True)
-    start_idx = max(0, (page - 1) * page_size)
-    end_idx = start_idx + page_size
-    paged = activities[start_idx:end_idx]
+    activities: List[Dict[str, Any]] = []
+    for item in rows:
+        category_name = item.get("category")
+        entry = {
+            "id": item.get("activity_id"),
+            "category": category_name,
+            "action": item.get("action"),
+            "actor": item.get("actor") or "Unknown",
+            "description": item.get("description"),
+            "date": item.get("date"),
+        }
+        if category_name == "api":
+            entry["link"] = _build_api_activity_link(str(item.get("path") or ""))
+        else:
+            entry["link"] = None
+        activities.append(entry)
 
     return {
-        "data": paged,
+        "data": activities,
         "pagination": {
             "page": page,
             "page_size": page_size,
-            "total": table_total,
-            "total_pages": ((table_total + page_size - 1) // page_size) if page_size > 0 else 0,
+            "total": total,
+            "total_pages": ((total + page_size - 1) // page_size) if page_size > 0 else 0,
         },
     }
 

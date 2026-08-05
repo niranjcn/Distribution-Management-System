@@ -34,32 +34,22 @@ const AdminDashboard = () => {
       try {
         setLoading(true);
         const dateParams = buildDateParams(dateRange);
-        const [statsRes, advancedRes, usersRes, defectsRes, distribAnalyticsRes] = await Promise.all([
+        const [statsRes, advancedRes, usersRes, defectsRes, distribAnalyticsRes, activitiesRes, reassignRes] = await Promise.all([
           dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
           dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } } }; }),
           usersAPI.getUsers({ page_size: 10 }).catch(err => { console.error('Failed to load users:', err); showToast('Failed to load users', 'error'); return { data: [] }; }),
           defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
           dashboardAPI.getDistributionDeviceAnalytics(dateParams).catch(err => { console.error('Failed to load distribution analytics:', err); showToast('Failed to load distribution analytics', 'error'); return { data: null }; }),
+          dashboardAPI.getRecentActivities().catch(err => { console.error('Failed to load recent activities:', err); return { data: [] }; }),
+          reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 }).catch(err => { console.error('Failed to load pending reassignments:', err); return { data: [], pagination: {} }; }),
         ]);
         setStats(statsRes.data || {});
         setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [], reliability: { summary: {}, trend: [] } });
         setUsers(usersRes.data || []);
         setDefectReports(defectsRes.data || []);
         setDistribAnalytics(distribAnalyticsRes.data || null);
-
-        try {
-          const activitiesRes = await dashboardAPI.getRecentActivities();
-          setRecentActivities(activitiesRes.data || []);
-        } catch {
-          setRecentActivities([]);
-        }
-
-        try {
-          const reassignRes = await reassignmentRequestsAPI.getRequests({ status: 'pending', page_size: 1 });
-          setPendingReassignments(reassignRes?.pagination?.total || 0);
-        } catch {
-          setPendingReassignments(0);
-        }
+        setRecentActivities(activitiesRes.data || []);
+        setPendingReassignments(reassignRes?.pagination?.total || 0);
       } catch (error) {
         console.error('Failed to load dashboard data:', error);
       } finally {

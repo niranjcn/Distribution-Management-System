@@ -21,6 +21,7 @@ import {
   changeRequestsAPI as _changeRequestsAPI,
   reassignmentRequestsAPI as _reassignmentRequestsAPI,
   digitalIdsAPI as _digitalIdsAPI,
+  approvalsAPI as _approvalsAPI,
 } from './api/index.js';
 
 export const API_BASE_URL = _API_BASE_URL;
@@ -45,6 +46,7 @@ export const dashboardAPI = _dashboardAPI;
 export const changeRequestsAPI = _changeRequestsAPI;
 export const reassignmentRequestsAPI = _reassignmentRequestsAPI;
 export const digitalIdsAPI = _digitalIdsAPI;
+export const approvalsAPI = _approvalsAPI;
 
 const api = {
   auth: _authAPI,
@@ -61,6 +63,7 @@ const api = {
   changeRequests: _changeRequestsAPI,
   reassignmentRequests: _reassignmentRequestsAPI,
   digitalIds: _digitalIdsAPI,
+  approvals: _approvalsAPI,
 };
 
 export default api;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DataTable from '../components/ui/DataTable';
 import Card from '../components/ui/Card';
@@ -7,7 +7,7 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { distributionsAPI, returnsAPI, defectsAPI } from '../services/api';
+import { approvalsAPI, distributionsAPI, returnsAPI, defectsAPI } from '../services/api';
 import {
   Check,
   X,
@@ -21,6 +21,16 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
+const TYPE_ICONS = {
+  distribution: Package,
+  return_confirmation: PackageCheck,
+  defect: AlertTriangle,
+};
+
 const Approvals = () => {
   const { hasRole, user } = useAuth();
   const navigate = useNavigate();
@@ -32,8 +42,14 @@ const Approvals = () => {
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
-  const [allPendingItems, setAllPendingItems] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [tablePage, setTablePage] = useState(1);
+  const [counts, setCounts] = useState({ all: 0, distribution: 0, return_confirmation: 0, defect: 0 });
   const [loading, setLoading] = useState(true);
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const queryVersionRef = useRef(0);
 
   const canAccessApprovals = hasRole(['super_admin', 'manager', 'pdic_staff']);
 
@@ -50,125 +66,92 @@ const Approvals = () => {
     );
   }
 
-  const fetchPendingItems = async () => {
+  const buildParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
+    const params = { page: windowPage, page_size: pageSize };
+    if (activeTab !== 'all') {
+      params.item_type = activeTab;
+    }
+    return params;
+  };
+
+  const loadWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = queryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setLoading(true);
+
     try {
-      setLoading(true);
-      const items = [];
+      const response = await approvalsAPI.getPendingApprovals(buildParams(windowPage));
+      if (queryVersion !== queryVersionRef.current) return;
 
-      try {
-        const distResponse = await distributionsAPI.getDistributions({ status: 'pending' });
-        (distResponse.data || []).forEach((d) => {
-          items.push({
-            ...d,
-            id: d._id || d.id,
-            type: 'distribution',
-            icon: Package,
-            title: `Distribution to ${d.to_user_name || 'Unknown'}`,
-            requestedBy: d.from_user_name || 'Unknown',
-            requestDate: d.created_at,
-            status: d.status,
-            recipient: d.to_user_name || 'Unknown',
-            deviceCount: d.device_count || d.device_ids?.length || 0,
-          });
-        });
-      } catch (e) {
-        console.error('Failed to fetch distributions:', e);
-      }
+      const pageRows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || pageRows.length);
 
-      try {
-        const retResponse = await returnsAPI.getReturns();
-        (retResponse.data || [])
-          .filter((r) => ['pending', 'approved'].includes(String(r.status || '').toLowerCase()))
-          .forEach((r) => {
-            items.push({
-              ...r,
-              id: r._id || r.id,
-              type: 'return_confirmation',
-              icon: PackageCheck,
-              title: `Confirm Return Receipt - ${r.device_name || r.device_type || 'Unknown Device'}`,
-              requestedBy: r.initiated_by_name || r.requested_by_name || 'Unknown',
-              requestDate: r.created_at,
-              status: r.status,
-              device: r.device_name || r.device_type || 'Unknown Device',
-              reason: r.reason || '-',
-            });
-          });
-      } catch (e) {
-        console.error('Failed to fetch returns:', e);
-      }
+      const decorated = pageRows.map((row) => ({
+        ...row,
+        icon: TYPE_ICONS[row.type] || Clock,
+      }));
 
-      try {
-        const defResponse = await defectsAPI.getDefects({ status: 'reported' });
-        (defResponse.data || []).forEach((d) => {
-          items.push({
-            ...d,
-            id: d._id || d.id,
-            type: 'defect',
-            icon: AlertTriangle,
-            title: `Defect Report - ${d.device_name || d.device_type || 'Unknown Device'}`,
-            requestedBy: d.reported_by_name || 'Unknown',
-            requestDate: d.created_at,
-            status: d.status,
-            device: d.device_name || d.device_type || 'Unknown Device',
-            defectType: d.defect_type || '-',
-            severity: d.severity || '-',
-          });
-        });
-      } catch (e) {
-        console.error('Failed to fetch defects:', e);
-      }
-
-      items.sort((a, b) => new Date(b.requestDate || 0) - new Date(a.requestDate || 0));
-
-      const deduplicated = Array.from(
-        new Map(items.map((item) => [`${item.type}:${item.id}`, item])).values()
-      );
-
-      setAllPendingItems(deduplicated);
+      setRows((prev) => {
+        const merged = reset ? decorated : [...prev, ...decorated];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = `${row.type}:${row.id}`;
+          if (seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+      setTableTotalCount(total);
+      setCounts({
+        all: Number(response?.counts?.all ?? total),
+        distribution: Number(response?.counts?.distribution ?? 0),
+        return_confirmation: Number(response?.counts?.return_confirmation ?? 0),
+        defect: Number(response?.counts?.defect ?? 0),
+      });
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
     } catch (error) {
-      console.error('Failed to fetch approvals:', error);
+      showToast(error.message || 'Failed to load pending actions', 'error');
     } finally {
-      setLoading(false);
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setLoading(false);
+    }
+  };
+
+  const resetAndLoad = async () => {
+    queryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setRows([]);
+    setTableTotalCount(0);
+    setTablePage(1);
+    await loadWindow(1, { reset: true, withLoading: true });
+  };
+
+  const handleTablePageChange = async (nextPage) => {
+    setTablePage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(rows.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && rows.length < tableTotalCount;
+    if (needsNextWindow) {
+      await loadWindow(loadedWindowRef.current + 1, { withLoading: true });
     }
   };
 
   useEffect(() => {
     if (user?.role) {
-      fetchPendingItems();
+      resetAndLoad();
     }
-  }, [user?.role]);
+  }, [user?.role, activeTab]);
 
   useEffect(() => {
     const handler = () => {
-      fetchPendingItems();
+      resetAndLoad();
     };
     window.addEventListener('appDataMutation', handler);
     return () => window.removeEventListener('appDataMutation', handler);
-  }, []);
-
-  const filteredItems = useMemo(() => {
-    if (activeTab === 'all') return allPendingItems;
-    return allPendingItems.filter((item) => item.type === activeTab);
-  }, [activeTab, allPendingItems]);
-
-  const tabs = [
-    { id: 'all', label: 'All', count: allPendingItems.length },
-    {
-      id: 'distribution',
-      label: 'Distributions',
-      count: allPendingItems.filter((i) => i.type === 'distribution').length,
-    },
-    {
-      id: 'return_confirmation',
-      label: 'Return Confirmations',
-      count: allPendingItems.filter((i) => i.type === 'return_confirmation').length,
-    },
-    {
-      id: 'defect',
-      label: 'Defects',
-      count: allPendingItems.filter((i) => i.type === 'defect').length,
-    },
-  ];
+  }, [activeTab]);
 
   const handleApprove = async () => {
     try {
@@ -325,26 +308,18 @@ const Approvals = () => {
     },
   ];
 
+  const tabs = [
+    { id: 'all', label: 'All', count: counts.all },
+    { id: 'distribution', label: 'Distributions', count: counts.distribution },
+    { id: 'return_confirmation', label: 'Return Confirmations', count: counts.return_confirmation },
+    { id: 'defect', label: 'Defects', count: counts.defect },
+  ];
+
   const stats = [
-    { label: 'Pending', value: allPendingItems.length, icon: Clock, color: 'yellow' },
-    {
-      label: 'Distributions',
-      value: allPendingItems.filter((i) => i.type === 'distribution').length,
-      icon: Package,
-      color: 'blue',
-    },
-    {
-      label: 'Return Confirmations',
-      value: allPendingItems.filter((i) => i.type === 'return_confirmation').length,
-      icon: PackageCheck,
-      color: 'purple',
-    },
-    {
-      label: 'Defects',
-      value: allPendingItems.filter((i) => i.type === 'defect').length,
-      icon: AlertTriangle,
-      color: 'red',
-    },
+    { label: 'Pending', value: counts.all, icon: Clock, color: 'yellow' },
+    { label: 'Distributions', value: counts.distribution, icon: Package, color: 'blue' },
+    { label: 'Return Confirmations', value: counts.return_confirmation, icon: PackageCheck, color: 'purple' },
+    { label: 'Defects', value: counts.defect, icon: AlertTriangle, color: 'red' },
   ];
 
   return (
@@ -384,10 +359,18 @@ const Approvals = () => {
       </div>
 
       <Card>
-        {loading ? (
+        {loading && rows.length === 0 ? (
           <div className="text-center py-12 text-gray-500">Loading pending actions...</div>
-        ) : filteredItems.length > 0 ? (
-          <DataTable columns={columns} data={filteredItems} searchable searchPlaceholder="Search actions..." />
+        ) : rows.length > 0 ? (
+          <DataTable
+            columns={columns}
+            data={rows}
+            searchable={false}
+            pageSize={TABLE_PAGE_SIZE}
+            totalItems={tableTotalCount || rows.length}
+            currentPage={tablePage}
+            onPageChange={handleTablePageChange}
+          />
         ) : (
           <div className="text-center py-12">
             <CheckCircle className="w-16 h-16 text-green-300 mx-auto mb-4" />
@@ -587,4 +570,3 @@ const Approvals = () => {
 };
 
 export default Approvals;
-

@@ -29,6 +29,33 @@ def _strip_user(user_dict: Dict[str, Any]) -> Dict[str, Any]:
     return user_dict
 
 
+# Columns returned by list queries. password_hash is deliberately excluded:
+# it is only needed server-side for credential verification and must never be
+# sent to the frontend.
+_USER_LIST_COLUMNS = (
+    User.id, User.name, User.email, User.role, User.status,
+    User.force_email_change, User.force_password_change, User.phone,
+    User.designation, User.address, User.pincode, User.parent_id,
+    User.created_at, User.updated_at, User.last_login,
+    User.failed_login_attempts, User.locked_until, User.created_by,
+)
+
+
+def _row_to_user_dict(row) -> Dict[str, Any]:
+    """Convert a selected user row to the same dict shape as User.to_dict()."""
+    d = {}
+    for key, value in row._mapping.items():
+        if isinstance(value, datetime):
+            value = value.isoformat()
+        d[key] = value
+    if d.get("id") is not None:
+        d["_id"] = str(d["id"])
+    for key in ["force_email_change", "force_password_change"]:
+        if key in d and d[key] is not None:
+            d[key] = bool(d[key])
+    return d
+
+
 async def _attach_digital_ids_bulk(session, users: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Attach the full digital_identities list to each user record (single query)."""
     if not users:
@@ -119,7 +146,7 @@ async def get_users(
             search_field_map = {
                 "name": User.name, "email": User.email, "role": User.role,
                 "phone": User.phone, "address": User.address, "designation": User.designation,
-                "pincode": User.pincode,
+                "pincode": User.pincode, "status": User.status,
             }
             identity_conditions = {
                 "digital_id": User.id.in_(
@@ -162,15 +189,15 @@ async def get_users(
 
         offset = (page - 1) * page_size
         q = (
-            select(User)
+            select(*_USER_LIST_COLUMNS)
             .where(where)
             .order_by(User.created_at.desc())
             .offset(offset)
             .limit(page_size)
         )
-        rows = (await session.execute(q)).scalars().all()
+        rows = (await session.execute(q)).all()
 
-        users = [_strip_user(r.to_dict()) for r in rows]
+        users = [_strip_user(_row_to_user_dict(r)) for r in rows]
         await _attach_digital_ids_bulk(session, users)
         await _attach_creator_info_bulk(session, users)
 
@@ -354,11 +381,27 @@ async def get_users_by_role(role: str) -> List[Dict[str, Any]]:
         return [_strip_user(r.to_dict()) for r in rows]
 
 
-async def get_user_stats() -> Dict[str, int]:
-    """Get user statistics"""
+async def get_user_stats(
+    *,
+    parent_ids_in: Optional[List[int]] = None,
+    exclude_roles: Optional[List[str]] = None,
+) -> Dict[str, int]:
+    """Get user statistics (optionally scoped to a branch / excluding roles)."""
     async with async_session_factory() as session:
-        q = select(User.role, func.count().label("cnt"))
-        q = q.group_by(User.role)
+        conditions = []
+        if parent_ids_in:
+            conditions.append(User.id.in_(parent_ids_in))
+        if exclude_roles:
+            normalized = [normalize_role(r) for r in exclude_roles if normalize_role(r)]
+            if normalized:
+                conditions.append(User.role.notin_(normalized))
+        where = and_(*conditions) if conditions else True
+
+        q = (
+            select(User.role, func.count().label("cnt"))
+            .where(where)
+            .group_by(User.role)
+        )
         rows = (await session.execute(q)).all()
 
         total = 0

@@ -241,7 +241,7 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
                 )).scalar() or 0
 
                 return_requests = (await session.execute(
-                    text(f"SELECT COUNT(*) FROM returns r LEFT JOIN defects def ON def.id = r.defect_id WHERE def.reported_by IN ({str_ph}) AND {date_cond.replace('created_at', 'r.created_at')}"),
+                    text(f"SELECT COUNT(*) FROM returns r LEFT JOIN defects def ON r.defect_id = CAST(def.id AS CHAR) WHERE def.reported_by IN ({str_ph}) AND {date_cond.replace('created_at', 'r.created_at')}"),
                     {**str_map, **date_prm}
                 )).scalar() or 0
 
@@ -297,7 +297,7 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
 
             rc, rp = _build_date_filter("def.reported_by = :uid3", {"uid3": uid}, start_date, end_date)
             my_returns = (await session.execute(
-                text(f"SELECT COUNT(*) FROM returns r LEFT JOIN defects def ON def.id = r.defect_id WHERE {rc.replace('created_at', 'r.created_at')}"), rp
+                text(f"SELECT COUNT(*) FROM returns r LEFT JOIN defects def ON r.defect_id = CAST(def.id AS CHAR) WHERE {rc.replace('created_at', 'r.created_at')}"), rp
             )).scalar() or 0
 
             # Accurate counts independent of any device-list page size. The

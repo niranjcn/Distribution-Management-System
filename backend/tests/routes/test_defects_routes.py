@@ -43,6 +43,7 @@ class TestGetPendingReplacementDefects:
         return {
             "data": [{"id": "1", "status": "defective"}],
             "pagination": {"page": 1, "page_size": 100, "total": 1, "total_pages": 1},
+            "counts": {"awaiting": 1, "ready": 1, "waiting": 0},
         }
 
     def test_success(self, client, mock_defect_services):

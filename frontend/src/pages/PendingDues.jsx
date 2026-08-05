@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
 import Button from '../components/ui/Button';
@@ -7,6 +7,10 @@ import { defectsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { Loader2, Receipt, DollarSign, Search } from 'lucide-react';
+
+const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
 
 const PENDING_DUES_SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -23,6 +27,9 @@ const PendingDues = () => {
   const { showToast } = useNotifications();
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [users, setUsers] = useState([]);
+  const [tableTotalCount, setTableTotalCount] = useState(0);
+  const [tablePage, setTablePage] = useState(1);
+  const [summary, setSummary] = useState({ users_count: 0, total_due: 0, total_items: 0 });
   const [selectedUser, setSelectedUser] = useState(null);
   const [details, setDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -30,37 +37,106 @@ const PendingDues = () => {
   const [tableSearchInput, setTableSearchInput] = useState('');
   const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
   const [openingBillId, setOpeningBillId] = useState(null);
+  const loadedWindowRef = useRef(0);
+  const loadingWindowsRef = useRef(new Set());
+  const queryVersionRef = useRef(0);
 
   const role = String(user?.role || '').toLowerCase();
   const isOperatorView = role === 'operator';
   const isHierarchyView = !isOperatorView;
   const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(role);
 
-  const fetchUsers = async () => {
+  const buildUsersParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
+    const params = {
+      page: windowPage,
+      page_size: pageSize,
+    };
+    if (appliedTableSearch.query) {
+      params.search = appliedTableSearch.query;
+      if (appliedTableSearch.by && appliedTableSearch.by !== 'all') {
+        params.search_by = appliedTableSearch.by;
+      }
+    }
+    return params;
+  };
+
+  const loadUsersWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (loadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = queryVersionRef.current;
+    loadingWindowsRef.current.add(windowPage);
+    if (withLoading) setLoadingUsers(true);
+
     try {
-      setLoadingUsers(true);
-      if (isHierarchyView) {
-        const response = await defectsAPI.getPendingDueUsers();
-        const rows = response.data || [];
-        setUsers(rows);
-        if (rows.length > 0) {
-          await loadUserDetails(rows[0].user_id, rows[0]);
-        } else {
-          setSelectedUser(null);
-          setDetails(null);
+      const response = await defectsAPI.getPendingDueUsers(buildUsersParams(windowPage));
+      if (queryVersion !== queryVersionRef.current) return;
+
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      const total = Number(response?.pagination?.total || rows.length);
+
+      setUsers((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.user_id ?? row?.id ?? '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
         }
-      } else {
-        setUsers([]);
+        return unique;
+      });
+      setTableTotalCount(total);
+      setSummary({
+        users_count: Number(response?.summary?.users_count ?? total),
+        total_due: Number(response?.summary?.total_due ?? 0),
+        total_items: Number(response?.summary?.total_items ?? 0),
+      });
+      loadedWindowRef.current = Math.max(loadedWindowRef.current, windowPage);
+    } catch (error) {
+      showToast(error.message || 'Failed to load pending dues', 'error');
+    } finally {
+      loadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setLoadingUsers(false);
+    }
+  };
+
+  const resetAndLoadUsers = async () => {
+    queryVersionRef.current += 1;
+    loadedWindowRef.current = 0;
+    loadingWindowsRef.current = new Set();
+    setUsers([]);
+    setTableTotalCount(0);
+    setTablePage(1);
+    setSelectedUser(null);
+    setDetails(null);
+    await loadUsersWindow(1, { reset: true, withLoading: true });
+  };
+
+  const handleTablePageChange = async (nextPage) => {
+    setTablePage(nextPage);
+    const loadedPages = Math.max(1, Math.ceil(users.length / TABLE_PAGE_SIZE));
+    const needsNextWindow = nextPage >= loadedPages && users.length < tableTotalCount;
+    if (needsNextWindow) {
+      await loadUsersWindow(loadedWindowRef.current + 1, { withLoading: true });
+    }
+  };
+
+  const fetchUsers = async () => {
+    if (isHierarchyView) {
+      await resetAndLoadUsers();
+    } else {
+      try {
+        setLoadingUsers(true);
         setSelectedUser(null);
         setLoadingDetails(true);
         const response = await defectsAPI.getMyPendingDues();
         setDetails(response.data || null);
+      } catch (error) {
+        showToast(error.message || 'Failed to load pending dues', 'error');
+      } finally {
+        setLoadingUsers(false);
+        setLoadingDetails(false);
       }
-    } catch (error) {
-      showToast(error.message || 'Failed to load pending dues', 'error');
-    } finally {
-      setLoadingUsers(false);
-      setLoadingDetails(false);
     }
   };
 
@@ -79,37 +155,7 @@ const PendingDues = () => {
 
   useEffect(() => {
     fetchUsers();
-  }, [isHierarchyView]);
-
-  const totalOutstanding = useMemo(
-    () => users.reduce((acc, row) => acc + Number(row.total_due || 0), 0),
-    [users]
-  );
-
-  const filteredUsers = useMemo(() => {
-    const query = String(appliedTableSearch.query || '').trim().toLowerCase();
-    if (!query) return users;
-
-    const fieldMap = {
-      user_name: (row) => row?.user_name,
-      user_role: (row) => row?.user_role,
-      parent_name: (row) => row?.parent_name,
-      digital_id: (row) => Array.isArray(row?.digital_ids)
-        ? row.digital_ids.map((di) => di?.digital_id || '').join(' ')
-        : '',
-      broadband_id: (row) => Array.isArray(row?.digital_ids)
-        ? row.digital_ids.map((di) => di?.broadband_id || '').join(' ')
-        : '',
-      total_due: (row) => row?.total_due,
-    };
-    const searchBy = String(appliedTableSearch.by || 'all');
-
-    if (searchBy !== 'all' && fieldMap[searchBy]) {
-      return users.filter((row) => String(fieldMap[searchBy](row) || '').toLowerCase().includes(query));
-    }
-
-    return users.filter((row) => Object.values(fieldMap).some((getter) => String(getter(row) || '').toLowerCase().includes(query)));
-  }, [users, appliedTableSearch]);
+  }, [isHierarchyView, appliedTableSearch]);
 
   const handleSearchSubmit = () => {
     setAppliedTableSearch({ by: tableSearchBy, query: tableSearchInput.trim() });
@@ -155,16 +201,16 @@ const PendingDues = () => {
       <div className={`grid grid-cols-1 ${isHierarchyView ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-4`}>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">{isHierarchyView ? 'Users with Dues' : 'Pending Items'}</p>
-          <p className="text-2xl font-bold text-gray-800">{isHierarchyView ? users.length : Number(details?.count || 0)}</p>
+          <p className="text-2xl font-bold text-gray-800">{isHierarchyView ? summary.users_count : Number(details?.count || 0)}</p>
         </Card>
         <Card className="!p-4">
           <p className="text-sm text-gray-500">Outstanding Amount</p>
-          <p className="text-2xl font-bold text-amber-700">{(isHierarchyView ? totalOutstanding : Number(details?.total_due || 0)).toFixed(2)}</p>
+          <p className="text-2xl font-bold text-amber-700">{(isHierarchyView ? summary.total_due : Number(details?.total_due || 0)).toFixed(2)}</p>
         </Card>
         {isHierarchyView && (
           <Card className="!p-4">
             <p className="text-sm text-gray-500">Pending Items</p>
-            <p className="text-2xl font-bold text-blue-700">{users.reduce((acc, row) => acc + Number(row.due_count || 0), 0)}</p>
+            <p className="text-2xl font-bold text-blue-700">{summary.total_items}</p>
           </Card>
         )}
       </div>
@@ -216,8 +262,12 @@ const PendingDues = () => {
                   </div>
                   <DataTable
                     columns={userColumns}
-                    data={filteredUsers}
+                    data={users}
                     searchable={false}
+                    pageSize={TABLE_PAGE_SIZE}
+                    totalItems={tableTotalCount || users.length}
+                    currentPage={tablePage}
+                    onPageChange={handleTablePageChange}
                     onRowClick={(row) => loadUserDetails(row.user_id, row)}
                   />
                 </>
