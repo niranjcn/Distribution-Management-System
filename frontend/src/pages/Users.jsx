@@ -1066,7 +1066,13 @@ const Users = () => {
                   <label className="text-xs text-gray-500 font-medium">Role</label>
                   <select
                     value={filters.role}
-                    onChange={e => setFilters({ role: e.target.value, subDistManagerId: '', subDistId: '', clusterId: '', networkName: filters.networkName })}
+                    onChange={e => setFilters({
+                      role: e.target.value,
+                      subDistManagerId: '',
+                      subDistId: '',
+                      clusterId: '',
+                      networkName: (!e.target.value || e.target.value === 'operator') ? filters.networkName : '',
+                    })}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 min-w-[150px]"
                   >
                     <option value="">All Roles</option>
