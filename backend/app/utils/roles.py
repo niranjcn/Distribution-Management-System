@@ -10,6 +10,7 @@ SUB_DISTRIBUTION_MANAGER = "sub_distribution_manager"
 SUB_DISTRIBUTOR = "sub_distributor"
 CLUSTER = "cluster"
 OPERATOR = "operator"
+SUB_DISTRIBUTION_EMPLOYEE = "sub_distribution_employee"
 
 ROLE_ORDER = [
     SUPER_ADMIN,
@@ -20,6 +21,7 @@ ROLE_ORDER = [
     SUB_DISTRIBUTOR,
     CLUSTER,
     OPERATOR,
+    SUB_DISTRIBUTION_EMPLOYEE,
 ]
 
 ROLE_HIERARCHY = {role: (len(ROLE_ORDER) - index) for index, role in enumerate(ROLE_ORDER)}

@@ -7,8 +7,9 @@ import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { devicesAPI, usersAPI, distributionsAPI } from '../services/api';
+import { devicesAPI, usersAPI, distributionsAPI, approvalRequestsAPI } from '../services/api';
 import { Truck, Save, X, Plus, Trash2, Search, Loader2, ChevronRight } from 'lucide-react';
+import { normalizeRole } from '../utils/roles';
 
 const DEVICES_PAGE_SIZE = 100;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -27,6 +28,7 @@ const ALLOWED_RECIPIENT_TYPES = {
   sub_distributor: ['cluster', 'operator'],
   cluster:         ['operator'],
   operator:        ['operator'],
+  sub_distribution_employee: ['cluster', 'operator'],
 };
 
 const CreateDistribution = () => {
@@ -61,7 +63,9 @@ const CreateDistribution = () => {
   const [distributionDate, setDistributionDate] = useState('');
 
   const role = user?.role;
+  const normalizedRole = normalizeRole(role);
   const isManagement = ['super_admin', 'manager', 'pdic_staff'].includes(role);
+  const isEmployee = normalizedRole === 'sub_distribution_employee';
   const allowedTypes = ALLOWED_RECIPIENT_TYPES[role] || [];
 
   useEffect(() => {
@@ -91,6 +95,16 @@ const CreateDistribution = () => {
           // Backend returns only sibling operators (same parent_id); exclude self
           const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; });
           setAllOperators((opRes.data || []).filter(o => String(o.id) !== String(user?.id)));
+        } else if (isEmployee) {
+          // Backend scopes clusters/operators to the employee's sub distribution.
+          const [clRes, opRes, sdRes] = await Promise.all([
+            usersAPI.getUsers({ role: 'cluster',  status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load clusters:', err); showToast('Failed to load clusters', 'error'); return { data: [] }; }),
+            usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; }),
+            usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 1 }).catch(() => ({ data: [] })),
+          ]);
+          setAllClusters(clRes.data || []);
+          setAllOperators(opRes.data || []);
+          setSubDists(sdRes.data || []);
         }
       } catch (error) {
         console.error('Failed to load data:', error);
@@ -313,15 +327,26 @@ const CreateDistribution = () => {
   const performDistribution = async () => {
     setLoading(true);
     try {
-      await distributionsAPI.createDistribution({
+      const payload = {
         device_ids: selectedDevices.map(d => d._id || d.id),
         to_user_id: formData.toDistributor,
         notes: formData.notes,
         ...(distributionDate ? { date_of_distribution: distributionDate } : {})
-      });
-      showToast('Distribution created successfully!', 'success');
-      setShowConfirmModal(false);
-      navigate('/distributions');
+      };
+      if (isEmployee) {
+        await approvalRequestsAPI.submit({
+          request_type: 'distribution',
+          payload,
+          summary: `Distribute ${payload.device_ids.length} device(s) to ${selectedRecipient?.name || ''} (${selectedRecipient?.role || ''})`,
+        });
+        showToast('Distribution request submitted for approval!', 'success');
+        navigate('/approval-requests');
+      } else {
+        await distributionsAPI.createDistribution(payload);
+        showToast('Distribution created successfully!', 'success');
+        setShowConfirmModal(false);
+        navigate('/distributions');
+      }
     } catch (error) {
       showToast(error.message || 'Failed to create distribution', 'error');
     } finally {
@@ -331,6 +356,7 @@ const CreateDistribution = () => {
 
   const pageSubtitle = isManagement
     ? 'Distribute devices from PDIC stock to sub-distributors, clusters, or operators'
+    : isEmployee ? 'Propose a distribution to a cluster or operator under your sub distribution (requires approval)'
     : role === 'sub_distributor' ? 'Distribute your devices to clusters or operators under you'
     : role === 'cluster'         ? 'Distribute your devices to operators under your cluster'
     : 'Transfer a device to another operator in your cluster';
@@ -703,7 +729,7 @@ const CreateDistribution = () => {
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
           <Button variant="secondary" onClick={() => navigate('/distributions')} icon={X} className="w-full sm:w-auto">Cancel</Button>
-          <Button type="submit" loading={loading} icon={Save} className="w-full sm:w-auto">Create Distribution</Button>
+          <Button type="submit" loading={loading} icon={Save} className="w-full sm:w-auto">{isEmployee ? 'Submit for Approval' : 'Create Distribution'}</Button>
         </div>
       </form>
 

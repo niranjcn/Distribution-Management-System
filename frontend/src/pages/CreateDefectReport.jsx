@@ -5,15 +5,19 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { useNotifications } from '../context/NotificationContext';
-import { devicesAPI, defectsAPI } from '../services/api';
+import { devicesAPI, defectsAPI, approvalRequestsAPI } from '../services/api';
 import { getDeviceSelectLabel } from '../utils/deviceDisplay';
+import { normalizeRole } from '../utils/roles';
+import { useAuth } from '../context/AuthContext';
 import { AlertTriangle, Save, X, Upload, Camera, Search } from 'lucide-react';
 
 const PAGE_SIZE = 100;
 
 const CreateDefectReport = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { showToast } = useNotifications();
+  const isEmployee = normalizeRole(user?.role) === 'sub_distribution_employee';
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
   const [devices, setDevices] = useState([]);
@@ -192,6 +196,17 @@ const CreateDefectReport = () => {
         images: uploadedUrls,
       };
 
+      if (isEmployee) {
+        await approvalRequestsAPI.submit({
+          request_type: 'defect',
+          payload: normalizedPayload,
+          summary: `Defect report for device ${String(formData.deviceId || '').trim()}`,
+        });
+        showToast('Defect report submitted for approval!', 'success');
+        navigate('/approval-requests');
+        return;
+      }
+
       await defectsAPI.createDefect(normalizedPayload);
       showToast('Defect report submitted successfully!', 'success');
       navigate('/defects');
@@ -213,7 +228,9 @@ const CreateDefectReport = () => {
     <div className="max-w-3xl mx-auto space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Report Defect</h1>
-        <p className="text-gray-500 mt-1">Submit a defect report for a device</p>
+        <p className="text-gray-500 mt-1">
+          {isEmployee ? 'Submit a defect report for approval under your sub distribution' : 'Submit a defect report for a device'}
+        </p>
       </div>
 
       <Card>

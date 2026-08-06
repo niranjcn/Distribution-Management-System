@@ -17,6 +17,7 @@ const Dashboard = () => {
     sub_distribution_manager: SubDistributorDashboard,
     sub_distributor: SubDistributorDashboard,
     cluster: SubDistributorDashboard,
+    sub_distribution_employee: SubDistributorDashboard,
     operator: OperatorDashboard,
   };
 

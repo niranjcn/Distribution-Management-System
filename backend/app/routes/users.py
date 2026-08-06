@@ -19,6 +19,7 @@ from app.utils.roles import (
     SUB_DISTRIBUTOR,
     CLUSTER,
     OPERATOR,
+    SUB_DISTRIBUTION_EMPLOYEE,
     normalize_role,
     can_manage_user,
     can_mutate_super_admin,
@@ -31,9 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 ALLOWED_CREATE_BY_ROLE = {
-    SUPER_ADMIN: [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
-    MANAGER: [PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR],
-    SUB_DISTRIBUTOR: [SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR],
+    SUPER_ADMIN: [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
+    MANAGER: [PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
+    SUB_DISTRIBUTION_MANAGER: [SUB_DISTRIBUTION_EMPLOYEE],
+    SUB_DISTRIBUTOR: [SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
     CLUSTER: [OPERATOR],
 }
 
@@ -104,7 +106,7 @@ async def _filter_readable_users(current_user: dict, users: List[dict]) -> List[
         branch = await _get_descendant_ids(str(current_user["id"]))
         return [
             u for u in users
-            if normalize_role(u.get("role")) in {CLUSTER, OPERATOR}
+            if normalize_role(u.get("role")) in {CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE}
             and str(u["id"]) in branch
         ]
 
@@ -113,7 +115,7 @@ async def _filter_readable_users(current_user: dict, users: List[dict]) -> List[
         branch = await _get_descendant_ids(root_id)
         return [
             u for u in users
-            if normalize_role(u.get("role")) in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR}
+            if normalize_role(u.get("role")) in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE}
             and str(u["id"]) in branch
         ]
 
@@ -130,6 +132,15 @@ async def _filter_readable_users(current_user: dict, users: List[dict]) -> List[
             elif can_manage_user(actor_role, t_role) and in_branch:
                 allowed.append(u)
         return allowed
+
+    if actor_role == SUB_DISTRIBUTION_EMPLOYEE:
+        root_id = str(current_user.get("parent_id") or current_user["id"])
+        branch = await _get_descendant_ids(root_id)
+        return [
+            u for u in users
+            if normalize_role(u.get("role")) in {CLUSTER, OPERATOR}
+            and str(u["id"]) in branch
+        ]
 
     return users
 
@@ -190,7 +201,7 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
     if actor_role == SUB_DISTRIBUTION_MANAGER:
         if write and target_role in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER}:
             return False
-        if target_role not in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR}:
+        if target_role not in {SUB_DISTRIBUTOR, SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE}:
             return False
         root_id = str(current_user.get("parent_id") or current_user.get("id"))
         if str(target_user.get("id")) == root_id:
@@ -200,9 +211,17 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
     if actor_role == SUB_DISTRIBUTOR:
         if write:
             return False
-        if target_role not in {CLUSTER, OPERATOR}:
+        if target_role not in {CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE}:
             return False
         return await _branch_contains_user(current_user.get("id"), target_user.get("id"), session=db)
+
+    if actor_role == SUB_DISTRIBUTION_EMPLOYEE:
+        if write:
+            return False
+        if target_role not in {CLUSTER, OPERATOR}:
+            return False
+        root_id = str(current_user.get("parent_id") or current_user.get("id"))
+        return await _branch_contains_user(root_id, target_user.get("id"), session=db)
 
     if actor_role == CLUSTER:
         if write:
@@ -256,7 +275,11 @@ async def get_users(
     elif actor_role == SUB_DISTRIBUTION_MANAGER:
         scope_root = str(current_user.get("parent_id") or current_user["id"])
         parent_id_filter = scope_root
-        if normalized_role_filter in {CLUSTER, OPERATOR} or normalized_role_filter is None:
+        if normalized_role_filter == SUB_DISTRIBUTION_EMPLOYEE:
+            roles_in_filter = [SUB_DISTRIBUTION_EMPLOYEE]
+            parent_ids_in_filter = [int(scope_root)] if str(scope_root).isdigit() else None
+            parent_id_filter = None
+        elif normalized_role_filter in {CLUSTER, OPERATOR} or normalized_role_filter is None:
             manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=scope_root, page_size=1_000_000)
             manager_ids = [int(m["id"]) for m in manager_result["data"]]
             candidate_parent_ids = [int(scope_root)] + manager_ids if str(scope_root).isdigit() else manager_ids
@@ -296,6 +319,28 @@ async def get_users(
             parent_id_filter = None
     elif actor_role == CLUSTER:
         parent_id_filter = str(current_user["id"])
+    elif actor_role == SUB_DISTRIBUTION_EMPLOYEE:
+        scope_root = str(current_user.get("parent_id") or "")
+        if not scope_root:
+            raise HTTPException(status_code=403, detail="Employee is not assigned to a sub distribution")
+        if normalized_role_filter == SUB_DISTRIBUTION_EMPLOYEE:
+            roles_in_filter = [SUB_DISTRIBUTION_EMPLOYEE]
+            parent_ids_in_filter = [int(scope_root)] if str(scope_root).isdigit() else None
+        elif normalized_role_filter in {CLUSTER, OPERATOR, None}:
+            sub_dist_manager_result = await user_service.get_users(role=SUB_DISTRIBUTION_MANAGER, parent_id=scope_root, page_size=1_000_000)
+            sub_dist_manager_ids = [int(m["id"]) for m in sub_dist_manager_result["data"]]
+            candidate_cluster_parent_ids = [int(scope_root)] + sub_dist_manager_ids
+            clusters_result = await user_service.get_users(role=CLUSTER, parent_ids_in=candidate_cluster_parent_ids, page_size=1_000_000)
+            cluster_ids = [int(c["id"]) for c in clusters_result["data"]]
+            if normalized_role_filter == CLUSTER:
+                roles_in_filter = [CLUSTER]
+                parent_ids_in_filter = candidate_cluster_parent_ids
+            elif normalized_role_filter in {OPERATOR, None}:
+                roles_in_filter = [CLUSTER, OPERATOR] if normalized_role_filter is None else [OPERATOR]
+                parent_ids_in_filter = list(dict.fromkeys([int(scope_root)] + cluster_ids))
+            parent_id_filter = None
+        else:
+            raise HTTPException(status_code=403, detail="Employees can only view clusters and operators")
     elif actor_role == OPERATOR:
         if normalized_role_filter == OPERATOR:
             parent_id_filter = str(current_user.get("parent_id", ""))
@@ -315,7 +360,7 @@ async def get_users(
             network_name=network_name,
         )
 
-        if actor_role in {MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER}:
+        if actor_role in {MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, SUB_DISTRIBUTION_EMPLOYEE}:
             result["data"] = await _filter_readable_users(current_user, result["data"])
 
         if actor_role == MD_DIRECTOR:
@@ -472,6 +517,47 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
         parent = await user_service.get_user_by_id(user_data.parent_id)
         if not parent or not await _branch_contains_user(current_user.get("id"), parent.get("id")):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected parent is outside your branch")
+
+    if target_role == SUB_DISTRIBUTION_EMPLOYEE:
+        if actor_role == SUB_DISTRIBUTOR and not user_data.parent_id:
+            user_data = user_data.model_copy(update={"parent_id": str(current_user["id"])})
+
+        if actor_role == SUB_DISTRIBUTION_MANAGER and not user_data.parent_id:
+            if not current_user.get("parent_id"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Could not determine the sub distribution for the employee",
+                )
+            user_data = user_data.model_copy(update={"parent_id": str(current_user["parent_id"])})
+
+        if not user_data.parent_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Must select a sub distributor parent for the employee",
+            )
+
+        parent_user = await user_service.get_user_by_id(user_data.parent_id)
+        if not parent_user or normalize_role(parent_user.get("role")) != SUB_DISTRIBUTOR:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Employee parent must be a sub distributor")
+
+        if actor_role == SUB_DISTRIBUTOR and str(user_data.parent_id) != str(current_user.get("id")):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only assign employees under your own account",
+            )
+
+        if actor_role == SUB_DISTRIBUTION_MANAGER and str(user_data.parent_id) != str(current_user.get("parent_id")):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only assign employees under your own sub distribution",
+            )
+
+        if actor_role == MANAGER and current_user.get("parent_id"):
+            if not await _branch_contains_user(str(current_user["parent_id"]), user_data.parent_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Selected sub distributor is outside your branch",
+                )
 
     try:
         user = await user_service.create_user(user_data, creator_id=int(current_user.get("id") or 0))
@@ -907,7 +993,7 @@ async def get_users_by_role(role: str, current_user: dict = Depends(get_current_
     actor_role = normalize_role(current_user.get("role"))
     normalized = normalize_role(role)
 
-    if actor_role not in {SUPER_ADMIN, MD_DIRECTOR, MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER}:
+    if actor_role not in {SUPER_ADMIN, MD_DIRECTOR, MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, SUB_DISTRIBUTION_EMPLOYEE}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     try:
@@ -920,6 +1006,16 @@ async def get_users_by_role(role: str, current_user: dict = Depends(get_current_
                 row for row in users
                 if normalize_role(row.get("role")) == OPERATOR
                 and str(row.get("parent_id")) == str(current_user.get("id"))
+            ]
+            return {"success": True, "message": "Users retrieved successfully", "data": filtered}
+
+        if actor_role == SUB_DISTRIBUTION_EMPLOYEE:
+            root_id = str(current_user.get("parent_id") or current_user.get("id"))
+            descendant_ids = await _get_descendant_ids(root_id)
+            filtered = [
+                row for row in users
+                if normalize_role(row.get("role")) in {CLUSTER, OPERATOR}
+                and str(row.get("id")) in descendant_ids
             ]
             return {"success": True, "message": "Users retrieved successfully", "data": filtered}
 

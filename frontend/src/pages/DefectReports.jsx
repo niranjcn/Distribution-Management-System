@@ -6,7 +6,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
-import { defectsAPI, devicesAPI } from '../services/api';
+import { defectsAPI, devicesAPI, approvalRequestsAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -280,8 +280,8 @@ const DefectReports = () => {
   }, [replacementFilter]);
 
   const canReport = ['operator', 'sub_distributor', 'cluster'].includes(user?.role);
-  const canReview = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
-  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
+  const canReview = ['super_admin', 'manager', 'pdic_staff', 'sub_distribution_employee'].includes(user?.role);
+  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff', 'sub_distribution_employee'].includes(user?.role);
   const canReplace = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canConfirmReplacement = ['operator', 'cluster', 'sub_distributor'].includes(user?.role);
 
@@ -558,6 +558,21 @@ const DefectReports = () => {
 
   const handleReview = async (action) => {
     try {
+      if (user?.role === 'sub_distribution_employee') {
+        await approvalRequestsAPI.submit({
+          request_type: 'defect_status',
+          summary: `${action === 'approved' ? 'Approve' : 'Reject'} defect ${selectedDefect.report_id || selectedDefect._id}`,
+          payload: {
+            defect_id: String(selectedDefect._id || selectedDefect.id),
+            status: action,
+            notes: reviewComment || undefined,
+          },
+        });
+        showToast('Defect review submitted for approval', 'success');
+        setShowReviewModal(false);
+        setReviewComment('');
+        return;
+      }
       await defectsAPI.updateDefectStatus(
         selectedDefect._id || selectedDefect.id,
         action,
@@ -579,6 +594,22 @@ const DefectReports = () => {
 
   const handleConfirmPayment = async (defectRow) => {
     try {
+      if (user?.role === 'sub_distribution_employee') {
+        await approvalRequestsAPI.submit({
+          request_type: 'payment_confirmation',
+          summary: `Confirm payment for defect ${defectRow.report_id || defectRow._id}`,
+          payload: {
+            defect_id: String(defectRow._id || defectRow.id),
+            notes: confirmPaymentNotes || undefined,
+          },
+        });
+        showToast('Payment confirmation submitted for approval', 'success');
+        setConfirmPaymentNotes('');
+        if (selectedDefect && String(selectedDefect._id || selectedDefect.id) === String(defectRow._id || defectRow.id)) {
+          setShowModal(false);
+        }
+        return;
+      }
       await defectsAPI.confirmPayment(defectRow._id || defectRow.id, confirmPaymentNotes);
       showToast('Payment confirmed successfully', 'success');
       setConfirmPaymentNotes('');

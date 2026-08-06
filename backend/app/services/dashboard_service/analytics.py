@@ -35,6 +35,12 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
     user_id = str(user.get("_id", user.get("id", "")))
     scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
 
+    if role == "sub_distribution_employee" and user.get("parent_id"):
+        # Branch-scope employee metrics to their parent sub-distributor so the
+        # dashboard shows the sub distribution they work in.
+        role = "sub_distributor"
+        user_id = str(user.get("parent_id"))
+
     if role not in ["super_admin", "md_director", "manager", "pdic_staff", "sub_distribution_manager", "sub_distributor", "cluster", "operator"]:
         return {"kpis": {}, "charts": {}, "alerts": [], "reliability": {"summary": {}, "trend": []}}
 

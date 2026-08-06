@@ -16,7 +16,7 @@ import {
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
-import { usersAPI, dashboardAPI } from '../services/api';
+import { usersAPI, dashboardAPI, approvalRequestsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { normalizeRole, ROLES } from '../utils/roles';
@@ -50,6 +50,7 @@ const BulkUploadUsers = () => {
   const isManagement = [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.SUB_DISTRIBUTION_MANAGER].includes(actorRole);
   const isSubDist = actorRole === ROLES.SUB_DISTRIBUTOR;
   const isCluster = actorRole === ROLES.CLUSTER;
+  const isEmployee = actorRole === ROLES.SUB_DISTRIBUTION_EMPLOYEE;
 
   const getModes = () => {
     if (isManagement) {
@@ -128,6 +129,19 @@ const BulkUploadUsers = () => {
           requiresParent: false,
           parentId: String(user?.id),
           description: 'Create operators under your cluster',
+        },
+      ];
+    }
+    if (isEmployee) {
+      return [
+        {
+          id: 'operator_to_branch',
+          label: 'Operators (under Sub Distribution)',
+          icon: Users,
+          targetRole: 'operator',
+          requiresParent: false,
+          parentId: String(user?.parent_id || user?.id),
+          description: 'Upload operators for approval — assigned to your sub distribution',
         },
       ];
     }
@@ -249,6 +263,26 @@ const BulkUploadUsers = () => {
       setUploading(true);
       setResult(null);
       const parentId = selectedMode.parentId || selectedParentId || undefined;
+      if (isEmployee) {
+        const formData = new FormData();
+        formData.append('kind', 'users');
+        formData.append('file', file);
+        formData.append('role', 'operator');
+        if (parentId) formData.append('parent_id', parentId);
+        const staged = await approvalRequestsAPI.stageBulk(formData);
+        const payload = staged?.data?.payload;
+        if (!payload) throw new Error('Could not parse the uploaded file');
+        await approvalRequestsAPI.submit({
+          request_type: 'bulk_users',
+          summary: `Bulk upload ${payload.rows?.length || 0} operator(s): ${file.name}`,
+          payload,
+        });
+        setFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        showToast('Bulk user upload submitted for approval', 'success');
+        navigate('/approval-requests');
+        return;
+      }
       const res = await usersAPI.bulkUpload(file, selectedMode.targetRole, parentId);
       setResult(res.data);
       setFile(null);

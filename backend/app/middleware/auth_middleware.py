@@ -133,4 +133,7 @@ require_any_role = RoleChecker([
     "sub_distributor",
     "cluster",
     "operator",
+    "sub_distribution_employee",
 ])
+require_approval_requester = RoleChecker(["sub_distribution_employee"])
+require_approval_reviewer = RoleChecker(["sub_distribution_manager", "sub_distributor"])

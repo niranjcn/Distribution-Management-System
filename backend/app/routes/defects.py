@@ -265,7 +265,7 @@ async def get_my_pending_dues(
     """Get pending due items for the authenticated field user."""
     _ensure_not_md_director(current_user)
     role = str(current_user.get("role") or "").lower()
-    if role not in {"sub_distributor", "cluster", "operator"}:
+    if role not in {"sub_distributor", "cluster", "operator", "sub_distribution_employee"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This endpoint is available for sub distributor, cluster, and operator roles only",
@@ -321,7 +321,7 @@ async def get_defects(
             # "defects reported by me" OR "defects where my device is the holder"
             # Setting both reported_by AND holder_user_id would AND them, over-filtering.
             holder_user_id = user_id_str
-        elif role in ["cluster", "sub_distribution_manager", "sub_distributor"]:
+        elif role in ["cluster", "sub_distribution_manager", "sub_distributor", "sub_distribution_employee"]:
             # Hierarchy roles are scoped in service-side visibility logic.
             pass
         elif role not in ["super_admin", "md_director", "manager", "pdic_staff"]:
@@ -396,6 +396,11 @@ async def create_defect(
 ):
     """Create a new defect report"""
     _ensure_not_md_director(current_user)
+    if current_user.get("role") == "sub_distribution_employee":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sub distribution employees must route defect reports through approval"
+        )
 
     try:
         defect = await defect_service.create_defect(

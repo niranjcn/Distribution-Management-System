@@ -33,22 +33,25 @@ const ROLE_STYLES = {
   sub_distributor: { ring: 'ring-indigo-400', bg: 'bg-indigo-50', text: 'text-indigo-700', badge: 'bg-indigo-100 text-indigo-800' },
   cluster: { ring: 'ring-teal-400', bg: 'bg-teal-50', text: 'text-teal-700', badge: 'bg-teal-100 text-teal-800' },
   operator: { ring: 'ring-green-400', bg: 'bg-green-50', text: 'text-green-700', badge: 'bg-green-100 text-green-800' },
+  sub_distribution_employee: { ring: 'ring-violet-400', bg: 'bg-violet-50', text: 'text-violet-700', badge: 'bg-violet-100 text-violet-800' },
 };
 
 const ROLE_LABELS = {
   super_admin: 'Super Admin', md_director: 'MD/Director', manager: 'Manager', pdic_staff: 'PDIC Staff',
   sub_distribution_manager: 'Sub Distribution Manager',
   sub_distributor: 'Sub Distributor', cluster: 'Cluster', operator: 'Operator',
+  sub_distribution_employee: 'Sub Distribution Employee',
 };
 
 const ROLE_ICON = {
   super_admin: Shield, md_director: Shield, manager: Shield, pdic_staff: User, sub_distribution_manager: Building2,
-  sub_distributor: Building2, cluster: Network, operator: User,
+  sub_distributor: Building2, cluster: Network, operator: User, sub_distribution_employee: User,
 };
 
 const ALLOWED_ROLES_BY_CREATOR = {
-  super_admin: ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
-  manager: ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
+  super_admin: ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
+  manager: ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
+  sub_distribution_manager: ['sub_distribution_employee'],
   sub_distributor: [],
   cluster: ['operator'],
 };
@@ -325,6 +328,9 @@ const UserHierarchy = () => {
           setSubDistributorOptions(sdRes.data || []);
           setParentOptions(clRes.data || []);
         }
+      } else if (role === 'sub_distribution_employee') {
+        const r = await usersAPI.getUsers({ role: 'sub_distributor', page_size: HIERARCHY_PAGE_SIZE });
+        setParentOptions((r.data || []).map(u => ({ ...u, groupLabel: 'Sub Distributor' })));
       }
     } catch (err) {
       console.error(err);
@@ -337,7 +343,7 @@ const UserHierarchy = () => {
     setFormData(prev => ({ ...prev, role, parentId: '' }));
     setSelectedOperatorSubDistId('');
     setOperatorPlacement('sub_distributor');
-    if (role === 'sub_distribution_manager' || role === 'cluster' || role === 'operator') loadParentOptions(role);
+    if (role === 'sub_distribution_manager' || role === 'cluster' || role === 'operator' || role === 'sub_distribution_employee') loadParentOptions(role);
     else { setParentOptions([]); setSubDistributorOptions([]); }
   };
 
@@ -351,7 +357,7 @@ const UserHierarchy = () => {
     setConfirmPassword('');
     setShowCreatePassword(false);
     setShowCreateConfirmPassword(false);
-    if (defaultRole === 'sub_distribution_manager' || defaultRole === 'cluster' || defaultRole === 'operator') loadParentOptions(defaultRole);
+    if (defaultRole === 'sub_distribution_manager' || defaultRole === 'cluster' || defaultRole === 'operator' || defaultRole === 'sub_distribution_employee') loadParentOptions(defaultRole);
     setShowAdd(true);
   };
 
@@ -650,7 +656,7 @@ const UserHierarchy = () => {
             </Field>
 
             {/* Parent assignment */}
-            {(formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator') && (
+            {(formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator' || formData.role === 'sub_distribution_employee') && (
               <div className="space-y-3">
                 {isAdminOrManager && formData.role === 'operator' ? (
                   <>
@@ -756,7 +762,7 @@ const UserHierarchy = () => {
                   </>
                 ) : (
                   <Field
-                    label={formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Dist. Manager' : 'Assign to Sub Distributor or Cluster'}
+                    label={formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Dist. Manager' : formData.role === 'sub_distribution_employee' ? 'Assign to Sub Distributor' : 'Assign to Sub Distributor or Cluster'}
                     required
                   >
                     {loadingParents ? (
@@ -771,7 +777,7 @@ const UserHierarchy = () => {
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         required
                       >
-                        <option value="">Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Dist. Manager' : 'Sub Distributor / Cluster'}…</option>
+                        <option value="">Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Dist. Manager' : formData.role === 'sub_distribution_employee' ? 'Sub Distributor' : 'Sub Distributor / Cluster'}…</option>
                         {parentOptions.map(p => (
                           <option key={p.id} value={p.id}>
                             {p.groupLabel ? `[${p.groupLabel}] ${p.name}` : p.name}

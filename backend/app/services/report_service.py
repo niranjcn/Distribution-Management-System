@@ -29,7 +29,7 @@ async def _resolve_report_scope(current_user: Optional[dict]) -> Optional[dict]:
     user_id = int(current_user["id"])
     if role == "sub_distributor":
         return {"scope": "sub", "sub_id": user_id}
-    if role == "sub_distribution_manager":
+    if role in ("sub_distribution_manager", "sub_distribution_employee"):
         async with async_session_factory() as session:
             row = (await session.execute(
                 text("SELECT parent_id FROM users WHERE id = :uid"),

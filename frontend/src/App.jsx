@@ -35,6 +35,9 @@ import EditRequests from './pages/EditRequests';
 import ReassignmentRequests from './pages/ReassignmentRequests';
 import UserSearch from './pages/UserSearch';
 import ViewAsDashboard from './pages/ViewAsDashboard';
+import MyApprovalRequests from './pages/MyApprovalRequests';
+import SubDistributionApprovals from './pages/SubDistributionApprovals';
+import SubDistributionOperationsApprovals from './pages/SubDistributionOperationsApprovals';
 
 
 import DeliveryConfirmations from './pages/DeliveryConfirmations';
@@ -183,7 +186,7 @@ function AppRoutes() {
         <Route 
           path="distributions/create" 
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <CreateDistribution />
             </ProtectedRoute>
           } 
@@ -191,7 +194,7 @@ function AppRoutes() {
         <Route
           path="distributions/bulk-upload"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <BulkImportDistribution />
             </ProtectedRoute>
           }
@@ -202,7 +205,7 @@ function AppRoutes() {
         <Route
           path="defects/create"
           element={
-            <ProtectedRoute allowedRoles={['operator', 'sub_distributor', 'cluster']}>
+            <ProtectedRoute allowedRoles={['operator', 'sub_distributor', 'cluster', 'sub_distribution_employee']}>
               <CreateDefectReport />
             </ProtectedRoute>
           }
@@ -210,7 +213,7 @@ function AppRoutes() {
         <Route
           path="replacements"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <Replacements />
             </ProtectedRoute>
           }
@@ -218,7 +221,7 @@ function AppRoutes() {
         <Route
           path="replacements/pending"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <PendingReplacements />
             </ProtectedRoute>
           }
@@ -226,7 +229,7 @@ function AppRoutes() {
         <Route
           path="pending-dues"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <PendingDues />
             </ProtectedRoute>
           }
@@ -236,7 +239,7 @@ function AppRoutes() {
         <Route
           path="returns"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <Returns />
             </ProtectedRoute>
           }
@@ -246,7 +249,7 @@ function AppRoutes() {
         <Route 
           path="users" 
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'sub_distribution_employee']}>
               <Users />
             </ProtectedRoute>
           } 
@@ -254,7 +257,7 @@ function AppRoutes() {
         <Route
           path="users/hierarchy"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'sub_distribution_employee']}>
               <UserHierarchy />
             </ProtectedRoute>
           }
@@ -262,7 +265,7 @@ function AppRoutes() {
         <Route
           path="users/bulk-upload"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'sub_distribution_employee']}>
               <BulkUploadUsers />
             </ProtectedRoute>
           }
@@ -278,11 +281,37 @@ function AppRoutes() {
           } 
         />
 
+        {/* Sub-Distribution Employee Approvals */}
+        <Route
+          path="approval-requests"
+          element={
+            <ProtectedRoute allowedRoles={['sub_distribution_employee']}>
+              <MyApprovalRequests />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="sub-distribution-approvals"
+          element={
+            <ProtectedRoute allowedRoles={['sub_distribution_manager', 'sub_distributor']}>
+              <SubDistributionApprovals />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="sub-distribution-operations-approvals"
+          element={
+            <ProtectedRoute allowedRoles={['sub_distribution_manager', 'sub_distributor']}>
+              <SubDistributionOperationsApprovals />
+            </ProtectedRoute>
+          }
+        />
+
         {/* Delivery Confirmations */}
         <Route
           path="delivery-confirmations"
           element={
-            <ProtectedRoute allowedRoles={['sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <DeliveryConfirmations />
             </ProtectedRoute>
           }
@@ -292,7 +321,7 @@ function AppRoutes() {
         <Route
           path="replacement-confirmation"
           element={
-            <ProtectedRoute allowedRoles={['operator', 'cluster', 'sub_distributor']}>
+            <ProtectedRoute allowedRoles={['operator', 'cluster', 'sub_distributor', 'sub_distribution_employee']}>
               <ReplacementConfirmation />
             </ProtectedRoute>
           }
@@ -320,7 +349,7 @@ function AppRoutes() {
         <Route
           path="reports/cluster"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee']}>
               <ClusterReport />
             </ProtectedRoute>
           }
@@ -329,7 +358,7 @@ function AppRoutes() {
         <Route
           path="reports/operator"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'sub_distribution_employee']}>
               <OperatorReport />
             </ProtectedRoute>
           }
@@ -356,7 +385,7 @@ function AppRoutes() {
         <Route
           path="external-inventory"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <ExternalInventory tab="items" />
             </ProtectedRoute>
           }
@@ -392,7 +421,7 @@ function AppRoutes() {
         <Route
           path="notifications"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee']}>
               <Notifications />
             </ProtectedRoute>
           }

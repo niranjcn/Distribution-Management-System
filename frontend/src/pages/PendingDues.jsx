@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
 import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
-import { defectsAPI } from '../services/api';
+import { defectsAPI, approvalRequestsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { Loader2, Receipt, DollarSign, Search } from 'lucide-react';
@@ -44,7 +44,7 @@ const PendingDues = () => {
   const role = String(user?.role || '').toLowerCase();
   const isOperatorView = role === 'operator';
   const isHierarchyView = !isOperatorView;
-  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(role);
+  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff', 'sub_distribution_employee'].includes(role);
 
   const buildUsersParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
@@ -329,8 +329,18 @@ const PendingDues = () => {
                       )}
                       {canConfirmPayment && (
                         <Button
-                          onClick={async () => {
+                                                    onClick={async () => {
                             try {
+                              if (user?.role === 'sub_distribution_employee') {
+                                await approvalRequestsAPI.submit({
+                                  request_type: 'payment_confirmation',
+                                  summary: `Confirm pending payment for ${item.user_name || item.id}`,
+                                  payload: { defect_id: String(item.id) },
+                                });
+                                showToast('Payment confirmation submitted for approval', 'success');
+                                await fetchUsers();
+                                return;
+                              }
                               await defectsAPI.confirmPayment(item.id, 'Confirmed from Pending Dues page');
                               showToast('Payment confirmed', 'success');
                               await fetchUsers();

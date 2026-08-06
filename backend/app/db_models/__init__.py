@@ -10,6 +10,7 @@ from app.db_models.notification import Notification
 from app.db_models.inventory import ExternalInventoryItem, ExternalDeviceHistory
 from app.db_models.digital_id import DigitalIdentity
 from app.db_models.activity import ApiActivityLog
+from app.db_models.approval_request import ApprovalRequest
 
 __all__ = [
     "Base",
@@ -24,4 +25,5 @@ __all__ = [
     "ExternalInventoryItem", "ExternalDeviceHistory",
     "ApiActivityLog",
     "DigitalIdentity",
+    "ApprovalRequest",
 ]
