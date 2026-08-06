@@ -53,7 +53,7 @@ const ALLOWED_ROLES_BY_CREATOR = {
   cluster: ['operator'],
 };
 
-const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', designation: '', address: '', pincode: '', parentId: '', digitalIdRows: [{ digitalId: '', broadbandId: '' }] };
+const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', designation: '', address: '', pincode: '', networkName: '', parentId: '', digitalIdRows: [{ digitalId: '', broadbandId: '' }] };
 
 // ─── avatar initials helper ────────────────────────────────────────────────────
 const initials = (name) =>
@@ -374,6 +374,7 @@ const UserHierarchy = () => {
       if (formData.address) payload.address = formData.address;
       if (formData.pincode) payload.pincode = formData.pincode;
       if (formData.parentId) payload.parent_id = formData.parentId;
+      if (formData.role === 'operator' && formData.networkName) payload.network_name = formData.networkName;
       const primaryRow = formData.digitalIdRows?.[0];
       if (primaryRow?.digitalId) payload.digital_id = primaryRow.digitalId;
       if (primaryRow?.broadbandId) payload.broadband_id = primaryRow.broadbandId;
@@ -880,6 +881,18 @@ const UserHierarchy = () => {
               />
             </Field>
           </div>
+
+          {formData.role === 'operator' && (
+            <Field label="Network Name">
+              <input
+                type="text"
+                value={formData.networkName}
+                onChange={e => setFormData(p => ({ ...p, networkName: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="e.g., Fibrocom"
+              />
+            </Field>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" onClick={() => { setShowAdd(false); setFormData(emptyForm); setParentOptions([]); setSubDistributorOptions([]); setSelectedOperatorSubDistId(''); setOperatorPlacement('sub_distributor'); setConfirmPassword(''); setShowCreatePassword(false); setShowCreateConfirmPassword(false); }}>
