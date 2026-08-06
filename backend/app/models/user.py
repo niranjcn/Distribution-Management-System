@@ -30,6 +30,7 @@ class UserBase(BaseModel):
     designation: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None
+    network_name: Optional[str] = None
     parent_id: Optional[str] = None
 
 
@@ -60,6 +61,7 @@ class UserUpdate(BaseModel):
     address: Optional[str] = None
     pincode: Optional[str] = None
     status: Optional[UserStatus] = None
+    network_name: Optional[str] = None
     digital_id: Optional[str] = None
     broadband_id: Optional[str] = None
 
@@ -74,6 +76,7 @@ class UserResponse(BaseModel):
     designation: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None
+    network_name: Optional[str] = None
     parent_id: Optional[str] = None
     created_by: Optional[int] = None
     created_at: datetime

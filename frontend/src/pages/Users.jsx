@@ -71,6 +71,7 @@ const emptyForm = {
   designation: '',
   address: '',
   pincode: '',
+  networkName: '',
   parentId: '',
   digitalId: '',
   broadbandId: '',
@@ -153,7 +154,7 @@ const Users = () => {
   const canCreateUsers = creatableRoles.length > 0;
 
   // Cascading filter state (admin/manager table view only)
-  const [filters, setFilters] = useState({ role: '', subDistManagerId: '', subDistId: '', clusterId: '' });
+  const [filters, setFilters] = useState({ role: '', subDistManagerId: '', subDistId: '', clusterId: '', networkName: '' });
   const [tableSearchBy, setTableSearchBy] = useState('all');
   const [tableSearchInput, setTableSearchInput] = useState('');
   const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
@@ -227,6 +228,7 @@ const Users = () => {
       if (appliedTableSearch.by && appliedTableSearch.by !== 'all') params.search_by = appliedTableSearch.by;
     }
     if (filters.role) params.role = filters.role;
+    if (filters.networkName) params.network_name = filters.networkName;
     const scopeRootId = getScopeRootId();
     if (scopeRootId) params.scope_root_id = scopeRootId;
     return params;
@@ -310,6 +312,7 @@ const Users = () => {
 
   const queryFingerprint = useMemo(() => JSON.stringify({
     role: isTableRole ? filters.role : '',
+    networkName: isTableRole ? filters.networkName : '',
     scopeRootId: isTableRole ? getScopeRootId() : '',
     search: isTableRole ? appliedTableSearch : { by: 'all', query: '' },
   }), [filters, appliedTableSearch, isTableRole]);
@@ -478,6 +481,11 @@ const Users = () => {
       render: (value) => value || '-'
     },
     {
+      key: 'network_name',
+      label: 'Network Name',
+      render: (value) => value || '-'
+    },
+    {
       key: 'created_at',
       label: 'Joined',
       render: (value) => value ? new Date(value).toLocaleDateString() : '-'
@@ -575,6 +583,7 @@ const Users = () => {
       if (formData.address)    payload.address = formData.address;
       if (formData.pincode)    payload.pincode = formData.pincode;
       if (formData.parentId)   payload.parent_id = formData.parentId;
+      if (formData.role === 'operator' && formData.networkName) payload.network_name = formData.networkName;
 
       await usersAPI.createUser(payload);
       showToast('User created successfully', 'success');
@@ -600,6 +609,7 @@ const Users = () => {
       if (formData.name)        payload.name = formData.name;
       if (formData.phone)       payload.phone = formData.phone;
       if (formData.designation) payload.designation = formData.designation;
+      if (formData.role === 'operator') payload.network_name = formData.networkName || null;
       const editPrimaryRow = formData.digitalIdRows?.[0];
       if (editPrimaryRow?.digitalId) payload.digital_id = editPrimaryRow.digitalId;
       if (editPrimaryRow?.broadbandId) payload.broadband_id = editPrimaryRow.broadbandId;
@@ -725,6 +735,11 @@ const Users = () => {
     let result = visibleUsers;
     if (filters.role) {
       result = result.filter(u => u.role === filters.role);
+    }
+    if (filters.networkName) {
+      result = result.filter(u =>
+        String(u.network_name || '').toLowerCase().includes(filters.networkName.toLowerCase())
+      );
     }
     if (filters.clusterId) {
       result = result.filter(u =>
@@ -1035,9 +1050,9 @@ const Users = () => {
                 <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                   <Filter className="w-4 h-4 text-gray-500" /> Filter Users
                 </p>
-                {(filters.role || filters.subDistManagerId || filters.subDistId || filters.clusterId) && (
+                {(filters.role || filters.subDistManagerId || filters.subDistId || filters.clusterId || filters.networkName) && (
                   <button
-                    onClick={() => setFilters({ role: '', subDistManagerId: '', subDistId: '', clusterId: '' })}
+                    onClick={() => setFilters({ role: '', subDistManagerId: '', subDistId: '', clusterId: '', networkName: '' })}
                     className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
                   >
                     Clear all
@@ -1051,7 +1066,7 @@ const Users = () => {
                   <label className="text-xs text-gray-500 font-medium">Role</label>
                   <select
                     value={filters.role}
-                    onChange={e => setFilters({ role: e.target.value, subDistManagerId: '', subDistId: '', clusterId: '' })}
+                    onChange={e => setFilters({ role: e.target.value, subDistManagerId: '', subDistId: '', clusterId: '', networkName: filters.networkName })}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 min-w-[150px]"
                   >
                     <option value="">All Roles</option>
@@ -1127,8 +1142,22 @@ const Users = () => {
                   </div>
                 )}
 
+                {/* Network Name — operators only */}
+                {(!filters.role || filters.role === 'operator') && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-gray-500 font-medium">Network Name</label>
+                    <input
+                      type="text"
+                      value={filters.networkName}
+                      onChange={e => setFilters(p => ({ ...p, networkName: e.target.value }))}
+                      placeholder="Filter by network..."
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 min-w-[180px]"
+                    />
+                  </div>
+                )}
+
                 {/* Active filter chips + result count */}
-                {(filters.role || filters.subDistManagerId || filters.subDistId || filters.clusterId) && (
+                {(filters.role || filters.subDistManagerId || filters.subDistId || filters.clusterId || filters.networkName) && (
                   <div className="flex items-center gap-2 flex-wrap pb-0.5">
                     {filters.role && (
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${getRoleColor(filters.role)}`}>
@@ -1159,6 +1188,14 @@ const Users = () => {
                       <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-800 flex items-center gap-1.5">
                         {visibleUsers.find(u => String(u.id) === filters.clusterId)?.name || 'Cluster'}
                         <button onClick={() => setFilters(p => ({ ...p, clusterId: '' }))}>
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {filters.networkName && (
+                      <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 flex items-center gap-1.5">
+                        Network: {filters.networkName}
+                        <button onClick={() => setFilters(p => ({ ...p, networkName: '' }))}>
                           <X className="w-3 h-3" />
                         </button>
                       </span>
@@ -1735,6 +1772,19 @@ const Users = () => {
               </div>
             )}
 
+            {formData.role === 'operator' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Network Name</label>
+                <input
+                  type="text"
+                  value={formData.networkName}
+                  onChange={(e) => setFormData({ ...formData, networkName: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="e.g., Fibrocom"
+                />
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
               <input
@@ -2073,6 +2123,7 @@ const Users = () => {
                 { key: 'designation', label: 'Designation' },
                 { key: 'address', label: 'Address' },
                 { key: 'pincode', label: 'Pincode' },
+                ...(detailUser.role === 'operator' ? [{ key: 'network_name', label: 'Network Name' }] : []),
               ].map(({ key, label }) => (
                 <div key={key}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
@@ -2144,6 +2195,7 @@ const Users = () => {
                       designation: detailForm.designation,
                       address: detailForm.address,
                       pincode: detailForm.pincode,
+                      network_name: detailUser.role === 'operator' ? detailForm.network_name || null : undefined,
                     };
                     await usersAPI.updateUser(detailUser.id, updatePayload);
                     if (isAdmin && detailForm.email && detailForm.email !== detailUser.email) {

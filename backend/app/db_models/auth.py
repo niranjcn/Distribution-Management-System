@@ -18,6 +18,7 @@ class User(Base):
     designation = Column(String(255))
     address = Column(String(255))
     pincode = Column(String(255))
+    network_name = Column(String(255))
     parent_id = Column(Integer)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)

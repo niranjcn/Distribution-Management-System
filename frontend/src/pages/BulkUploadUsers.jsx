@@ -25,8 +25,8 @@ const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
 
 const TEMPLATE = {
   filename: 'user-bulk-upload-template.csv',
-  headers: ['email', 'password', 'name', 'digital_id', 'broadband_id', 'phone'],
-  sample: 'user1@example.com,Pass@123,John Doe,SD001|DIG002|DIG003,BB001,+8801234567890',
+  headers: ['email', 'password', 'name', 'digital_id', 'broadband_id', 'phone', 'network_name'],
+  sample: 'user1@example.com,Pass@123,John Doe,SD001|DIG002|DIG003,BB001,+8801234567890,Fibrocom',
 };
 
 const BulkUploadUsers = () => {
@@ -325,6 +325,9 @@ const BulkUploadUsers = () => {
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
                   Use pipe (|) in digital_id to add multiple digital IDs (operators)
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  network_name is optional and applies to operators
                 </p>
               </div>
               <Button variant="outline" onClick={downloadTemplate}>
