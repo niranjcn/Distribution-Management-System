@@ -220,6 +220,7 @@ async def get_users(
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
     parent_id: Optional[str] = None,
+    network_name: Optional[str] = None,
     scope_root_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
@@ -311,6 +312,7 @@ async def get_users(
             search_by=search_by,
             parent_id=parent_id_filter,
             parent_ids_in=parent_ids_in_filter,
+            network_name=network_name,
         )
 
         if actor_role in {MANAGER, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER}:

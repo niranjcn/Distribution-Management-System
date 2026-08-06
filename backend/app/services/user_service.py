@@ -35,7 +35,7 @@ def _strip_user(user_dict: Dict[str, Any]) -> Dict[str, Any]:
 _USER_LIST_COLUMNS = (
     User.id, User.name, User.email, User.role, User.status,
     User.force_email_change, User.force_password_change, User.phone,
-    User.designation, User.address, User.pincode, User.parent_id,
+    User.designation, User.address, User.pincode, User.network_name, User.parent_id,
     User.created_at, User.updated_at, User.last_login,
     User.failed_login_attempts, User.locked_until, User.created_by,
 )
@@ -121,6 +121,7 @@ async def get_users(
     search_by: Optional[str] = None,
     parent_id: Optional[str] = None,
     parent_ids_in: Optional[List[int]] = None,
+    network_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Get all users with pagination and filters"""
     if parent_ids_in is not None and len(parent_ids_in) == 0:
@@ -140,6 +141,13 @@ async def get_users(
             conditions.append(User.role.in_(normalized_roles))
         elif role:
             conditions.append(User.role == role)
+        if network_name and network_name.strip():
+            conditions.append(
+                and_(
+                    User.role == "operator",
+                    User.network_name == network_name.strip(),
+                )
+            )
         if search:
             search_escaped = escape_like(search)
             search_like = f"%{search_escaped}%"
@@ -275,6 +283,7 @@ async def create_user(user_data: UserCreate, creator_id: Optional[int] = None) -
             designation=user_data.designation,
             address=user_data.address,
             pincode=user_data.pincode,
+            network_name=user_data.network_name if user_data.role.value == "operator" else None,
             parent_id=parent_id,
             created_by=creator_id,
             created_at=now,
@@ -311,6 +320,7 @@ async def create_user(user_data: UserCreate, creator_id: Optional[int] = None) -
             "designation": user_data.designation,
             "address": user_data.address,
             "pincode": user_data.pincode,
+            "network_name": user_data.network_name if user_data.role.value == "operator" else None,
             "parent_id": str(parent_id) if parent_id is not None else None,
             "created_by": creator_id,
             "created_at": now,
@@ -340,6 +350,7 @@ async def update_user(user_id: str, user_data: UserUpdate) -> Optional[Dict[str,
             "name": "name", "phone": "phone",
             "designation": "designation", "address": "address", "pincode": "pincode",
             "status": "status",
+            "network_name": "network_name",
         }
 
         for py_field, db_attr in field_mapping.items():

@@ -518,7 +518,13 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
 
 async def get_distribution_device_analytics(start_date: Optional[str] = None,
                                             end_date: Optional[str] = None) -> Dict[str, Any]:
-    """Get distribution device analytics: sent, remaining, by type and manufacturer."""
+    """Get distribution device analytics: sent, remaining, by type and manufacturer (cached)."""
+    cache_key = f"distribution_device_analytics:{start_date}:{end_date}"
+    return await cached(ttl_seconds=30, key=cache_key, factory=lambda: _compute_distribution_device_analytics(start_date, end_date))
+
+
+async def _compute_distribution_device_analytics(start_date: Optional[str] = None,
+                                                 end_date: Optional[str] = None) -> Dict[str, Any]:
     async with async_session_factory() as session:
         base_cond = "status IN ('distributed', 'in_use')"
         dd_params = {}

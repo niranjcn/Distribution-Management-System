@@ -402,6 +402,7 @@ async def process_bulk_user_upload(
         phone = str(row.get("phone") or "").strip() or None
         address = str(row.get("address") or "").strip() or None
         pincode = str(row.get("pincode") or "").strip() or None
+        network_name = str(row.get("network_name") or "").strip() or None
 
         # digital_id may contain multiple ids separated by "|" (operators can
         # have several digital ids). The first value is the primary id, the
@@ -453,6 +454,7 @@ async def process_bulk_user_upload(
             "phone": phone,
             "address": address,
             "pincode": pincode,
+            "network_name": network_name if target_role == "operator" else None,
         })
 
     if not prepared_rows:
@@ -509,9 +511,9 @@ async def process_bulk_user_upload(
             return _build_response(0, len(skipped), len(errors), created, skipped, errors)
 
         insert_sql = """INSERT INTO users (email, password_hash, name, role,
-            status, phone, designation, address, pincode, parent_id, created_by, created_at, updated_at)
+            status, phone, designation, address, pincode, network_name, parent_id, created_by, created_at, updated_at)
         VALUES (:email, :password_hash, :name, :role,
-            :status, :phone, :designation, :address, :pincode, :parent_id, :created_by, :created_at, :updated_at)"""
+            :status, :phone, :designation, :address, :pincode, :network_name, :parent_id, :created_by, :created_at, :updated_at)"""
 
         creator_id = int(current_user.get("id") or 0)
 
@@ -528,6 +530,7 @@ async def process_bulk_user_upload(
                 "designation": None,
                 "address": item["address"],
                 "pincode": item["pincode"],
+                "network_name": item["network_name"],
                 "parent_id": item.get("parent_id"),
                 "created_by": creator_id,
                 "created_at": now,
