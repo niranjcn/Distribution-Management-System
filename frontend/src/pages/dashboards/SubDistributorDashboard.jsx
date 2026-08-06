@@ -46,6 +46,10 @@ const SubDistributorDashboard = () => {
   const role = String(user?.role || '').toLowerCase();
   const isSubDistributionManager = role === 'sub_distribution_manager';
   const isCluster = role === 'cluster';
+  const isEmployee = role === 'sub_distribution_employee';
+  // Branch-scope an employee's dashboard to its parent sub-distributor so all
+  // the metrics shown to the sub distributor are shown exactly to the employee.
+  const effectiveId = (isEmployee ? user?.parent_id : user?.id);
   const canAssign = role !== 'sub_distribution_manager';
   const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
@@ -66,7 +70,7 @@ const SubDistributorDashboard = () => {
         const [statsRes, advancedRes, devRes, distRes, usersRes, defRes, retRes] = await Promise.all([
           dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
           dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
-          ['sub_distribution_manager', 'sub_distributor', 'cluster'].includes(role)
+          ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee', 'cluster'].includes(role)
             ? devicesAPI.getMyOverview({ show_all: true, limit: 10 }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: { all_under_me: [] } }; })
             : devicesAPI.getDevices().catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: [] }; }),
           distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; }),
@@ -117,7 +121,7 @@ const SubDistributorDashboard = () => {
   }), [charts.cluster_account_active_split, charts.operator_account_active_split]);
 
   const pendingReceipts = distributions.filter(
-    d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)
+    d => d.status === 'pending_receipt' && String(d.to_user_id) === String(effectiveId)
   );
 
   const receivedDevicesCount = isCluster
@@ -128,9 +132,9 @@ const SubDistributorDashboard = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-800 break-words">{isSubDistributionManager ? 'Sub Distribution Manager Dashboard' : isCluster ? 'Cluster Dashboard' : 'Sub-Distributor Dashboard'}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800 break-words">{isSubDistributionManager ? 'Sub Distribution Manager Dashboard' : isCluster ? 'Cluster Dashboard' : isEmployee ? 'Sub Distribution Employee Dashboard' : 'Sub-Distributor Dashboard'}</h1>
           <p className="text-gray-500 mt-1">
-            {isSubDistributionManager ? 'Monitor branch devices and operator activity.' : isCluster ? 'Manage cluster devices and operator assignments.' : 'Manage received devices and operator assignments.'}
+            {isSubDistributionManager ? 'Monitor branch devices and operator activity.' : isCluster ? 'Manage cluster devices and operator assignments.' : isEmployee ? 'Monitor your sub distribution and submit proposals for approval.' : 'Manage received devices and operator assignments.'}
           </p>
         </div>
         {canAssign && (

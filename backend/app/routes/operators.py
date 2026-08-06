@@ -24,6 +24,8 @@ async def get_operators(
         assigned_to = None
         if current_user["role"] in ["sub_distribution_manager", "sub_distributor", "cluster"]:
             assigned_to = current_user["id"]
+        elif current_user["role"] == "sub_distribution_employee":
+            assigned_to = current_user.get("parent_id") or current_user["id"]
 
         result = await operator_service.get_operators(
             page=page,

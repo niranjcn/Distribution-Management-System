@@ -16,6 +16,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if request.url.path not in docs_paths:
             csp = (
                 "default-src 'self'; "
+                "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; "
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
                 "font-src 'self' https://fonts.gstatic.com data:"
             )

@@ -7,6 +7,7 @@ export const ROLES = {
   SUB_DISTRIBUTOR: 'sub_distributor',
   CLUSTER: 'cluster',
   OPERATOR: 'operator',
+  SUB_DISTRIBUTION_EMPLOYEE: 'sub_distribution_employee',
 };
 
 export const normalizeRole = (role) => {
@@ -27,6 +28,7 @@ export const ROLE_LABELS = {
   [ROLES.SUB_DISTRIBUTOR]: 'Sub Distributor',
   [ROLES.CLUSTER]: 'Cluster',
   [ROLES.OPERATOR]: 'Operator',
+  [ROLES.SUB_DISTRIBUTION_EMPLOYEE]: 'Sub Distribution Employee',
 };
 
 export const isForcedCredentialUpdateRequired = (user) =>

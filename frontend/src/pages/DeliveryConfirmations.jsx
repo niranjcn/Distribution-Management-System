@@ -5,7 +5,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
-import { distributionsAPI, devicesAPI } from '../services/api';
+import { distributionsAPI, devicesAPI, approvalRequestsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import {
@@ -30,6 +30,8 @@ const getSenderDisplayName = (dist) => {
 const DeliveryConfirmations = () => {
   const { user } = useAuth();
   const { showToast } = useNotifications();
+  const isEmployee = user?.role === 'sub_distribution_employee';
+  const recipientId = isEmployee ? String(user?.parent_id || user?.id) : String(user?.id);
   const [distributions, setDistributions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDist, setSelectedDist] = useState(null);
@@ -74,9 +76,9 @@ const DeliveryConfirmations = () => {
       setLoading(true);
       const response = await distributionsAPI.getDistributions({ status: 'pending_receipt' });
       const allDists = response.data || [];
-      // Filter only distributions where current user is the recipient
+      // Filter only distributions where current user (or, for employees, the branch) is the recipient
       const myPending = allDists.filter(
-        d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)
+        d => d.status === 'pending_receipt' && String(d.to_user_id) === recipientId
       );
       setDistributions(myPending);
     } catch (error) {
@@ -125,6 +127,26 @@ const fetchDistributionDevices = async (distributionId) => {
     if (!selectedDist) return;
     setReceiptSubmitting(true);
     try {
+      if (isEmployee) {
+        const distributionId = selectedDist._id || selectedDist.id;
+        await approvalRequestsAPI.submit({
+          request_type: 'delivery_receipt',
+          summary: `${received ? 'Confirm receipt' : 'Report non-receipt'} for ${selectedDist.distribution_id}`,
+          payload: {
+            distribution_id: String(distributionId),
+            received,
+            notes: receiptNotes || undefined,
+          },
+        });
+        showToast('Receipt confirmation submitted for approval', 'success');
+        setShowReceiptModal(false);
+        setShowDetailModal(false);
+        setReceiptNotes('');
+        setSelectedDist(null);
+        setDistributionDevices([]);
+        fetchDistributions();
+        return;
+      }
       await distributionsAPI.confirmReceipt(
         selectedDist._id || selectedDist.id,
         received,

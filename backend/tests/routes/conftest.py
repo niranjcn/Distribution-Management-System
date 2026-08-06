@@ -38,6 +38,7 @@ def test_app():
         from app.routes.reassignment_requests import router as reassignment_requests_router
         from app.routes.reports import router as reports_router
         from app.routes.returns import router as returns_router
+        from app.routes.approval_requests import router as approval_requests_router
 
     app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
     app.include_router(users_router, prefix="/api/users", tags=["Users"])
@@ -52,6 +53,7 @@ def test_app():
     app.include_router(reassignment_requests_router, prefix="/api/reassignment-requests", tags=["Reassignment Requests"])
     app.include_router(reports_router, prefix="/api/reports", tags=["Reports"])
     app.include_router(returns_router, prefix="/api/returns", tags=["Returns"])
+    app.include_router(approval_requests_router, prefix="/api/approval-requests", tags=["Approval Requests"])
 
     from app.middleware.auth_middleware import get_current_user
 

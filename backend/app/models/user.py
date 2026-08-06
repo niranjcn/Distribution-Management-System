@@ -19,6 +19,7 @@ class UserRole(str, Enum):
     SUB_DISTRIBUTOR = "sub_distributor"
     CLUSTER = "cluster"
     OPERATOR = "operator"
+    SUB_DISTRIBUTION_EMPLOYEE = "sub_distribution_employee"
 
 
 class UserBase(BaseModel):

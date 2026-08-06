@@ -25,7 +25,8 @@ import {
   ArrowLeftRight,
   Database,
   DollarSign,
-  Eye
+  Eye,
+  ClipboardCheck
 } from 'lucide-react';
 import { normalizeRole, ROLE_LABELS, ROLES } from '../../utils/roles';
 
@@ -314,6 +315,8 @@ const Sidebar = ({ isOpen, onClose }) => {
           { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
         ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
+        { path: '/sub-distribution-approvals', icon: ClipboardCheck, label: 'Sub Distribution Approvals' },
+        { path: '/sub-distribution-operations-approvals', icon: ClipboardCheck, label: 'Operations Approvals' },
       ],
       [ROLES.SUB_DISTRIBUTOR]: [
         ...commonItems,
@@ -349,6 +352,8 @@ const Sidebar = ({ isOpen, onClose }) => {
         ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
+        { path: '/sub-distribution-approvals', icon: ClipboardCheck, label: 'Sub Distribution Approvals' },
+        { path: '/sub-distribution-operations-approvals', icon: ClipboardCheck, label: 'Operations Approvals' },
       ],
       [ROLES.CLUSTER]: [
         ...commonItems,
@@ -409,6 +414,42 @@ const Sidebar = ({ isOpen, onClose }) => {
         ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'My Returns' },
+      ],
+      [ROLES.SUB_DISTRIBUTION_EMPLOYEE]: [
+        ...commonItems,
+        subFieldReportMenu,
+        {
+          key: 'users',
+          icon: Users,
+          label: 'User Management',
+          children: [
+            { path: '/users', label: 'Scoped Users' },
+            { path: '/users/hierarchy', label: 'User Hierarchy' },
+            { path: '/users/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
+        { path: '/devices', icon: Box, label: 'My Devices' },
+        externalInventoryFieldMenu,
+        { path: '/delivery-confirmations', icon: PackageCheck, label: 'Delivery Confirmations' },
+        ...(canShowReplacementOptions ? [{ path: '/replacement-confirmation', icon: PackageCheck, label: 'Replacement Confirmation' }] : []),
+        {
+          key: 'distribution',
+          icon: Truck,
+          label: 'Distribution',
+          children: [
+            { path: '/distributions', label: 'My Distributions' },
+            { path: '/distributions/create', label: 'Create Distribution' },
+            { path: '/distributions/bulk-upload', label: 'Bulk Upload' },
+          ]
+        },
+        { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
+        ...(canShowReplacementOptions ? [
+          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
+        ] : []),
+        { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
+        { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
+        { path: '/approval-requests', icon: ClipboardList, label: 'My Approval Requests' },
       ],
     };
 

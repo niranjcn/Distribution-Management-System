@@ -6,7 +6,7 @@ import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import Timeline from '../components/ui/Timeline';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
-import { returnsAPI } from '../services/api';
+import { returnsAPI, approvalRequestsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useQueryClient } from '@tanstack/react-query';
@@ -210,7 +210,7 @@ const Returns = () => {
     return () => window.removeEventListener('appDataMutation', handler);
   }, []);
 
-  const canConfirmReceipt = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
+  const canConfirmReceipt = ['super_admin', 'manager', 'pdic_staff', 'sub_distribution_employee'].includes(user?.role);
   const pendingReceiptCount = statusCounts.pending + statusCounts.approved;
 
   const columns = [
@@ -276,6 +276,21 @@ const Returns = () => {
 
   const handleConfirmReceipt = async () => {
     try {
+      if (user?.role === 'sub_distribution_employee') {
+        await approvalRequestsAPI.submit({
+          request_type: 'return_status',
+          summary: `Confirm received return ${selectedReturn.return_id || selectedReturn._id}`,
+          payload: {
+            return_id: String(selectedReturn._id || selectedReturn.id),
+            status: 'received',
+            notes: actionComment || undefined,
+          },
+        });
+        showToast('Return confirmation submitted for approval', 'success');
+        setShowReceiptModal(false);
+        setActionComment('');
+        return;
+      }
       await returnsAPI.updateReturnStatus(
         selectedReturn._id || selectedReturn.id,
         'received',

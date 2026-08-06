@@ -1,0 +1,343 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import DataTable from '../components/ui/DataTable';
+import Card from '../components/ui/Card';
+import Modal from '../components/ui/Modal';
+import Button from '../components/ui/Button';
+import StatusBadge from '../components/ui/StatusBadge';
+import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
+import { approvalRequestsAPI } from '../services/api';
+import { ShieldAlert, Eye, Check, X, ClipboardCheck } from 'lucide-react';
+
+const OPERATIONS_TYPES = [
+  'user_update',
+  'user_delete',
+  'user_reassign',
+  'bulk_users',
+  'bulk_distribution',
+  'delivery_receipt',
+  'return_status',
+  'defect_status',
+  'payment_confirmation',
+];
+
+const TYPE_LABELS = {
+  user_update: 'Edit User',
+  user_delete: 'Delete User',
+  user_reassign: 'Reassign User',
+  bulk_users: 'Bulk Users',
+  bulk_distribution: 'Bulk Distribution',
+  delivery_receipt: 'Delivery Receipt',
+  return_status: 'Return Status',
+  defect_status: 'Defect Status',
+  payment_confirmation: 'Payment Confirmation',
+};
+
+const PayloadView = ({ requestType, payload }) => {
+  if (!payload) return <p className="text-gray-500">No payload</p>;
+
+  const row = (label, value) => (
+    <p className="text-sm text-gray-700"><span className="font-medium text-gray-500">{label}:</span> {value || '-'}</p>
+  );
+
+  const fields = {
+    user_update: () => row('Target User', payload.user_id),
+    user_delete: () => row('Target User', payload.user_id),
+    user_reassign: () => (
+      <>
+        {row('Target User', payload.user_id)}
+        {row('New Parent', payload.new_parent_id)}
+      </>
+    ),
+    bulk_users: () => (
+      <>
+        {row('Target Role', payload.role)}
+        {row('Parent', payload.parent_id)}
+        <p className="text-sm text-gray-700"><span className="font-medium text-gray-500">Rows:</span> {Array.isArray(payload.rows) ? payload.rows.length : 0}</p>
+        <pre className="bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto text-xs whitespace-pre-wrap">
+          {JSON.stringify(payload.rows, null, 2)}
+        </pre>
+      </>
+    ),
+    bulk_distribution: () => (
+      <>
+        {row('Recipient', payload.to_user_id)}
+        {row('Date', payload.date_of_distribution)}
+        {row('Notes', payload.notes)}
+        <p className="text-sm text-gray-700"><span className="font-medium text-gray-500">Identifiers:</span> {Array.isArray(payload.rows) ? payload.rows.length : 0}</p>
+        <pre className="bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto text-xs whitespace-pre-wrap">
+          {JSON.stringify(payload.rows, null, 2)}
+        </pre>
+      </>
+    ),
+    delivery_receipt: () => (
+      <>
+        {row('Distribution', payload.distribution_id)}
+        {row('Received', String(payload.received))}
+        {row('Notes', payload.notes)}
+      </>
+    ),
+    return_status: () => (
+      <>
+        {row('Return ID', payload.return_id)}
+        {row('Status', payload.status)}
+        {row('Return Amount', payload.return_amount)}
+        {row('Notes', payload.notes)}
+      </>
+    ),
+    defect_status: () => (
+      <>
+        {row('Defect ID', payload.defect_id)}
+        {row('Status', payload.status)}
+        {row('Return Amount', payload.return_amount)}
+        {row('Notes', payload.notes)}
+      </>
+    ),
+    payment_confirmation: () => (
+      <>
+        {row('Defect ID', payload.defect_id)}
+        {row('Notes', payload.notes)}
+      </>
+    ),
+  };
+
+  const render = fields[requestType] || (() => (
+    <pre className="bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto text-xs whitespace-pre-wrap">
+      {JSON.stringify(payload, null, 2)}
+    </pre>
+  ));
+
+  return <div className="space-y-1">{render()}</div>;
+};
+
+const SubDistributionOperationsApprovals = () => {
+  const { hasRole } = useAuth();
+  const navigate = useNavigate();
+  const { showToast } = useNotifications();
+
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('pending');
+  const [detail, setDetail] = useState(null);
+  const [showDetail, setShowDetail] = useState(false);
+  const [decision, setDecision] = useState('');
+  const [note, setNote] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!hasRole(['sub_distribution_manager', 'sub_distributor'])) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 px-4">
+        <ShieldAlert className="w-16 h-16 text-red-500 mb-4" />
+        <h1 className="text-xl font-bold text-gray-800 text-center">Access Denied</h1>
+        <p className="text-gray-500 mt-2 text-center">Only sub distribution managers and sub distributors can approve operations requests.</p>
+        <Button className="mt-4" onClick={() => navigate('/')}>Back to Dashboard</Button>
+      </div>
+    );
+  }
+
+  const load = useCallback(async (targetStatus) => {
+    setLoading(true);
+    try {
+      const params = { page: 1, page_size: 100 };
+      if (targetStatus) params.status = targetStatus;
+      const res = await approvalRequestsAPI.getPending(params);
+      const all = Array.isArray(res?.data) ? res.data : [];
+      setRows(all.filter((r) => OPERATIONS_TYPES.includes(r.request_type)));
+    } catch (error) {
+      showToast(error.message || 'Failed to load requests', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    load(statusFilter);
+  }, [statusFilter, load]);
+
+  const openDetail = async (row) => {
+    try {
+      const res = await approvalRequestsAPI.getDetail(row.request_id);
+      setDetail(res?.data || row);
+      setNote('');
+      setDecision('');
+      setShowDetail(true);
+    } catch (error) {
+      showToast(error.message || 'Failed to load request details', 'error');
+    }
+  };
+
+  const openDecision = (action) => {
+    if (action === 'reject' && !note.trim()) {
+      showToast('Please enter a reason for rejection', 'error');
+      return;
+    }
+    setDecision(action);
+    setShowConfirm(true);
+  };
+
+  const submitDecision = async () => {
+    setSubmitting(true);
+    try {
+      const res = await approvalRequestsAPI.decide(detail.request_id, { action: decision, review_note: note || undefined });
+      showToast(res?.message || `Request ${decision}d`, decision === 'approve' ? 'success' : 'info');
+      setShowConfirm(false);
+      setShowDetail(false);
+      load(statusFilter);
+    } catch (error) {
+      showToast(error.message || 'Failed to submit decision', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const columns = [
+    { key: 'request_id', label: 'Request ID' },
+    {
+      key: 'request_type', label: 'Type',
+      render: (value) => <span className="text-gray-700">{TYPE_LABELS[value] || value}</span>,
+    },
+    { key: 'summary', label: 'Summary', render: (v) => <span className="text-gray-600 truncate block max-w-[280px]">{v || '-'}</span> },
+    { key: 'requested_by_name', label: 'Requested By', render: (v) => <span className="text-gray-700">{v || '-'}</span> },
+    {
+      key: 'status', label: 'Status',
+      render: (value) => <StatusBadge status={value} />,
+    },
+    {
+      key: 'created_at', label: 'Submitted',
+      render: (value) => <span className="text-gray-500">{value ? new Date(value).toLocaleString() : '-'}</span>,
+    },
+    {
+      key: 'actions', label: 'Actions',
+      render: (_, row) => (
+        <Button size="sm" variant="outline" icon={Eye} onClick={() => openDetail(row)}>View</Button>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Operations Approvals</h1>
+        <p className="text-gray-500 mt-1 text-sm sm:text-base">
+          Approve or reject branch operations requests (bulk uploads, user edits, receipts, status changes, payments).
+        </p>
+      </div>
+
+      <Card icon={ClipboardCheck}>
+        <div className="mb-4 flex flex-wrap gap-2">
+          {['pending', 'approved', 'rejected'].map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg border transition-colors ${
+                statusFilter === s
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {s[0].toUpperCase() + s.slice(1)}
+            </button>
+          ))}
+        </div>
+        <DataTable
+          columns={columns}
+          data={rows}
+          pagination={false}
+          exportable={false}
+          searchable={false}
+          loading={loading}
+        />
+      </Card>
+
+      <Modal isOpen={showDetail} onClose={() => setShowDetail(false)} title="Request Details" size="lg">
+        {detail && (
+          <div className="space-y-4 text-sm">
+            <div className="flex items-center gap-3">
+              <span className="font-mono font-semibold text-gray-800">{detail.request_id}</span>
+              <StatusBadge status={detail.status} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <p><span className="text-gray-500">Type:</span> <span className="font-medium">{TYPE_LABELS[detail.request_type] || detail.request_type}</span></p>
+              <p><span className="text-gray-500">Requested by:</span> <span className="font-medium">{detail.requested_by_name}</span></p>
+              <p><span className="text-gray-500">Summary:</span> <span className="font-medium">{detail.summary || '-'}</span></p>
+              <p><span className="text-gray-500">Forum roles:</span> <span className="font-medium">{(detail.required_roles || []).join(', ') || '-'}</span></p>
+            </div>
+            <div>
+              <p className="text-gray-500 mb-1">Details</p>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <PayloadView requestType={detail.request_type} payload={detail.payload} />
+              </div>
+            </div>
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2">
+              Approved proposals are revalidated before being applied. If any detail is now invalid, the request will be returned for correction.
+            </p>
+
+            {detail.status === 'pending' ? (
+              <div className="space-y-3 border-t border-gray-200 pt-4">
+                <label className="block text-sm font-medium text-gray-700">Review note</label>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  placeholder="Optional note / rejection reason..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" icon={X} onClick={() => openDecision('reject')}>Reject</Button>
+                  <Button icon={Check} onClick={() => openDecision('approve')}>Approve</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 border-t border-gray-200 pt-4">
+                {(detail.approvals || []).map((a, i) => (
+                  <div key={i} className="bg-gray-50 border border-gray-200 rounded-lg p-2">
+                    <p className="text-gray-700">
+                      {a.user_name} ({a.role}) — <span className="capitalize">{a.decision}</span>
+                      {a.note ? ` — ${a.note}` : ''}
+                    </p>
+                  </div>
+                ))}
+                {detail.status === 'rejected' && detail.rejection_reason && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+                    <p className="font-medium text-red-700">Reason</p>
+                    <p className="text-red-600">{detail.rejection_reason}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={showConfirm}
+        onClose={() => setShowConfirm(false)}
+        title={decision === 'approve' ? 'Confirm Approval' : 'Confirm Rejection'}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowConfirm(false)}>Cancel</Button>
+            <Button
+              variant={decision === 'approve' ? 'primary' : 'danger'}
+              loading={submitting}
+              onClick={submitDecision}
+            >
+              Confirm {decision}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700">
+          {decision === 'approve'
+            ? 'Submitting this will record your approval. The request is applied once all required approvers approve.'
+            : 'Submitting this will reject the employee request.'}
+        </p>
+        {note && <p className="text-sm text-gray-500 mt-2">Note: {note}</p>}
+      </Modal>
+    </div>
+  );
+};
+
+export default SubDistributionOperationsApprovals;

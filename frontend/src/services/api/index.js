@@ -15,3 +15,4 @@ export { changeRequestsAPI } from './changeRequests';
 export { reassignmentRequestsAPI } from './reassignmentRequests';
 export { digitalIdsAPI } from './digitalIds';
 export { approvalsAPI } from './approvals';
+export { approvalRequestsAPI } from './approvalRequests';

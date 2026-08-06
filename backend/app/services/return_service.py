@@ -31,7 +31,7 @@ async def get_returns(
         if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
             return None
 
-        scope_root = parent_id if role == "sub_distribution_manager" and parent_id.isdigit() else user_id
+        scope_root = parent_id if role in ("sub_distribution_manager", "sub_distribution_employee") and parent_id.isdigit() else user_id
         scoped_ids: Set[str] = {scope_root}
         if str(scope_root).isdigit():
             desc_rows = (await session.execute(

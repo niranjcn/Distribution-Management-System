@@ -706,6 +706,15 @@ async def _get_hierarchy_stats(session, user_id: str, user_role: str) -> Dict[st
     """Aggregate device/distribution counts for a hierarchy user (no device rows)."""
     uid = int(user_id)
 
+    if user_role == "sub_distribution_employee":
+        emp_row = (await session.execute(
+            text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
+        )).mappings().first()
+        if emp_row and emp_row.get("parent_id") is not None:
+            uid = int(emp_row["parent_id"])
+            user_id = str(uid)
+            user_role = "sub_distributor"
+
     distrib_q = text("""
         SELECT
             SUM(CASE WHEN to_user_id = :uid1 THEN 1 ELSE 0 END) as received_count,
@@ -783,6 +792,15 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
     """Get comprehensive device overview: devices in hand + under hierarchy + distribution stats."""
     async with async_session_factory() as session:
         uid = int(user_id)
+
+        if user_role == "sub_distribution_employee":
+            emp_row = (await session.execute(
+                text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
+            )).mappings().first()
+            if emp_row and emp_row.get("parent_id") is not None:
+                uid = int(emp_row["parent_id"])
+                user_id = str(uid)
+                user_role = "sub_distributor"
 
         # Devices directly held by this user
         held_q = select(Device).where(Device.current_holder_id == uid).order_by(Device.updated_at.desc()).limit(limit)
@@ -959,6 +977,15 @@ async def _build_scope_id_sets(session, user_id: str, user_role: str) -> tuple:
       table.
     """
     uid = int(user_id)
+
+    if user_role == "sub_distribution_employee":
+        emp_row = (await session.execute(
+            text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
+        )).mappings().first()
+        if emp_row and emp_row.get("parent_id") is not None:
+            uid = int(emp_row["parent_id"])
+            user_role = "sub_distributor"
+
     mine_ids = [uid]
 
     if user_role == "sub_distributor":

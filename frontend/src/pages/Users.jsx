@@ -7,7 +7,7 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI, digitalIdsAPI } from '../services/api';
+import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI, digitalIdsAPI, approvalRequestsAPI } from '../services/api';
 import { 
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
   Building, Calendar, Users as UsersIcon, Loader2, Lock,
@@ -19,9 +19,10 @@ import { userKeys } from '../hooks';
 
 // Roles each creator can assign
 const ALLOWED_ROLES_BY_CREATOR = {
-  super_admin:     ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
-  manager:         ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator'],
-  sub_distributor: ['sub_distribution_manager', 'cluster', 'operator'],
+  super_admin:     ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
+  manager:         ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
+  sub_distribution_manager: ['sub_distribution_employee'],
+  sub_distributor: ['sub_distribution_manager', 'cluster', 'operator', 'sub_distribution_employee'],
   cluster:         ['operator'],
 };
 
@@ -34,6 +35,7 @@ const ROLE_LABELS = {
   sub_distributor: 'Sub Distributor',
   cluster: 'Cluster',
   operator: 'Operator',
+  sub_distribution_employee: 'Sub Distribution Employee',
 };
 
 const USER_SEARCH_BY_OPTIONS = [
@@ -58,6 +60,7 @@ const getRoleColor = (role) => {
     case 'sub_distributor': return 'bg-indigo-100 text-indigo-800';
     case 'cluster':         return 'bg-teal-100 text-teal-800';
     case 'operator':        return 'bg-green-100 text-green-800';
+    case 'sub_distribution_employee': return 'bg-violet-100 text-violet-800';
     default:                return 'bg-gray-100 text-gray-800';
   }
 };
@@ -358,8 +361,8 @@ const Users = () => {
     setShowCreateConfirmPassword(false);
     // For sub_distributor creating cluster, no parent selector needed.
     // For admin/manager, kick off load if default role requires it.
-    if (['super_admin', 'manager'].includes(currentUser?.role)) {
-      if (defaultRole === 'sub_distribution_manager' || defaultRole === 'cluster' || defaultRole === 'operator') {
+    if (['super_admin', 'manager', 'sub_distribution_manager'].includes(currentUser?.role)) {
+      if (defaultRole === 'sub_distribution_manager' || defaultRole === 'cluster' || defaultRole === 'operator' || defaultRole === 'sub_distribution_employee') {
         loadParentOptions(defaultRole);
       }
     }
@@ -385,6 +388,9 @@ const Users = () => {
         ]);
         setSubDistributorOptions(subRes.data || []);
         setParentOptions(clusterRes.data || []);
+      } else if (role === 'sub_distribution_employee') {
+        const res = await usersAPI.getUsers({ role: 'sub_distributor', page_size: USERS_FETCH_PAGE_SIZE });
+        setParentOptions(res.data || []);
       }
     } catch (err) {
       console.error('Failed to load parent options:', err);
@@ -403,8 +409,8 @@ const Users = () => {
     setFormData(prev => ({ ...prev, role: newRole, parentId: isAutoParent ? currentUser.id : '' }));
     setSelectedOperatorSubDistId('');
     setOperatorPlacement('sub_distributor');
-    if (['super_admin', 'manager'].includes(currentUser?.role)) {
-      if (newRole === 'sub_distribution_manager' || newRole === 'cluster' || newRole === 'operator') {
+    if (['super_admin', 'manager', 'sub_distribution_manager'].includes(currentUser?.role)) {
+      if (newRole === 'sub_distribution_manager' || newRole === 'cluster' || newRole === 'operator' || newRole === 'sub_distribution_employee') {
         loadParentOptions(newRole);
       } else {
         setParentOptions([]);
@@ -585,6 +591,25 @@ const Users = () => {
       if (formData.parentId)   payload.parent_id = formData.parentId;
       if (formData.role === 'operator' && formData.networkName) payload.network_name = formData.networkName;
 
+      if (currentUser?.role === 'sub_distribution_employee') {
+        const requestType = formData.role === 'cluster' ? 'cluster' : 'operator';
+        await approvalRequestsAPI.submit({
+          request_type: requestType,
+          summary: `Create ${formData.role} user ${formData.name || formData.email}`,
+          payload: {
+            ...payload,
+            sub_distribution_id: currentUser.parent_id,
+          },
+        });
+        showToast('User creation submitted for approval', 'success');
+        setShowAddModal(false);
+        setFormData(emptyForm);
+        setConfirmPassword('');
+        setShowCreatePassword(false);
+        setShowCreateConfirmPassword(false);
+        setParentOptions([]);
+        return;
+      }
       await usersAPI.createUser(payload);
       showToast('User created successfully', 'success');
       setShowAddModal(false);
@@ -614,6 +639,19 @@ const Users = () => {
       if (editPrimaryRow?.digitalId) payload.digital_id = editPrimaryRow.digitalId;
       if (editPrimaryRow?.broadbandId) payload.broadband_id = editPrimaryRow.broadbandId;
 
+      if (currentUser?.role === 'sub_distribution_employee') {
+        await approvalRequestsAPI.submit({
+          request_type: 'user_update',
+          summary: `Update user ${selectedUser?.name || selectedUser?._id || selectedUser?.id}`,
+          payload: {
+            user_id: String(selectedUser._id || selectedUser.id),
+            ...payload,
+          },
+        });
+        showToast('User update submitted for approval', 'success');
+        setShowEditModal(false);
+        return;
+      }
       await usersAPI.updateUser(selectedUser._id || selectedUser.id, payload);
       showToast('User updated successfully', 'success');
       setShowEditModal(false);
@@ -627,6 +665,17 @@ const Users = () => {
 
   const handleDeleteUser = async () => {
     try {
+      if (currentUser?.role === 'sub_distribution_employee') {
+        await approvalRequestsAPI.submit({
+          request_type: 'user_delete',
+          summary: `Delete user ${selectedUser?.name || selectedUser?._id || selectedUser?.id}`,
+          payload: { user_id: String(selectedUser._id || selectedUser.id) },
+        });
+        showToast('User deletion submitted for approval', 'success');
+        setShowDeleteModal(false);
+        setSelectedUser(null);
+        return;
+      }
       const res = await usersAPI.deleteUser(selectedUser._id || selectedUser.id);
       const isReassign = res?.data?.request && (selectedUser?.role === 'sub_distributor' || selectedUser?.role === 'cluster');
       if (isReassign) {
@@ -676,6 +725,21 @@ const Users = () => {
     if (!reassignTarget || !reassignNewParentId) return;
     setReassigning(true);
     try {
+      if (currentUser?.role === 'sub_distribution_employee') {
+        await approvalRequestsAPI.submit({
+          request_type: 'user_reassign',
+          summary: `Reassign user ${reassignTarget.name || reassignTarget.id}`,
+          payload: {
+            user_id: String(reassignTarget.id),
+            new_parent_id: String(reassignNewParentId),
+          },
+        });
+        showToast('User reassignment submitted for approval', 'success');
+        setShowReassignModal(false);
+        setReassignTarget(null);
+        setReassignNewParentId('');
+        return;
+      }
       const res = await usersAPI.reassignUser(reassignTarget.id, { new_parent_id: reassignNewParentId });
       showToast(res.message || 'User reassigned successfully', 'success');
       setShowReassignModal(false);
@@ -693,16 +757,19 @@ const Users = () => {
   const canEditUser = (row) => {
     if (isAdmin) return row.role !== 'super_admin' || String(row.id) === String(currentUser.id);
     if (isManager) return !['super_admin', 'md_director', 'manager'].includes(row.role);
+    if (currentUser?.role === 'sub_distribution_employee') return ['cluster', 'operator'].includes(row.role);
     return false;
   };
 
   const canDeleteUser = (row) => {
     if (isAdmin) return row.role !== 'super_admin' && String(row.id) !== String(currentUser.id);
     if (isManager) return !['super_admin', 'md_director', 'manager'].includes(row.role) && String(row.id) !== String(currentUser.id);
+    if (currentUser?.role === 'sub_distribution_employee') return ['cluster', 'operator'].includes(row.role);
     return false;
   };
 
   const canReassignUser = (row) => {
+    if (currentUser?.role === 'sub_distribution_employee') return ['cluster', 'operator'].includes(row.role);
     if (!['super_admin', 'manager'].includes(currentUser?.role)) return false;
     if (row.role !== 'cluster' && row.role !== 'operator') return false;
     if (isManager && ['super_admin', 'md_director', 'manager'].includes(row.role)) return false;
@@ -1579,7 +1646,8 @@ const Users = () => {
 
             {/* Parent selector — shown when admin/manager creates sub-distributor/cluster/operator,
                 OR when sub_distributor creates an operator (must select a parent), OR when cluster creates an operator */}
-            {((isAdminOrManager) && (formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator')) ||
+            {((isAdminOrManager) && (['sub_distribution_manager', 'cluster', 'operator', 'sub_distribution_employee'].includes(formData.role))) ||
+             (currentUser?.role === 'sub_distribution_manager' && formData.role === 'sub_distribution_employee') ||
              (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ||
              (currentUser?.role === 'cluster' && formData.role === 'operator') ? (
               <div>
@@ -1697,7 +1765,7 @@ const Users = () => {
                 ) : (
                   <>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Distribution' : 'Assign to Parent'}
+                      {formData.role === 'sub_distribution_manager' ? 'Assign to Sub-Distributor' : formData.role === 'cluster' ? 'Assign to Sub Distribution' : formData.role === 'sub_distribution_employee' ? 'Assign to Sub Distributor' : 'Assign to Parent'}
                       <span className="text-red-500"> *</span>
                     </label>
                     {loadingParents ? (
@@ -1713,7 +1781,7 @@ const Users = () => {
                         required
                       >
                         <option value="">
-                          Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Distribution' : 'Parent'}...
+                          Select {formData.role === 'sub_distribution_manager' ? 'Sub-Distributor' : formData.role === 'cluster' ? 'Sub Distribution' : formData.role === 'sub_distribution_employee' ? 'Sub-Distributor' : 'Parent'}...
                         </option>
                         {parentOptions.map(p => (
                           <option key={p.id} value={p.id}>

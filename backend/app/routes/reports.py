@@ -31,6 +31,7 @@ require_hierarchy_reports = RoleChecker([
     "sub_distribution_manager",
     "sub_distributor",
     "cluster",
+    "sub_distribution_employee",
 ])
 
 

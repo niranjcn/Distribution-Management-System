@@ -253,7 +253,7 @@ async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Opt
     if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
         return None
 
-    scope_root = parent_id if role == "sub_distribution_manager" and parent_id else user_id
+    scope_root = parent_id if role in ("sub_distribution_manager", "sub_distribution_employee") and parent_id else user_id
     scoped_ids: Set[int] = {scope_root}
     if scope_root:
         desc_rows = (await session.execute(
