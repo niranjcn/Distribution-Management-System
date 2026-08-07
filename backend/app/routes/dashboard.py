@@ -4,12 +4,28 @@ from pydantic import BaseModel
 from app.services import dashboard_service, user_service
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
-from app.middleware.auth_middleware import get_current_user, require_admin_or_md, require_any_role, require_admin_or_manager_or_md_or_staff
+from app.middleware.auth_middleware import get_current_user, require_admin_or_md, require_any_role, require_admin_or_manager_or_md_or_staff, require_admin_or_md_or_sub_distributor
 from app.core.activity_logger import log_business_activity
+from app.utils.roles import normalize_role, SUB_DISTRIBUTOR
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+
+async def _get_employee_ids(sub_distributor_id: str) -> list:
+    """Return the user ids of all sub-distribution employees under a sub-distributor."""
+    if not sub_distributor_id or not str(sub_distributor_id).isdigit():
+        return []
+    async with async_session_factory() as session:
+        rows = (await session.execute(
+            text(
+                "SELECT id FROM users "
+                "WHERE role = 'sub_distribution_employee' AND parent_id = :parent_id"
+            ),
+            {"parent_id": int(sub_distributor_id)},
+        )).mappings().all()
+    return [int(row["id"]) for row in rows]
 
 
 class ClientActivityTrackRequest(BaseModel):
@@ -228,7 +244,7 @@ async def get_distribution_device_analytics(
         )
 
 
-@router.get("/activities", summary="Get admin-wide activities with filtering.")
+@router.get("/activities", summary="Get activities with filtering.")
 async def get_admin_activities(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1),
@@ -237,10 +253,19 @@ async def get_admin_activities(
     search: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    current_user: dict = Depends(require_admin_or_md),
+    current_user: dict = Depends(require_admin_or_md_or_sub_distributor),
 ):
-    """Get admin-wide activities with filtering."""
+    """Get activities with filtering.
+
+    Super admins and MD directors see the admin-wide feed. A sub-distributor
+    sees only the actions performed by their sub-distribution employees.
+    """
     try:
+        actor_ids = None
+        if normalize_role(current_user.get("role")) == SUB_DISTRIBUTOR:
+            sub_id = str(current_user.get("_id", current_user.get("id", "")))
+            actor_ids = await _get_employee_ids(sub_id)
+
         result = await dashboard_service.get_admin_activities(
             page=page,
             page_size=page_size,
@@ -249,6 +274,7 @@ async def get_admin_activities(
             search=search,
             start_date=start_date,
             end_date=end_date,
+            actor_ids=actor_ids,
         )
 
         return {

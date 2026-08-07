@@ -19,6 +19,7 @@ services:
       - "--innodb_buffer_pool_size=512M"
       - "--max_connections=200"
       - "--wait_timeout=600"
+      - "--log-bin-trust-function-creators=1"
     ulimits:
       nofile:
         soft: 1024
