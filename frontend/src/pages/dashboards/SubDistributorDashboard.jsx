@@ -9,6 +9,7 @@ import {
 import { Doughnut } from 'react-chartjs-2';
 import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
+import Skeleton from '../../components/ui/Skeleton';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Button from '../../components/ui/Button';
 import ErrorBoundary from '../../components/ui/ErrorBoundary';
@@ -150,12 +151,12 @@ const SubDistributorDashboard = () => {
 
       <ErrorBoundary name="Stats">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <StatCard title="Received Devices" value={receivedDevicesCount} icon={Box} color="blue" />
-          <StatCard title="Pending Confirmations" value={pendingReceipts.length} icon={CheckSquare} color="orange" />
-          <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" />
-          <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" />
-          <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" />
-          <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" />
+          <StatCard title="Received Devices" value={receivedDevicesCount} icon={Box} color="blue" loading={loading} />
+          <StatCard title="Pending Confirmations" value={pendingReceipts.length} icon={CheckSquare} color="orange" loading={loading} />
+          <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" loading={loading} />
+          <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" loading={loading} />
+          <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" loading={loading} />
+          <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" loading={loading} />
         </div>
       </ErrorBoundary>
 
@@ -167,9 +168,13 @@ const SubDistributorDashboard = () => {
                 <Box className="w-5 h-5 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">
-                  {Number(deviceStats.total_in_chain ?? (myDevices.length || 0))}
-                </p>
+                {loading ? (
+                  <Skeleton className="h-8 w-16 mb-2" />
+                ) : (
+                  <p className="text-2xl font-bold text-gray-800">
+                    {Number(deviceStats.total_in_chain ?? (myDevices.length || 0))}
+                  </p>
+                )}
                 <p className="text-sm text-gray-500">Total Devices</p>
               </div>
             </div>
@@ -178,9 +183,13 @@ const SubDistributorDashboard = () => {
                 <Package className="w-5 h-5 text-green-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">
-                  {Number(deviceStats.in_my_hand ?? (myDevices.filter((d) => String(d.current_holder_id) === String(user?.id)).length || 0))}
-                </p>
+                {loading ? (
+                  <Skeleton className="h-8 w-16 mb-2" />
+                ) : (
+                  <p className="text-2xl font-bold text-gray-800">
+                    {Number(deviceStats.in_my_hand ?? (myDevices.filter((d) => String(d.current_holder_id) === String(user?.id)).length || 0))}
+                  </p>
+                )}
                 <p className="text-sm text-gray-500">Total Devices In Hand</p>
               </div>
             </div>
@@ -189,9 +198,13 @@ const SubDistributorDashboard = () => {
                 <Users className="w-5 h-5 text-indigo-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">
-                  {Number(deviceStats.under_subordinates ?? 0)}
-                </p>
+                {loading ? (
+                  <Skeleton className="h-8 w-16 mb-2" />
+                ) : (
+                  <p className="text-2xl font-bold text-gray-800">
+                    {Number(deviceStats.under_subordinates ?? 0)}
+                  </p>
+                )}
                 <p className="text-sm text-gray-500">Under the Chain</p>
               </div>
             </div>

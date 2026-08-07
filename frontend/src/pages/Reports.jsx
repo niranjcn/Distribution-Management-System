@@ -487,6 +487,16 @@ const Reports = () => {
       {/* Overview Stats */}
       {reportType === 'overview' && (
         <div className="space-y-6">
+          {loading && (
+            <Card>
+              <div className="py-16 flex flex-col items-center justify-center">
+                <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+                <p className="text-sm text-gray-500 mt-4">Loading report data...</p>
+              </div>
+            </Card>
+          )}
+          {!loading && (
+          <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="text-center">
           <div className="inline-flex p-3 rounded-lg bg-blue-100 mb-2">
@@ -739,6 +749,8 @@ const Reports = () => {
           </table>
         </div>
       </Card>
+        </div>
+          )}
         </div>
       )}
     </div>

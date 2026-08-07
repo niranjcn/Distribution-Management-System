@@ -116,10 +116,10 @@ const OperatorDashboard = () => {
 
       <ErrorBoundary name="Stats">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="Assigned Devices" value={stats.assigned_devices || myDevices.length} icon={Box} color="blue" />
-          <StatCard title="Active" value={stats.active_devices || myDevices.filter(d => d.status === 'active').length} icon={Cpu} color="green" />
-          <StatCard title="In Use" value={stats.in_use_devices || myDevices.filter(d => d.status === 'in_use').length} icon={Cpu} color="purple" />
-          <StatCard title="My Defect Reports" value={stats.defect_reports || myDefects.length} icon={AlertTriangle} color="red" />
+          <StatCard title="Assigned Devices" value={stats.assigned_devices || myDevices.length} icon={Box} color="blue" loading={loading} />
+          <StatCard title="Active" value={stats.active_devices || myDevices.filter(d => d.status === 'active').length} icon={Cpu} color="green" loading={loading} />
+          <StatCard title="In Use" value={stats.in_use_devices || myDevices.filter(d => d.status === 'in_use').length} icon={Cpu} color="purple" loading={loading} />
+          <StatCard title="My Defect Reports" value={stats.defect_reports || myDefects.length} icon={AlertTriangle} color="red" loading={loading} />
         </div>
       </ErrorBoundary>
 
