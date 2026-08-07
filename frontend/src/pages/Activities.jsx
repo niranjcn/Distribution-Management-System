@@ -5,9 +5,11 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import DataTable from '../components/ui/DataTable';
 import { dashboardAPI } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { activityKeys } from '../hooks';
+import { normalizeRole } from '../utils/roles';
 
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
@@ -16,6 +18,7 @@ const EXPORT_PAGE_SIZE = 1000;
 
 const Activities = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { showToast } = useNotifications();
   const [loading, setLoading] = useState(true);
   const [tableLoading, setTableLoading] = useState(false);
@@ -232,7 +235,11 @@ const Activities = () => {
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-400/30 bg-slate-900/65 p-6">
         <h1 className="text-xl sm:text-2xl font-bold text-slate-50">Activities</h1>
-        <p className="mt-1 text-sm text-slate-200">Admin-wide timeline of meaningful actions performed by users.</p>
+        <p className="mt-1 text-sm text-slate-200">
+          {normalizeRole(user?.role) === 'sub_distributor'
+            ? 'Actions performed by your sub-distribution employees.'
+            : 'Admin-wide timeline of meaningful actions performed by users.'}
+        </p>
       </div>
 
       <Card title="Filters" icon={Filter}>

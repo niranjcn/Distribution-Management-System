@@ -76,6 +76,7 @@ async def get_admin_activities(
     search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    actor_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """SQL-paginated admin-wide activities.
 
@@ -83,6 +84,9 @@ async def get_admin_activities(
     AFTER INSERT triggers on ``device_history``, ``external_device_history``
     and ``api_activity_logs`` (migration 0021). The whole feed is therefore a
     single indexed SELECT + COUNT instead of a UNION over three audit tables.
+
+    When ``actor_ids`` is provided the feed is scoped to those actor ids only
+    (used for sub-distributor employee-activity feeds).
     """
     normalized_category = (category or "all").strip().lower()
 
@@ -127,6 +131,15 @@ async def get_admin_activities(
     if end_date:
         conditions.append("activity_date <= :end_date")
         params["end_date"] = end_date
+
+    if actor_ids is not None:
+        if not actor_ids:
+            conditions.append("1 = 0")
+        else:
+            placeholders = ", ".join(f":actor_id_{i}" for i in range(len(actor_ids)))
+            conditions.append(f"actor_id IN ({placeholders})")
+            for i, actor_id in enumerate(actor_ids):
+                params[f"actor_id_{i}"] = int(actor_id)
 
     where = " AND ".join(conditions)
 

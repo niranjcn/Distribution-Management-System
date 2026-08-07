@@ -318,6 +318,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       [ROLES.SUB_DISTRIBUTOR]: [
         ...commonItems,
         subFieldReportMenu,
+        { path: '/activities', icon: FileText, label: 'Employee Activities' },
         {
           key: 'users',
           icon: Users,

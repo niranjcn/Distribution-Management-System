@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock
 import pytest
+from tests.routes.conftest import CURRENT_TEST_USER
 
 
 class TestDashboardStats:
@@ -165,6 +166,58 @@ class TestDashboardAdminActivities:
             search="registered",
             start_date="2025-01-01",
             end_date="2025-01-31",
+            actor_ids=None,
+        )
+
+    def test_sub_distributor_scopes_to_employee_ids(
+        self, client, mock_dashboard_services, set_role
+    ):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_admin_activities = AsyncMock(
+            return_value=self._fake_result()
+        )
+        dash_mod._get_employee_ids = AsyncMock(return_value=[101, 102])
+
+        set_role("sub_distributor")
+        CURRENT_TEST_USER["_id"] = "10"
+        CURRENT_TEST_USER["id"] = "10"
+        client.get(self.ACTIVITIES_URL)
+
+        dash_mod._get_employee_ids.assert_awaited_once_with("10")
+        dash_mod.dashboard_service.get_admin_activities.assert_awaited_once_with(
+            page=1,
+            page_size=50,
+            actor=None,
+            category=None,
+            search=None,
+            start_date=None,
+            end_date=None,
+            actor_ids=[101, 102],
+        )
+
+    def test_sub_distributor_with_no_employees_passes_empty_ids(
+        self, client, mock_dashboard_services, set_role
+    ):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_admin_activities = AsyncMock(
+            return_value=self._fake_result()
+        )
+        dash_mod._get_employee_ids = AsyncMock(return_value=[])
+
+        set_role("sub_distributor")
+        client.get(self.ACTIVITIES_URL)
+
+        dash_mod.dashboard_service.get_admin_activities.assert_awaited_once_with(
+            page=1,
+            page_size=50,
+            actor=None,
+            category=None,
+            search=None,
+            start_date=None,
+            end_date=None,
+            actor_ids=[],
         )
 
     def test_unauthenticated_returns_401(self, client, test_app):
