@@ -1,12 +1,15 @@
-from sqlalchemy import Column, Integer, String, DateTime, Numeric
+from sqlalchemy import Column, Date, Integer, String, DateTime, Numeric, UniqueConstraint
 from app.db_models.base import Base
 
 
 class ExternalInventoryItem(Base):
     __tablename__ = "external_inventory_items"
+    __table_args__ = (
+        UniqueConstraint("identifier_type", "identifier", name="uq_external_inventory_items_identifier"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(255), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
     identifier_type = Column(String(32))
     identifier = Column(String(255))
     device_type = Column(String(32))
@@ -16,6 +19,8 @@ class ExternalInventoryItem(Base):
     location = Column(String(255))
     status = Column(String(32), default="active")
     notes = Column(String(500))
+    warranty_start_date = Column(Date)
+    warranty_duration = Column(Integer)
     created_by = Column(Integer)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)

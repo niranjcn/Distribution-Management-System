@@ -33,11 +33,11 @@ class _FakeUpdateResult:
 ITEMS = [
     {"id": 1, "name": "Router A", "identifier_type": "MAC ID", "identifier": "AA:BB:CC:00:00:01",
      "device_type": "Router", "price": 100, "quantity": 10, "status": "active"},
-    {"id": 2, "name": "STB B", "identifier_type": None, "identifier": None,
+    {"id": 2, "name": "STB B", "identifier_type": "IMEI", "identifier": "9999-0001",
      "device_type": "STB", "price": 50, "quantity": 0, "status": "active"},
-    {"id": 3, "name": "Modem C", "identifier_type": None, "identifier": None,
+    {"id": 3, "name": "Modem C", "identifier_type": "IMEI", "identifier": "9999-0002",
      "device_type": "Modem", "price": 30, "quantity": 5, "status": "inactive"},
-    {"id": 4, "name": "Router D", "identifier_type": None, "identifier": None,
+    {"id": 4, "name": "Router D", "identifier_type": "NU ID", "identifier": "NU-0001",
      "device_type": "Router", "price": 80, "quantity": 2, "status": "active"},
 ]
 ITEMS_BY_ID = {i["id"]: i for i in ITEMS}
@@ -67,6 +67,17 @@ class _BulkSession:
     async def execute(self, statement, params=None):
         sql = str(statement)
         params = params or {}
+
+        if "FROM external_inventory_items" in sql and "identifier_type" in sql:
+            pairs = []
+            i = 0
+            while f"t_{i}" in params and f"i_{i}" in params:
+                pairs.append((params[f"t_{i}"], params[f"i_{i}"]))
+                i += 1
+            return _FakeResult([
+                dict(v) for v in self._items.values()
+                if (v.get("identifier_type"), v.get("identifier")) in pairs
+            ])
 
         if "FROM external_inventory_items WHERE id IN" in sql:
             ids = set(params.values())
@@ -263,12 +274,12 @@ class TestBulkDistribute:
 class TestBulkDistributeFromFile:
     def _rows(self):
         return [
-            {"row": 2, "id": "1", "quantity": "2", "notes": None},
-            {"row": 3, "id": "4", "quantity": "", "notes": "default qty"},
-            {"row": 4, "id": "1", "quantity": "1", "notes": None},   # duplicate
-            {"row": 5, "id": "abc", "quantity": "1", "notes": None},  # bad id
-            {"row": 6, "id": "2", "quantity": "0", "notes": None},   # bad qty
-            {"row": 7, "id": "2", "quantity": "3", "notes": None},   # out of stock
+            {"row": 2, "identifier_type": "MAC ID", "identifier": "AA:BB:CC:00:00:01", "quantity": "2", "notes": None},  # item 1 valid
+            {"row": 3, "identifier_type": "NU ID", "identifier": "NU-0001", "quantity": "", "notes": "default qty"},  # item 4 valid
+            {"row": 4, "identifier_type": "MAC ID", "identifier": "AA:BB:CC:00:00:01", "quantity": "1", "notes": None},  # duplicate pair
+            {"row": 5, "identifier_type": "IMEI", "identifier": "", "quantity": "1", "notes": None},  # missing identifier
+            {"row": 6, "identifier_type": "IMEI", "identifier": "9999-0001", "quantity": "1", "notes": None},  # out of stock
+            {"row": 7, "identifier_type": "IMEI", "identifier": "9999-0002", "quantity": "3", "notes": None},  # inactive
         ]
 
     async def test_mixed_rows_report_once_and_distribute_valid(self):
@@ -288,11 +299,11 @@ class TestBulkDistributeFromFile:
         assert result["created_count"] == 2
         assert result["error_count"] == 4
         messages = [e["error"] for e in result["errors"]]
-        # Duplicate item id is reported exactly once (no double reporting).
-        assert messages.count("Duplicate item id in file") == 1
-        assert any("Missing or invalid item id" in m for m in messages)
-        assert any("Quantity must be a positive integer" in m for m in messages)
+        # Duplicate identifier pair is reported exactly once (no double reporting).
+        assert messages.count("Duplicate identifier (MAC ID AA:BB:CC:00:00:01) in file") == 1
+        assert any("Both identifier_type and identifier are required" in m for m in messages)
         assert any("out of stock" in m for m in messages)
+        assert any("not active" in m for m in messages)
         assert len(session.history_rows) == 2
         assert len(session.updates) == 2
         # All created records go to one recipient -> a single aggregated notification.
@@ -304,7 +315,7 @@ class TestBulkDistributeFromFile:
         patchers = _patch_session(session)
         try:
             await inventory_service.bulk_distribute_from_file(
-                identifier_rows=[{"row": 2, "id": "1", "quantity": "2", "notes": None}],
+                identifier_rows=[{"row": 2, "identifier_type": "MAC ID", "identifier": "AA:BB:CC:00:00:01", "quantity": "2", "notes": None}],
                 to_user_id=10,
                 user={"id": 99, "name": "Mgr"},
             )

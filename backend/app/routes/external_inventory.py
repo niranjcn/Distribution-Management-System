@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from sqlalchemy import text
 
 from app.core.activity_logger import build_field_change_summary, log_business_activity
 
@@ -51,6 +52,8 @@ async def get_external_inventory_items(
     search_by: Optional[str] = Query("all"),
     device_type: Optional[str] = Query(None, alias="type"),
     status_filter: Optional[str] = Query(None, alias="status"),
+    identifier_type: Optional[str] = Query(None),
+    warranty: Optional[str] = Query(None),
     current_user: dict = Depends(require_any_role),
 ):
     try:
@@ -61,6 +64,8 @@ async def get_external_inventory_items(
             search_by=search_by,
             device_type=device_type,
             status_filter=status_filter,
+            identifier_type=identifier_type,
+            warranty=warranty,
             management=_is_management_user(current_user),
         )
         return {
@@ -116,7 +121,8 @@ async def bulk_upload_external_inventory_items(
 
     Required columns: name
     Optional columns: identifier_type, identifier, device_type, price, quantity,
-    supplier_name, location, notes
+    supplier_name, location, warranty_start_date (YYYY-MM-DD), warranty_duration (months),
+    notes
     """
     filename_lower = (file.filename or "").lower()
     if not filename_lower.endswith(".csv"):
@@ -160,7 +166,7 @@ async def bulk_upload_external_inventory_items(
         skipped = []
         errors = []
         prepared_rows = []
-        seen_names = set()
+        seen_identifiers = set()
 
         for row_idx, row in enumerate(data_rows, start=2):
             padded = row + [""] * (len(headers) - len(row))
@@ -183,10 +189,16 @@ async def bulk_upload_external_inventory_items(
                 errors.append({"row": row_idx, "name": name, "error": "identifier_type is required when identifier is provided"})
                 continue
 
-            if name in seen_names:
-                skipped.append({"row": row_idx, "name": name, "reason": "Duplicate name in file"})
-                continue
-            seen_names.add(name)
+            if identifier_type_value and identifier_value:
+                identifier_pair = (identifier_type_value, identifier_value)
+                if identifier_pair in seen_identifiers:
+                    errors.append({
+                        "row": row_idx,
+                        "name": name,
+                        "error": "Duplicate identifier_type and identifier in file",
+                    })
+                    continue
+                seen_identifiers.add(identifier_pair)
 
             quantity_raw = row_data.get("quantity", "").strip()
             try:
@@ -208,6 +220,33 @@ async def bulk_upload_external_inventory_items(
             else:
                 price_value = 0.0
 
+            warranty_start_date_raw = row_data.get("warranty_start_date", "").strip()
+            if warranty_start_date_raw:
+                try:
+                    warranty_start_date_value = datetime.strptime(warranty_start_date_raw, "%Y-%m-%d").date()
+                except ValueError:
+                    errors.append({
+                        "row": row_idx,
+                        "name": name,
+                        "error": "Invalid warranty_start_date value (expected YYYY-MM-DD)",
+                    })
+                    continue
+            else:
+                warranty_start_date_value = None
+
+            warranty_duration_raw = row_data.get("warranty_duration", "").strip()
+            if warranty_duration_raw:
+                try:
+                    warranty_duration_value = int(warranty_duration_raw)
+                except ValueError:
+                    errors.append({"row": row_idx, "name": name, "error": "Invalid warranty_duration value"})
+                    continue
+                if warranty_duration_value < 0:
+                    errors.append({"row": row_idx, "name": name, "error": "Warranty duration must be at least 0"})
+                    continue
+            else:
+                warranty_duration_value = None
+
             prepared_rows.append({
                 "row": row_idx,
                 "name": name,
@@ -218,6 +257,8 @@ async def bulk_upload_external_inventory_items(
                 "quantity": quantity_value,
                 "supplier_name": row_data.get("supplier_name") or None,
                 "location": row_data.get("location") or None,
+                "warranty_start_date": warranty_start_date_value,
+                "warranty_duration": warranty_duration_value,
                 "notes": row_data.get("notes") or None,
             })
 
@@ -227,64 +268,79 @@ async def bulk_upload_external_inventory_items(
 
             from app.database_sqlalchemy import async_session_factory
             from app.core.cache_version import bump_cache_version
-            from sqlalchemy import text
 
             insert_sql = """INSERT INTO external_inventory_items (
                 name, identifier_type, identifier, device_type, price, quantity,
-                supplier_name, location, status, notes, created_by, created_at, updated_at
+                supplier_name, location, status, notes, warranty_start_date, warranty_duration,
+                created_by, created_at, updated_at
             ) VALUES (:name, :identifier_type, :identifier, :device_type, :price, :quantity,
-                :supplier_name, :location, 'active', :notes, :created_by, :created_at, :updated_at)"""
+                :supplier_name, :location, 'active', :notes, :warranty_start_date, :warranty_duration,
+                :created_by, :created_at, :updated_at)"""
 
             async with async_session_factory() as session:
-                existing_names = await _fetch_existing_names(session, [row["name"] for row in prepared_rows])
+                existing_pairs = await _fetch_existing_identifier_pairs(
+                    session,
+                    [
+                        (item["identifier_type"], item["identifier"])
+                        for item in prepared_rows
+                        if item["identifier_type"] and item["identifier"]
+                    ],
+                )
 
                 insertable_rows = []
-                for row in prepared_rows:
-                    if row["name"] in existing_names:
-                        skipped.append({"row": row["row"], "name": row["name"], "reason": "name already exists"})
-                        continue
-                    insertable_rows.append(row)
+                for item in prepared_rows:
+                    if item["identifier_type"] and item["identifier"]:
+                        pair = (item["identifier_type"], item["identifier"])
+                        if pair in existing_pairs:
+                            errors.append({
+                                "row": item["row"],
+                                "name": item["name"],
+                                "error": "Identifier type and identifier already exist",
+                            })
+                            continue
+                    insertable_rows.append(item)
 
-                if insertable_rows:
-                    payload_rows = []
-                    for item in insertable_rows:
-                        payload_rows.append({
-                            "row": item["row"],
-                            "name": item["name"],
-                            "identifier_type": item["identifier_type"],
-                            "identifier": item["identifier"],
-                            "device_type": item["device_type"],
-                            "price": item["price"],
-                            "quantity": item["quantity"],
-                            "supplier_name": item["supplier_name"],
-                            "location": item["location"],
-                            "notes": item["notes"],
-                            "created_by": actor_id,
-                            "created_at": now,
-                            "updated_at": now,
-                        })
+                payload_rows = []
+                for item in insertable_rows:
+                    payload_rows.append({
+                        "row": item["row"],
+                        "name": item["name"],
+                        "identifier_type": item["identifier_type"],
+                        "identifier": item["identifier"],
+                        "device_type": item["device_type"],
+                        "price": item["price"],
+                        "quantity": item["quantity"],
+                        "supplier_name": item["supplier_name"],
+                        "location": item["location"],
+                        "warranty_start_date": item["warranty_start_date"],
+                        "warranty_duration": item["warranty_duration"],
+                        "notes": item["notes"],
+                        "created_by": actor_id,
+                        "created_at": now,
+                        "updated_at": now,
+                    })
 
-                    async def _item_batch_success(session, batch):
-                        created.extend(item["name"] for item in batch)
+                async def _item_batch_success(session, batch):
+                    created.extend(item["name"] for item in batch)
 
-                    async def _item_row_error(session, item, err):
-                        errors.append({
-                            "row": item["row"],
-                            "name": item["name"],
-                            "error": str(err),
-                        })
+                async def _item_row_error(session, item, err):
+                    errors.append({
+                        "row": item["row"],
+                        "name": item["name"],
+                        "error": str(err),
+                    })
 
-                    await chunked_executemany(
-                        session,
-                        insert_sql,
-                        payload_rows,
-                        on_batch_success=_item_batch_success,
-                        on_row_error=_item_row_error,
-                        abort_on_error=False,
-                    )
+                await chunked_executemany(
+                    session,
+                    insert_sql,
+                    payload_rows,
+                    on_batch_success=_item_batch_success,
+                    on_row_error=_item_row_error,
+                    abort_on_error=False,
+                )
 
-                    await bump_cache_version(session)
-                    await session.commit()
+                await bump_cache_version(session)
+                await session.commit()
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         await log_business_activity(
@@ -477,7 +533,7 @@ async def bulk_distribute_external_inventory_from_file(
     """Bulk distribute external inventory items to a single recipient from an
     uploaded CSV/Excel file.
 
-    Required column: ``id``
+    Required columns: ``identifier_type``, ``identifier``
     Optional columns: ``quantity``
     """
     filename_lower = (file.filename or "").lower()
@@ -542,10 +598,12 @@ async def bulk_distribute_external_inventory_from_file(
                         )
                     yield row
 
-        if "id" not in headers:
+        required = {"identifier_type", "identifier"}
+        missing = required - set(headers)
+        if missing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing required column: id",
+                detail=f"Missing required columns: {', '.join(sorted(missing))}",
             )
 
         identifier_rows = []
@@ -560,7 +618,8 @@ async def bulk_distribute_external_inventory_from_file(
 
             identifier_rows.append({
                 "row": row_idx,
-                "id": row_data.get("id", "").strip(),
+                "identifier_type": row_data.get("identifier_type", "").strip(),
+                "identifier": row_data.get("identifier", "").strip(),
                 "quantity": row_data.get("quantity", "").strip(),
                 "notes": notes,
             })
@@ -598,6 +657,27 @@ async def bulk_distribute_external_inventory_from_file(
         )
 
 
+async def _fetch_existing_identifier_pairs(session, pairs: list[tuple[str, str]]) -> set:
+    if not pairs:
+        return set()
+
+    existing = set()
+    for batch in chunks(pairs, 500):
+        conditions = []
+        params = {}
+        for i, (identifier_type, identifier) in enumerate(batch):
+            conditions.append(f"(identifier_type = :t_{i} AND identifier = :i_{i})")
+            params[f"t_{i}"] = identifier_type
+            params[f"i_{i}"] = identifier
+        result = await session.execute(
+            text(f"SELECT identifier_type, identifier FROM external_inventory_items WHERE {' OR '.join(conditions)}"),
+            params,
+        )
+        for row in result.mappings().all():
+            existing.add((row.get("identifier_type"), row.get("identifier")))
+    return existing
+
+
 @router.get("/distributions", summary="Get external inventory distribution history")
 async def get_external_inventory_distributions(
     page: int = Query(1, ge=1),
@@ -605,6 +685,9 @@ async def get_external_inventory_distributions(
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
     item_id: Optional[int] = None,
+    identifier_type: Optional[str] = Query(None),
+    device_type: Optional[str] = Query(None, alias="type"),
+    warranty: Optional[str] = Query(None),
     current_user: dict = Depends(require_management),
 ):
     """Management-only reporting page listing every completed distribution."""
@@ -615,6 +698,9 @@ async def get_external_inventory_distributions(
             search=search,
             search_by=search_by,
             item_id=item_id,
+            identifier_type=identifier_type,
+            device_type=device_type,
+            warranty=warranty,
         )
         return {
             "success": True,
@@ -631,23 +717,3 @@ async def get_external_inventory_distributions(
             detail="An internal error occurred. Please try again later.",
         )
 
-
-async def _fetch_existing_names(session, values: list[str]) -> set:
-    if not values:
-        return set()
-
-    existing = set()
-    for batch in chunks(values, 500):
-        named_params = {f"val{i}": v for i, v in enumerate(batch)}
-        placeholder_list = [f":val{i}" for i in range(len(batch))]
-        placeholders = ",".join(placeholder_list)
-        result = await session.execute(
-            text(f"SELECT name FROM external_inventory_items WHERE name IN ({placeholders})"),
-            named_params,
-        )
-        rows = result.mappings().all()
-        for row in rows:
-            value = row.get("name")
-            if value:
-                existing.add(str(value).strip())
-    return existing

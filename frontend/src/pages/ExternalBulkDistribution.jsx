@@ -15,7 +15,17 @@ import {
   XCircle,
 } from 'lucide-react';
 
-const TEMPLATE_HEADERS = ['id', 'quantity'];
+const IDENTIFIER_TYPE_OPTIONS = ['NU ID', 'IMEI', 'Serial Ref', 'MAC ID', 'Asset Tag', 'Other'];
+
+const ROLE_LABELS = {
+  sub_distributor: 'Sub Distributor',
+  cluster: 'Cluster',
+  operator: 'Operator',
+};
+
+const RECIPIENT_TYPE_OPTIONS = ['sub_distributor', 'cluster', 'operator'];
+
+const TEMPLATE_HEADERS = ['identifier_type', 'identifier', 'quantity'];
 
 const ExternalBulkDistribution = () => {
   const navigate = useNavigate();
@@ -27,6 +37,7 @@ const ExternalBulkDistribution = () => {
 
   const [file, setFile] = useState(null);
   const [notes, setNotes] = useState('');
+  const [recipientType, setRecipientType] = useState('');
   const [toUserId, setToUserId] = useState('');
   const [result, setResult] = useState(null);
 
@@ -36,8 +47,16 @@ const ExternalBulkDistribution = () => {
     const fetchRecipients = async () => {
       setLoadingRecipients(true);
       try {
-        const response = await usersAPI.getUsers({ status: 'active', page_size: 10000 });
-        setRecipients(Array.isArray(response?.data) ? response.data : []);
+        const [sdRes, clRes, opRes] = await Promise.all([
+          usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 10000 }).catch(() => ({ data: [] })),
+          usersAPI.getUsers({ role: 'cluster', status: 'active', page_size: 10000 }).catch(() => ({ data: [] })),
+          usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 10000 }).catch(() => ({ data: [] })),
+        ]);
+        setRecipients([
+          ...(Array.isArray(sdRes?.data) ? sdRes.data : []),
+          ...(Array.isArray(clRes?.data) ? clRes.data : []),
+          ...(Array.isArray(opRes?.data) ? opRes.data : []),
+        ]);
       } catch (error) {
         showToast(error.message || 'Failed to load recipients', 'error');
         setRecipients([]);
@@ -49,6 +68,16 @@ const ExternalBulkDistribution = () => {
     fetchRecipients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleRecipientTypeChange = (type) => {
+    setRecipientType(type);
+    setToUserId('');
+  };
+
+  const visibleRecipients = useMemo(
+    () => recipients.filter((u) => String(u.role) === recipientType),
+    [recipients, recipientType]
+  );
 
   const selectedRecipient = useMemo(
     () => recipients.find((u) => String(u.id) === String(toUserId)) || null,
@@ -115,9 +144,10 @@ const ExternalBulkDistribution = () => {
 
   const downloadTemplate = () => {
     const sampleRows = [
-      ['1', '10'],
-      ['2', '5'],
-      ['3', '3'],
+      ['MAC ID', 'AA:BB:CC:DD:EE:01', '10'],
+      ['IMEI', '359123456789012', '5'],
+      ['NU ID', 'NU-2026-0001', '3'],
+      ['Serial Ref', 'SN-2026-0001', '2'],
     ];
     const lines = [
       TEMPLATE_HEADERS.join(','),
@@ -143,7 +173,8 @@ const ExternalBulkDistribution = () => {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Bulk Distribution</h1>
           <p className="text-gray-500 mt-1 text-sm">
-            Upload CSV/Excel listing external inventory items by name, then send them all to a single recipient in one distribution.
+            Upload CSV/Excel listing external inventory items by identifier type and identifier, then send them all
+            to a single recipient in one distribution.
           </p>
         </div>
       </div>
@@ -156,10 +187,23 @@ const ExternalBulkDistribution = () => {
           <div className="flex-1">
             <h3 className="font-semibold text-gray-800 mb-1">Template</h3>
             <p className="text-sm text-gray-500 mb-3">
-              Required file column: <span className="font-medium text-gray-700">id</span>. Optional column:{' '}
-              <span className="font-medium text-gray-700">quantity</span> (defaults to 1). The id must reference an
-              existing item. Download the template to see the expected format.
+              Required file columns: <span className="font-medium text-gray-700">identifier_type</span> and{' '}
+              <span className="font-medium text-gray-700">identifier</span>. Optional column:{' '}
+              <span className="font-medium text-gray-700">quantity</span> (defaults to 1). The identifier must
+              reference an existing item, and each{' '}
+              <span className="font-medium text-gray-700">identifier_type + identifier</span> pair must be unique
+              across items. Use one of the identifier types below:
             </p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {IDENTIFIER_TYPE_OPTIONS.map((option) => (
+                <span
+                  key={option}
+                  className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"
+                >
+                  {option}
+                </span>
+              ))}
+            </div>
             <Button variant="outline" icon={Download} onClick={downloadTemplate}>
               Download CSV Template
             </Button>
@@ -173,18 +217,54 @@ const ExternalBulkDistribution = () => {
         ) : (
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Recipient</label>
-              <select
-                value={toUserId}
-                onChange={(event) => setToUserId(event.target.value)}
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Select recipient...</option>
-                {recipients.map((option) => (
-                  <option key={option.id} value={option.id}>{option.name || option.email}</option>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select Recipient Type</label>
+              <div className="flex flex-wrap gap-3">
+                {RECIPIENT_TYPE_OPTIONS.map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => handleRecipientTypeChange(type)}
+                    className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-colors ${
+                      recipientType === type
+                        ? type === 'sub_distributor' ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : type === 'cluster'         ? 'border-teal-500 bg-teal-50 text-teal-700'
+                                                     : 'border-green-500 bg-green-50 text-green-700'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-400'
+                    }`}
+                  >
+                    {ROLE_LABELS[type]}
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
+
+            {recipientType && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Recipient{' '}
+                  <span className="text-red-500">*</span>
+                  <span className="text-xs text-gray-400 ml-2">
+                    ({visibleRecipients.length} available)
+                  </span>
+                </label>
+                {visibleRecipients.length === 0 ? (
+                  <p className="text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+                    No {ROLE_LABELS[recipientType].toLowerCase()}s found.
+                  </p>
+                ) : (
+                  <select
+                    value={toUserId}
+                    onChange={(event) => setToUserId(event.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select {ROLE_LABELS[recipientType]}...</option>
+                    {visibleRecipients.map((option) => (
+                      <option key={option.id} value={option.id}>{option.name || option.email}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
 
             {selectedRecipient && (
               <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-sm text-blue-900">
