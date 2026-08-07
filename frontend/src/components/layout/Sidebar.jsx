@@ -302,7 +302,6 @@ const Sidebar = ({ isOpen, onClose }) => {
           children: [
             { path: '/users', label: 'Scoped Users' },
             { path: '/users/hierarchy', label: 'User Hierarchy' },
-            { path: '/users/bulk-upload', label: 'Bulk Upload' },
           ]
         },
         { path: '/devices', icon: Box, label: 'My Devices' },

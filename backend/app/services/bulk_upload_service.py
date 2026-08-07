@@ -337,7 +337,7 @@ async def process_bulk_user_upload(
     from app.utils.security import get_password_hash as _hash
 
     actor_role = normalize_role(current_user.get("role"))
-    if actor_role not in {"super_admin", "manager", "sub_distributor", "cluster", "sub_distribution_manager", "sub_distribution_employee"}:
+    if actor_role not in {"super_admin", "manager", "sub_distributor", "cluster", "sub_distribution_employee"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     actor_name = current_user.get("name") or current_user.get("email") or "User"
@@ -347,7 +347,7 @@ async def process_bulk_user_upload(
 
     # Permission matrix:
     # - cluster:                       can only upload operators
-    # - sub_distributor / sub_distribution_manager: can upload operators AND
+    # - sub_distributor / sub_distribution_employee: can upload operators AND
     #   clusters created under their own account
     # - manager / super_admin: can upload any role
     if actor_role == "cluster" and target_role != "operator":

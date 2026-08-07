@@ -715,21 +715,76 @@ async def _get_hierarchy_stats(session, user_id: str, user_role: str) -> Dict[st
             user_id = str(uid)
             user_role = "sub_distributor"
 
-    distrib_q = text("""
-        SELECT
-            SUM(CASE WHEN to_user_id = :uid1 THEN 1 ELSE 0 END) as received_count,
-            COALESCE(SUM(CASE WHEN to_user_id = :uid2 THEN device_count ELSE 0 END), 0) as received_devices,
-            SUM(CASE WHEN from_user_id = :uid3 THEN 1 ELSE 0 END) as sent_count,
-            COALESCE(SUM(CASE WHEN from_user_id = :uid4 THEN device_count ELSE 0 END), 0) as sent_devices
-        FROM distributions
-        WHERE :uid5 IN (to_user_id, from_user_id)
-    """)
-    dist_row = (await session.execute(distrib_q, {"uid1": user_id, "uid2": user_id, "uid3": user_id, "uid4": user_id, "uid5": user_id})).mappings().first()
+    # Distribution (transfer) stats. For non-hierarchy roles these are counted
+    # against the account's own id (the account directly sends/receives the
+    # transfer). The sub-distribution roles drive transfers through the whole
+    # branch (sub distributor + its managers/employees/clusters), so counts must
+    # be scoped to that branch — otherwise "sent" shows 0 because the onward
+    # distribution is recorded against another account in the same distribution,
+    # and a manager's "received" shows 0 because devices are delivered to it.
+    scoped_receiver_ids: Optional[List[str]] = None
+    scoped_sender_ids: Optional[List[str]] = None
+    if user_role in {"sub_distributor", "sub_distribution_manager"}:
+        if user_role == "sub_distribution_manager":
+            mgr_scope_row = (await session.execute(
+                text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
+            )).mappings().first()
+            scope_root_id = str(mgr_scope_row["parent_id"]) if (mgr_scope_row and mgr_scope_row.get("parent_id")) else str(uid)
+        else:
+            scope_root_id = str(uid)
+        scope_members = (await session.execute(text("""
+            WITH RECURSIVE descendants AS (
+                SELECT id, role FROM users WHERE parent_id = :root
+                UNION ALL
+                SELECT u.id, u.role FROM users u
+                INNER JOIN descendants d ON u.parent_id = d.id
+            )
+            SELECT id, role FROM users WHERE id = :root
+            UNION ALL
+            SELECT id, role FROM descendants
+        """), {"root": int(scope_root_id)})).mappings().all()
+        role_by_id = {}
+        for m in scope_members:
+            if m["id"] is not None:
+                role_by_id[str(m["id"])] = (m["role"] or "")
+        # Devices enter the sub-distribution through its sub-distributor /
+        # manager accounts; devices leave (onward) via any non-operator account
+        # in the branch.
+        scoped_receiver_ids = sorted(i for i, r in role_by_id.items() if r in {"sub_distributor", "sub_distribution_manager"})
+        scoped_sender_ids = sorted(i for i, r in role_by_id.items() if r in {"sub_distributor", "sub_distribution_manager", "sub_distribution_employee", "cluster"})
 
-    total_distrib_received = int(dist_row["received_count"]) if dist_row and dist_row["received_count"] else 0
-    total_devices_received = int(dist_row["received_devices"]) if dist_row and dist_row["received_devices"] else 0
-    total_distrib_sent = int(dist_row["sent_count"]) if dist_row and dist_row["sent_count"] else 0
-    total_devices_sent = int(dist_row["sent_devices"]) if dist_row and dist_row["sent_devices"] else 0
+    total_distrib_received = total_devices_received = total_distrib_sent = total_devices_sent = 0
+
+    async def _count_distribution(col: str, ids: List[str]):
+        if not ids:
+            return 0, 0
+        ph = ",".join([f":d_{i}" for i in range(len(ids))])
+        params = {f"d_{i}": i_ for i, i_ in enumerate(ids)}
+        row = (await session.execute(text(f"""
+            SELECT COUNT(*) AS c, COALESCE(SUM(device_count), 0) AS dc
+            FROM distributions
+            WHERE {col} IN ({ph})
+        """), params)).mappings().first()
+        return int(row["c"] or 0), int(row["dc"] or 0)
+
+    if scoped_receiver_ids is None:
+        distrib_q = text("""
+            SELECT
+                SUM(CASE WHEN to_user_id = :uid1 THEN 1 ELSE 0 END) as received_count,
+                COALESCE(SUM(CASE WHEN to_user_id = :uid2 THEN device_count ELSE 0 END), 0) as received_devices,
+                SUM(CASE WHEN from_user_id = :uid3 THEN 1 ELSE 0 END) as sent_count,
+                COALESCE(SUM(CASE WHEN from_user_id = :uid4 THEN device_count ELSE 0 END), 0) as sent_devices
+            FROM distributions
+            WHERE :uid5 IN (to_user_id, from_user_id)
+        """)
+        dist_row = (await session.execute(distrib_q, {"uid1": user_id, "uid2": user_id, "uid3": user_id, "uid4": user_id, "uid5": user_id})).mappings().first()
+        total_distrib_received = int(dist_row["received_count"]) if dist_row and dist_row["received_count"] else 0
+        total_devices_received = int(dist_row["received_devices"]) if dist_row and dist_row["received_devices"] else 0
+        total_distrib_sent = int(dist_row["sent_count"]) if dist_row and dist_row["sent_count"] else 0
+        total_devices_sent = int(dist_row["sent_devices"]) if dist_row and dist_row["sent_devices"] else 0
+    else:
+        total_distrib_received, total_devices_received = await _count_distribution("to_user_id", scoped_receiver_ids)
+        total_distrib_sent, total_devices_sent = await _count_distribution("from_user_id", scoped_sender_ids)
 
     held_count_q = select(func.count()).select_from(Device).where(Device.current_holder_id == uid)
     held_count = (await session.execute(held_count_q)).scalar()
@@ -761,7 +816,30 @@ async def _get_hierarchy_stats(session, user_id: str, user_role: str) -> Dict[st
             SELECT id FROM descendants
         """)
         desc_rows2 = (await session.execute(desc_q2, {"root": int(scope_root_id2)})).scalars().all()
-        scope_user_ids2 = {scope_root_id2} | {str(did) for did in desc_rows2 if did}
+        # Devices "in hand" for a sub distribution manager count what the whole
+        # sub distribution holds (its parent sub-distributor account plus the
+        # manager itself), because devices are delivered to the sub-distributor —
+        # the manager is part of that account, so this must not be 0.
+        in_hand_ids = {str(scope_root_id2), str(user_id)}
+        in_hand_list = sorted(in_hand_ids)
+        if len(in_hand_list) == 1:
+            held_count = (await session.execute(
+                text("SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS CHAR) = :h0"),
+                {"h0": in_hand_list[0]}
+            )).scalar() or 0
+        else:
+            ih_ph = ",".join([f":ih_{i}" for i in range(len(in_hand_list))])
+            ih_params = {f"ih_{i}": hid for i, hid in enumerate(in_hand_list)}
+            held_count = (await session.execute(
+                text(f"SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS CHAR) IN ({ih_ph})"),
+                ih_params
+            )).scalar() or 0
+        # Downstream (subordinate) holders are the scope descendants (clusters /
+        # operators / sub-distribution employees) excluding the parent
+        # sub-distributor and the manager, so the parent's held devices are not
+        # double-counted against the in-hand figure above.
+        scope_user_ids2 = {str(did) for did in desc_rows2 if did}
+        scope_user_ids2.discard(str(scope_root_id2))
         scope_user_ids2.discard(str(user_id))
         scoped_list2 = sorted(scope_user_ids2)
         if scoped_list2:

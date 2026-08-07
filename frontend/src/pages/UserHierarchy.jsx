@@ -51,7 +51,6 @@ const ROLE_ICON = {
 const ALLOWED_ROLES_BY_CREATOR = {
   super_admin: ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
   manager: ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
-  sub_distribution_manager: ['sub_distribution_employee'],
   sub_distributor: [],
   cluster: ['operator'],
   sub_distribution_employee: ['cluster', 'operator'],

@@ -21,7 +21,6 @@ import { userKeys } from '../hooks';
 const ALLOWED_ROLES_BY_CREATOR = {
   super_admin:     ['super_admin', 'md_director', 'manager', 'pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
   manager:         ['pdic_staff', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'operator', 'sub_distribution_employee'],
-  sub_distribution_manager: ['sub_distribution_employee'],
   sub_distributor: ['sub_distribution_manager', 'cluster', 'operator', 'sub_distribution_employee'],
   cluster:         ['operator'],
   sub_distribution_employee: ['cluster', 'operator'],
@@ -849,10 +848,10 @@ const Users = () => {
 
   const stats = isSubDist
     ? [
-        { label: 'Total Clusters',    value: users.length,                                                            icon: Network,    color: 'teal'   },
-        { label: 'Active Clusters',   value: users.filter(u => u.status === 'active').length,                        icon: UsersIcon,  color: 'green'  },
-        { label: 'Total Operators',   value: subDistOperators.length,                                                  icon: UsersIcon,  color: 'blue'   },
-        { label: 'Active Operators',  value: subDistOperators.filter(u => u.status === 'active').length,              icon: UsersIcon,  color: 'indigo' },
+        { label: 'Total Clusters',    value: users.filter(u => u.role === 'cluster').length,                                      icon: Network,    color: 'teal'   },
+        { label: 'Active Clusters',   value: users.filter(u => u.role === 'cluster' && u.status === 'active').length,             icon: UsersIcon,  color: 'green'  },
+        { label: 'Employees',         value: users.filter(u => u.role === 'sub_distribution_employee').length,                    icon: UsersIcon,  color: 'violet' },
+        { label: 'Total Operators',   value: subDistOperators.length,                                                              icon: UsersIcon,  color: 'blue'   },
       ]
     : isCluster
     ? [
@@ -963,7 +962,47 @@ const Users = () => {
               </div>
             </Card>
           ) : (
-            users.map(cluster => {
+            <>
+            {users.filter(u => u.role === 'sub_distribution_employee').length > 0 && (
+              <Card>
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <UsersIcon className="w-4 h-4 text-violet-500" /> Sub Distribution Employees
+                  </h3>
+                </div>
+                <div className="space-y-2 p-3">
+                  {users
+                    .filter(u => u.role === 'sub_distribution_employee')
+                    .map(emp => (
+                      <div key={emp.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-violet-100 rounded-full flex items-center justify-center">
+                            <span className="text-xs font-medium text-violet-600">
+                              {(emp.name || '').split(' ').filter(Boolean).map(n => n[0]).join('') || '?'}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-800">{emp.name}</p>
+                            <p className="text-xs text-gray-500">{emp.email}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-700">Sub Distribution Employee</span>
+                          <StatusBadge status={emp.status} size="sm" />
+                          <button
+                            onClick={() => { setSelectedUser(emp); setShowViewModal(true); }}
+                            className="p-1 hover:bg-gray-100 rounded"
+                            title="View employee"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-gray-500" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </Card>
+            )}
+            {users.filter(u => u.role === 'cluster').map(cluster => {
               const clusterOps = clusterOperatorsMap[String(cluster.id)] || [];
               const isCollapsed = !!collapsedClusters[cluster.id];
               return (
@@ -1053,7 +1092,8 @@ const Users = () => {
                   )}
                 </Card>
               );
-            })
+            })}
+            </>
           )}
         </div>
       ) : (

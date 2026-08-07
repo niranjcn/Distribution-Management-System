@@ -187,7 +187,7 @@ const SubDistributorDashboard = () => {
           <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" loading={statsLoading} />
           <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" loading={statsLoading} />
           <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" loading={statsLoading} />
-          <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" loading={statsLoading} />
+          <StatCard title="Distributions" value={stats.distributions_sent || 0} icon={Package} color="green" loading={statsLoading} />
         </div>
       </ErrorBoundary>
 
