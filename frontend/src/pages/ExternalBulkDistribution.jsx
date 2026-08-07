@@ -15,7 +15,9 @@ import {
   XCircle,
 } from 'lucide-react';
 
-const TEMPLATE_HEADERS = ['id', 'quantity'];
+const IDENTIFIER_TYPE_OPTIONS = ['NU ID', 'IMEI', 'Serial Ref', 'MAC ID', 'Asset Tag', 'Other'];
+
+const TEMPLATE_HEADERS = ['identifier_type', 'identifier', 'quantity'];
 
 const ExternalBulkDistribution = () => {
   const navigate = useNavigate();
@@ -115,9 +117,10 @@ const ExternalBulkDistribution = () => {
 
   const downloadTemplate = () => {
     const sampleRows = [
-      ['1', '10'],
-      ['2', '5'],
-      ['3', '3'],
+      ['MAC ID', 'AA:BB:CC:DD:EE:01', '10'],
+      ['IMEI', '359123456789012', '5'],
+      ['NU ID', 'NU-2026-0001', '3'],
+      ['Serial Ref', 'SN-2026-0001', '2'],
     ];
     const lines = [
       TEMPLATE_HEADERS.join(','),
@@ -143,7 +146,8 @@ const ExternalBulkDistribution = () => {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Bulk Distribution</h1>
           <p className="text-gray-500 mt-1 text-sm">
-            Upload CSV/Excel listing external inventory items by name, then send them all to a single recipient in one distribution.
+            Upload CSV/Excel listing external inventory items by identifier type and identifier, then send them all
+            to a single recipient in one distribution.
           </p>
         </div>
       </div>
@@ -156,10 +160,23 @@ const ExternalBulkDistribution = () => {
           <div className="flex-1">
             <h3 className="font-semibold text-gray-800 mb-1">Template</h3>
             <p className="text-sm text-gray-500 mb-3">
-              Required file column: <span className="font-medium text-gray-700">id</span>. Optional column:{' '}
-              <span className="font-medium text-gray-700">quantity</span> (defaults to 1). The id must reference an
-              existing item. Download the template to see the expected format.
+              Required file columns: <span className="font-medium text-gray-700">identifier_type</span> and{' '}
+              <span className="font-medium text-gray-700">identifier</span>. Optional column:{' '}
+              <span className="font-medium text-gray-700">quantity</span> (defaults to 1). The identifier must
+              reference an existing item, and each{' '}
+              <span className="font-medium text-gray-700">identifier_type + identifier</span> pair must be unique
+              across items. Use one of the identifier types below:
             </p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {IDENTIFIER_TYPE_OPTIONS.map((option) => (
+                <span
+                  key={option}
+                  className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"
+                >
+                  {option}
+                </span>
+              ))}
+            </div>
             <Button variant="outline" icon={Download} onClick={downloadTemplate}>
               Download CSV Template
             </Button>

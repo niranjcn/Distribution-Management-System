@@ -1,3 +1,4 @@
+from datetime import date
 from enum import Enum
 from typing import List, Optional
 
@@ -18,6 +19,8 @@ class InventoryItemBase(BaseModel):
     quantity: int = Field(default=1, ge=1)
     supplier_name: Optional[str] = None
     location: Optional[str] = None
+    warranty_start_date: Optional[date] = None
+    warranty_duration: Optional[int] = Field(default=None, ge=0)
     notes: Optional[str] = None
 
 
@@ -34,6 +37,8 @@ class InventoryItemUpdate(BaseModel):
     quantity: Optional[int] = Field(default=None, ge=1)
     supplier_name: Optional[str] = None
     location: Optional[str] = None
+    warranty_start_date: Optional[date] = None
+    warranty_duration: Optional[int] = Field(default=None, ge=0)
     status: Optional[InventoryItemStatus] = None
     notes: Optional[str] = None
 

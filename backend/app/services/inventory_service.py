@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 
@@ -37,6 +37,8 @@ MANAGEMENT_ITEM_FIELDS = [
     "location",
     "status",
     "notes",
+    "warranty_start_date",
+    "warranty_duration",
     "created_by",
     "created_at",
     "updated_at",
@@ -83,6 +85,33 @@ def _is_management(user: Dict[str, Any]) -> bool:
 def _mask_item_fields(item: Dict[str, Any], management: bool) -> Dict[str, Any]:
     fields = MANAGEMENT_ITEM_FIELDS if management else NON_MANAGEMENT_ITEM_FIELDS
     return {k: item.get(k) for k in fields}
+
+
+async def _check_identifier_conflict(
+    session,
+    identifier_type: Optional[str],
+    identifier: Optional[str],
+    exclude_item_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a conflicting row for the same non-null (identifier_type,
+    identifier) pair, optionally excluding a specific item (used when editing)."""
+    if not identifier_type or not identifier:
+        return None
+
+    result = await session.execute(
+        text("""
+            SELECT id FROM external_inventory_items
+            WHERE identifier_type = :identifier_type AND identifier = :identifier
+              AND (:exclude_item_id IS NULL OR id != :exclude_item_id)
+            LIMIT 1
+        """),
+        {
+            "identifier_type": identifier_type,
+            "identifier": identifier,
+            "exclude_item_id": exclude_item_id,
+        },
+    )
+    return result.mappings().first()
 
 
 async def get_items(
@@ -176,22 +205,25 @@ async def create_item(item_data: InventoryItemCreate, user: Dict[str, Any]) -> D
     async with async_session_factory() as session:
         now = datetime.now().replace(tzinfo=None)
 
-        existing = (await session.execute(
-            text("SELECT id FROM external_inventory_items WHERE name = :name"),
-            {"name": item_data.name},
-        )).mappings().first()
-        if existing:
+        conflict = await _check_identifier_conflict(
+            session,
+            item_data.identifier_type,
+            item_data.identifier,
+        )
+        if conflict:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Item with this name already exists",
+                detail="An item with this identifier type and identifier already exists",
             )
 
         result = await session.execute(
             text("""INSERT INTO external_inventory_items (
                      name, identifier_type, identifier, device_type, price, quantity,
-                     supplier_name, location, status, notes, created_by, created_at, updated_at
+                     supplier_name, location, status, notes, warranty_start_date, warranty_duration,
+                     created_by, created_at, updated_at
                  ) VALUES (:name, :identifier_type, :identifier, :device_type, :price, :quantity,
-                     :supplier_name, :location, 'active', :notes, :created_by, :created_at, :updated_at)"""),
+                     :supplier_name, :location, 'active', :notes, :warranty_start_date, :warranty_duration,
+                     :created_by, :created_at, :updated_at)"""),
             {
                 "name": item_data.name,
                 "identifier_type": item_data.identifier_type,
@@ -202,6 +234,8 @@ async def create_item(item_data: InventoryItemCreate, user: Dict[str, Any]) -> D
                 "supplier_name": item_data.supplier_name,
                 "location": item_data.location,
                 "notes": item_data.notes,
+                "warranty_start_date": item_data.warranty_start_date,
+                "warranty_duration": item_data.warranty_duration,
                 "created_by": int(actor["id"]),
                 "created_at": now,
                 "updated_at": now,
@@ -234,23 +268,24 @@ async def update_item(
 
     async with async_session_factory() as session:
         result = await session.execute(
-            text("SELECT id FROM external_inventory_items WHERE id = :item_id"),
+            text("SELECT * FROM external_inventory_items WHERE id = :item_id"),
             {"item_id": int(item_id)},
         )
         existing = result.mappings().first()
         if not existing:
             return None
 
-        if update_dict.get("name"):
-            conflict = (await session.execute(
-                text("SELECT id FROM external_inventory_items WHERE name = :name AND id != :item_id"),
-                {"name": update_dict["name"], "item_id": int(item_id)},
-            )).mappings().first()
-            if conflict:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Item with this name already exists",
-                )
+        conflict = await _check_identifier_conflict(
+            session,
+            update_dict.get("identifier_type", existing.get("identifier_type")),
+            update_dict.get("identifier", existing.get("identifier")),
+            exclude_item_id=int(item_id),
+        )
+        if conflict:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An item with this identifier type and identifier already exists",
+            )
 
         update_dict["updated_at"] = datetime.now().replace(tzinfo=None)
         set_clause = ", ".join([f"{k} = :{k}" for k in update_dict.keys()])
@@ -636,9 +671,11 @@ async def bulk_distribute_from_file(
     user: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Bulk-distribute external inventory items to a single recipient from
-    uploaded rows. Each row identifies an item by its `id` and an optional
-    `quantity` (default 1). Items with insufficient stock, invalid ids, or
-    repeated rows are reported as per-row errors without aborting the batch.
+    uploaded rows. Each row identifies an item by its ``identifier_type`` and
+    ``identifier`` (e.g. ``MAC ID`` + ``AA:BB:CC``) and an optional ``quantity``
+    (default 1). Items with insufficient stock, unknown identifiers, or
+    repeated identifier pairs are reported as per-row errors without aborting
+    the batch. The ``(identifier_type, identifier)`` pair is unique per item.
     """
     actor = _resolve_actor(user)
 
@@ -666,12 +703,14 @@ async def bulk_distribute_from_file(
         entries: List[Dict[str, Any]] = []
         for entry in identifier_rows:
             row_idx = int(entry["row"])
-            try:
-                item_id = int(entry.get("id"))
-                if item_id < 1:
-                    raise ValueError
-            except (ValueError, TypeError):
-                errors.append({"row": row_idx, "name": "", "error": "Missing or invalid item id"})
+            identifier_type = str(entry.get("identifier_type") or "").strip()
+            identifier = str(entry.get("identifier") or "").strip()
+            if not identifier_type or not identifier:
+                errors.append({
+                    "row": row_idx,
+                    "name": "",
+                    "error": "Both identifier_type and identifier are required",
+                })
                 continue
 
             try:
@@ -685,7 +724,8 @@ async def bulk_distribute_from_file(
 
             entries.append({
                 "row": row_idx,
-                "item_id": item_id,
+                "identifier_type": identifier_type,
+                "identifier": identifier,
                 "quantity": quantity_value,
                 "notes": entry.get("notes"),
             })
@@ -693,33 +733,49 @@ async def bulk_distribute_from_file(
         # Lock the referenced items in batched queries instead of one SELECT
         # per row. The locks are held until commit, so the quantities read here
         # are authoritative and the batched decrement below cannot oversell.
-        item_ids = sorted({e["item_id"] for e in entries})
-        locked_items: Dict[int, Dict[str, Any]] = {}
-        for batch in chunks(item_ids, 1000):
-            ph = ",".join([f":i_{i}" for i in range(len(batch))])
-            params = {f"i_{i}": v for i, v in enumerate(batch)}
+        # The (identifier_type, identifier) pair uniquely identifies an item.
+        locked_by_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for batch in chunks([(e["identifier_type"], e["identifier"]) for e in entries], 500):
+            conditions = []
+            params: Dict[str, Any] = {}
+            for i, (idt, idf) in enumerate(batch):
+                conditions.append(f"(identifier_type = :t_{i} AND identifier = :i_{i})")
+                params[f"t_{i}"] = idt
+                params[f"i_{i}"] = idf
             rows = (await session.execute(
-                text(f"SELECT * FROM external_inventory_items WHERE id IN ({ph}) FOR UPDATE"),
+                text(f"SELECT * FROM external_inventory_items WHERE {' OR '.join(conditions)} FOR UPDATE"),
                 params,
             )).mappings().all()
             for row in rows:
-                locked_items[int(row["id"])] = dict(row)
+                pair = (row.get("identifier_type"), row.get("identifier"))
+                if pair[0] and pair[1]:
+                    locked_by_pair[pair] = dict(row)
 
         history_rows: List[Dict[str, Any]] = []
         pending_decrements: Dict[int, int] = {}
-        seen_items: set = set()
+        seen_pairs: set = set()
         for entry in entries:
             row_idx = entry["row"]
-            item_id = entry["item_id"]
+            identifier_type = entry["identifier_type"]
+            identifier = entry["identifier"]
             quantity_value = entry["quantity"]
+            pair = (identifier_type, identifier)
 
-            if item_id in seen_items:
-                errors.append({"row": row_idx, "name": "", "error": "Duplicate item id in file"})
+            if pair in seen_pairs:
+                errors.append({
+                    "row": row_idx,
+                    "name": "",
+                    "error": f"Duplicate identifier ({identifier_type} {identifier}) in file",
+                })
                 continue
 
-            item = locked_items.get(item_id)
+            item = locked_by_pair.get(pair)
             if not item:
-                errors.append({"row": row_idx, "name": "", "error": f"Item not found (id {item_id})"})
+                errors.append({
+                    "row": row_idx,
+                    "name": "",
+                    "error": f"Item not found ({identifier_type} {identifier})",
+                })
                 continue
 
             # A single recipient is resolved above; an item already
@@ -739,8 +795,9 @@ async def bulk_distribute_from_file(
                 errors.append({"row": row_idx, "name": item.get("name", ""), "error": row_error})
                 continue
 
-            seen_items.add(item_id)
+            seen_pairs.add(pair)
 
+            item_id = int(item["id"])
             current_qty = int(item.get("quantity") or 0)
             remaining = current_qty - quantity_value
             pending_decrements[item_id] = quantity_value

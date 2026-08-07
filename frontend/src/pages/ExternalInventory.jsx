@@ -35,6 +35,8 @@ const initialItemForm = {
   price: 0,
   supplier_name: '',
   location: '',
+  warranty_start_date: '',
+  warranty_duration: '',
   notes: '',
 };
 
@@ -243,6 +245,9 @@ const [importResult, setImportResult] = useState(null);
       price: Number(item?.price ?? 0),
       supplier_name: item?.supplier_name || '',
       location: item?.location || '',
+      warranty_start_date: item?.warranty_start_date ? String(item.warranty_start_date).slice(0, 10) : '',
+      warranty_duration:
+        item?.warranty_duration != null ? Number(item.warranty_duration) : '',
       notes: item?.notes || '',
     });
     setShowItemModal(true);
@@ -273,6 +278,9 @@ const [importResult, setImportResult] = useState(null);
       device_type: itemForm.device_type || null,
       supplier_name: itemForm.supplier_name || null,
       location: itemForm.location || null,
+      warranty_start_date: itemForm.warranty_start_date || null,
+      warranty_duration:
+        itemForm.warranty_duration !== '' ? Number(itemForm.warranty_duration) : null,
       notes: itemForm.notes || null,
     };
     try {
@@ -345,6 +353,8 @@ const [importResult, setImportResult] = useState(null);
       'quantity',
       'supplier_name',
       'location',
+      'warranty_start_date',
+      'warranty_duration',
       'notes',
     ];
     const sampleRows = [
@@ -357,6 +367,8 @@ const [importResult, setImportResult] = useState(null);
         quantity: '10',
         supplier_name: 'Sample Supplier',
         location: 'Warehouse A',
+        warranty_start_date: '2026-01-15',
+        warranty_duration: '12',
         notes: 'OLT example',
       },
       {
@@ -368,6 +380,8 @@ const [importResult, setImportResult] = useState(null);
         quantity: '5',
         supplier_name: 'Sample Supplier',
         location: 'Warehouse B',
+        warranty_start_date: '2026-02-01',
+        warranty_duration: '6',
         notes: 'Remote example',
       },
     ];
@@ -429,6 +443,12 @@ const [importResult, setImportResult] = useState(null);
     { key: 'price', label: 'Price', render: (v) => formatCurrency(v) },
     { key: 'supplier_name', label: 'Supplier' },
     { key: 'location', label: 'Location' },
+    {
+      key: 'warranty_start_date',
+      label: 'Warranty Start',
+      render: (v) => (v ? String(v).slice(0, 10) : '-'),
+    },
+    { key: 'warranty_duration', label: 'Warranty (months)', render: (v) => (v != null ? v : '-') },
     { key: 'status', label: 'Status' },
     {
       key: 'actions',
@@ -817,6 +837,26 @@ const [importResult, setImportResult] = useState(null);
                 className="w-full rounded-lg border border-gray-300 px-3 py-2"
                 value={itemForm.location}
                 onChange={(e) => setItemForm((p) => ({ ...p, location: e.target.value }))}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-sm font-medium text-gray-700">Warranty Start Date</span>
+              <input
+                type="date"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                value={itemForm.warranty_start_date}
+                onChange={(e) => setItemForm((p) => ({ ...p, warranty_start_date: e.target.value }))}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-sm font-medium text-gray-700">Warranty Duration (months)</span>
+              <input
+                type="number"
+                min="0"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                value={itemForm.warranty_duration}
+                onChange={(e) => setItemForm((p) => ({ ...p, warranty_duration: e.target.value }))}
+                placeholder="e.g. 12"
               />
             </label>
             <label className="space-y-1 md:col-span-2">

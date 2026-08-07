@@ -1,5 +1,5 @@
 from io import BytesIO
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,6 +21,8 @@ def _fake_item(**overrides):
         "location": "Main Store",
         "status": "active",
         "notes": None,
+        "warranty_start_date": "2026-01-15",
+        "warranty_duration": 12,
         "created_by": 1,
         "created_at": "2026-01-01T00:00:00",
         "updated_at": "2026-01-01T00:00:00",
@@ -289,7 +291,7 @@ class TestBulkDistributeExternalInventoryFromFile:
     def test_success_csv(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
         mod.inventory_service.bulk_distribute_from_file = AsyncMock(return_value=self._result())
-        csv_bytes = b"id,quantity\r\n1,2\r\n2,3\r\n"
+        csv_bytes = b"identifier_type,identifier,quantity\r\nMAC ID,AA:BB:CC:00:00:01,2\r\nNU ID,NU-0001,3\r\n"
         resp = client.post(
             self.URL,
             data={"to_user_id": "2"},
@@ -303,7 +305,8 @@ class TestBulkDistributeExternalInventoryFromFile:
         kwargs = mod.inventory_service.bulk_distribute_from_file.await_args.kwargs
         assert kwargs["to_user_id"] == "2"
         assert len(kwargs["identifier_rows"]) == 2
-        assert kwargs["identifier_rows"][0]["id"] == "1"
+        assert kwargs["identifier_rows"][0]["identifier_type"] == "MAC ID"
+        assert kwargs["identifier_rows"][0]["identifier"] == "AA:BB:CC:00:00:01"
         assert kwargs["identifier_rows"][0]["quantity"] == "2"
         assert kwargs["identifier_rows"][0]["notes"] is None
 
@@ -316,20 +319,20 @@ class TestBulkDistributeExternalInventoryFromFile:
         assert resp.status_code == 400
         assert "Only Excel" in resp.json()["detail"]
 
-    def test_missing_id_column_rejected(self, client, mock_inventory_services):
-        csv_bytes = b"quantity\r\n2\r\n"
+    def test_missing_required_columns_rejected(self, client, mock_inventory_services):
+        csv_bytes = b"identifier_type,quantity\r\nMAC ID,2\r\n"
         resp = client.post(
             self.URL,
             data={"to_user_id": "2"},
             files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
         )
         assert resp.status_code == 400
-        assert "Missing required column" in resp.json()["detail"]
+        assert "Missing required columns" in resp.json()["detail"]
 
     def test_internal_error_returns_500(self, client, mock_inventory_services):
         import app.routes.external_inventory as mod
         mod.inventory_service.bulk_distribute_from_file = AsyncMock(side_effect=RuntimeError("error"))
-        csv_bytes = b"id,quantity\r\n1,2\r\n"
+        csv_bytes = b"identifier_type,identifier,quantity\r\nMAC ID,AA:BB:CC:00:00:01,2\r\n"
         resp = client.post(
             self.URL,
             data={"to_user_id": "2"},
@@ -350,6 +353,11 @@ def mock_bulk_upload_db():
     session = AsyncMock()
     session.info = {}
 
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = []
+    result.mappings.return_value.first.return_value = None
+    session.execute.return_value = result
+
     class _Ctx:
         def __init__(self, s):
             self._s = s
@@ -365,7 +373,6 @@ def mock_bulk_upload_db():
 
     patchers = [
         patch("app.database_sqlalchemy.async_session_factory", new=_factory),
-        patch("app.routes.external_inventory._fetch_existing_names", new=AsyncMock(return_value=set())),
     ]
     for p in patchers:
         p.start()
@@ -387,6 +394,62 @@ class TestBulkUploadExternalInventoryItems:
         body = resp.json()
         assert body["success"] is True
         assert body["data"]["created_count"] == 2
+
+    def test_success_with_warranty_columns(self, client, mock_inventory_services, mock_bulk_upload_db):
+        csv_bytes = (
+            b"name,identifier_type,identifier,quantity,warranty_start_date,warranty_duration\r\n"
+            b"Item One,MAC ID,AA:BB:CC,2,2026-01-15,12\r\n"
+            b"Item Two,MAC ID,DD:EE:FF,3,2026-02-01,6\r\n"
+        )
+        resp = client.post(
+            self.URL,
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["created_count"] == 2
+        assert body["data"]["error_count"] == 0
+
+    def test_invalid_warranty_start_date_rejected(self, client, mock_inventory_services, mock_bulk_upload_db):
+        csv_bytes = b"name,quantity,warranty_start_date,warranty_duration\r\nItem One,2,not-a-date,12\r\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["data"]["created_count"] == 0
+        assert body["data"]["error_count"] == 1
+        assert "warranty_start_date" in body["data"]["errors"][0]["error"]
+
+    def test_invalid_warranty_duration_rejected(self, client, mock_inventory_services, mock_bulk_upload_db):
+        csv_bytes = b"name,quantity,warranty_duration\r\nItem One,2,abc\r\n"
+        resp = client.post(
+            self.URL,
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["data"]["created_count"] == 0
+        assert body["data"]["error_count"] == 1
+        assert "warranty_duration" in body["data"]["errors"][0]["error"]
+
+    def test_duplicate_identifier_pair_rejected(self, client, mock_inventory_services, mock_bulk_upload_db):
+        csv_bytes = (
+            b"name,identifier_type,identifier,quantity\r\n"
+            b"Item One,MAC ID,AA:BB:CC,2\r\n"
+            b"Item Two,MAC ID,AA:BB:CC,3\r\n"
+        )
+        resp = client.post(
+            self.URL,
+            files={"file": ("items.csv", BytesIO(csv_bytes), "text/csv")},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["data"]["created_count"] == 1
+        assert body["data"]["error_count"] == 1
+        assert "Duplicate identifier_type and identifier" in body["data"]["errors"][0]["error"]
 
     def test_non_csv_rejected(self, client, mock_inventory_services):
         resp = client.post(
