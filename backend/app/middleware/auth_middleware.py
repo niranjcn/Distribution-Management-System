@@ -135,5 +135,3 @@ require_any_role = RoleChecker([
     "operator",
     "sub_distribution_employee",
 ])
-require_approval_requester = RoleChecker(["sub_distribution_employee"])
-require_approval_reviewer = RoleChecker(["sub_distribution_manager", "sub_distributor"])

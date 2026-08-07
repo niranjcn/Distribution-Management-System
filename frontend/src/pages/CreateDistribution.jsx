@@ -7,7 +7,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { devicesAPI, usersAPI, distributionsAPI, approvalRequestsAPI } from '../services/api';
+import { devicesAPI, usersAPI, distributionsAPI } from '../services/api';
 import { Truck, Save, X, Plus, Trash2, Search, Loader2, ChevronRight } from 'lucide-react';
 import { normalizeRole } from '../utils/roles';
 
@@ -333,20 +333,10 @@ const CreateDistribution = () => {
         notes: formData.notes,
         ...(distributionDate ? { date_of_distribution: distributionDate } : {})
       };
-      if (isEmployee) {
-        await approvalRequestsAPI.submit({
-          request_type: 'distribution',
-          payload,
-          summary: `Distribute ${payload.device_ids.length} device(s) to ${selectedRecipient?.name || ''} (${selectedRecipient?.role || ''})`,
-        });
-        showToast('Distribution request submitted for approval!', 'success');
-        navigate('/approval-requests');
-      } else {
-        await distributionsAPI.createDistribution(payload);
-        showToast('Distribution created successfully!', 'success');
-        setShowConfirmModal(false);
-        navigate('/distributions');
-      }
+      await distributionsAPI.createDistribution(payload);
+      showToast('Distribution created successfully!', 'success');
+      setShowConfirmModal(false);
+      navigate('/distributions');
     } catch (error) {
       showToast(error.message || 'Failed to create distribution', 'error');
     } finally {
@@ -356,7 +346,7 @@ const CreateDistribution = () => {
 
   const pageSubtitle = isManagement
     ? 'Distribute devices from PDIC stock to sub-distributors, clusters, or operators'
-    : isEmployee ? 'Propose a distribution to a cluster or operator under your sub distribution (requires approval)'
+    : isEmployee ? 'Distribute devices from your sub distribution to clusters or operators'
     : role === 'sub_distributor' ? 'Distribute your devices to clusters or operators under you'
     : role === 'cluster'         ? 'Distribute your devices to operators under your cluster'
     : 'Transfer a device to another operator in your cluster';
@@ -729,7 +719,7 @@ const CreateDistribution = () => {
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
           <Button variant="secondary" onClick={() => navigate('/distributions')} icon={X} className="w-full sm:w-auto">Cancel</Button>
-          <Button type="submit" loading={loading} icon={Save} className="w-full sm:w-auto">{isEmployee ? 'Submit for Approval' : 'Create Distribution'}</Button>
+          <Button type="submit" loading={loading} icon={Save} className="w-full sm:w-auto">Create Distribution</Button>
         </div>
       </form>
 

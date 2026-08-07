@@ -121,7 +121,6 @@ async def reset_and_seed():
             "change_requests",
             "notifications",
             "approvals",
-            "operators",
             "returns",
             "defects",
             "distributions",

@@ -7,7 +7,7 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI, digitalIdsAPI, approvalRequestsAPI } from '../services/api';
+import { usersAPI, adminUpdateCredentials, reassignmentRequestsAPI, digitalIdsAPI } from '../services/api';
 import { 
   UserPlus, Edit, Trash2, Eye, Shield, Mail, Phone, 
   Building, Calendar, Users as UsersIcon, Loader2, Lock,
@@ -429,6 +429,12 @@ const Users = () => {
       }
     } else if (currentUser?.role === 'cluster') {
       setParentOptions([{ id: String(currentUser.id), name: currentUser.name, groupLabel: 'Directly under me (Cluster)' }]);
+    } else if (currentUser?.role === 'sub_distribution_employee') {
+      if (newRole === 'cluster' || newRole === 'operator') {
+        setParentOptions([{ id: String(currentUser.parent_id), name: currentUser.parent_name || 'My Sub Distribution', groupLabel: 'My Sub Distribution' }]);
+      } else {
+        setParentOptions([]);
+      }
     }
   };
 
@@ -592,25 +598,6 @@ const Users = () => {
       if (formData.parentId)   payload.parent_id = formData.parentId;
       if (formData.role === 'operator' && formData.networkName) payload.network_name = formData.networkName;
 
-      if (currentUser?.role === 'sub_distribution_employee') {
-        const requestType = formData.role === 'cluster' ? 'cluster' : 'operator';
-        await approvalRequestsAPI.submit({
-          request_type: requestType,
-          summary: `Create ${formData.role} user ${formData.name || formData.email}`,
-          payload: {
-            ...payload,
-            sub_distribution_id: currentUser.parent_id,
-          },
-        });
-        showToast('User creation submitted for approval', 'success');
-        setShowAddModal(false);
-        setFormData(emptyForm);
-        setConfirmPassword('');
-        setShowCreatePassword(false);
-        setShowCreateConfirmPassword(false);
-        setParentOptions([]);
-        return;
-      }
       await usersAPI.createUser(payload);
       showToast('User created successfully', 'success');
       setShowAddModal(false);
@@ -640,19 +627,6 @@ const Users = () => {
       if (editPrimaryRow?.digitalId) payload.digital_id = editPrimaryRow.digitalId;
       if (editPrimaryRow?.broadbandId) payload.broadband_id = editPrimaryRow.broadbandId;
 
-      if (currentUser?.role === 'sub_distribution_employee') {
-        await approvalRequestsAPI.submit({
-          request_type: 'user_update',
-          summary: `Update user ${selectedUser?.name || selectedUser?._id || selectedUser?.id}`,
-          payload: {
-            user_id: String(selectedUser._id || selectedUser.id),
-            ...payload,
-          },
-        });
-        showToast('User update submitted for approval', 'success');
-        setShowEditModal(false);
-        return;
-      }
       await usersAPI.updateUser(selectedUser._id || selectedUser.id, payload);
       showToast('User updated successfully', 'success');
       setShowEditModal(false);
@@ -666,17 +640,6 @@ const Users = () => {
 
   const handleDeleteUser = async () => {
     try {
-      if (currentUser?.role === 'sub_distribution_employee') {
-        await approvalRequestsAPI.submit({
-          request_type: 'user_delete',
-          summary: `Delete user ${selectedUser?.name || selectedUser?._id || selectedUser?.id}`,
-          payload: { user_id: String(selectedUser._id || selectedUser.id) },
-        });
-        showToast('User deletion submitted for approval', 'success');
-        setShowDeleteModal(false);
-        setSelectedUser(null);
-        return;
-      }
       const res = await usersAPI.deleteUser(selectedUser._id || selectedUser.id);
       const isReassign = res?.data?.request && (selectedUser?.role === 'sub_distributor' || selectedUser?.role === 'cluster');
       if (isReassign) {
@@ -726,21 +689,6 @@ const Users = () => {
     if (!reassignTarget || !reassignNewParentId) return;
     setReassigning(true);
     try {
-      if (currentUser?.role === 'sub_distribution_employee') {
-        await approvalRequestsAPI.submit({
-          request_type: 'user_reassign',
-          summary: `Reassign user ${reassignTarget.name || reassignTarget.id}`,
-          payload: {
-            user_id: String(reassignTarget.id),
-            new_parent_id: String(reassignNewParentId),
-          },
-        });
-        showToast('User reassignment submitted for approval', 'success');
-        setShowReassignModal(false);
-        setReassignTarget(null);
-        setReassignNewParentId('');
-        return;
-      }
       const res = await usersAPI.reassignUser(reassignTarget.id, { new_parent_id: reassignNewParentId });
       showToast(res.message || 'User reassigned successfully', 'success');
       setShowReassignModal(false);

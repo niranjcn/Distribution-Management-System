@@ -41,11 +41,6 @@ def generate_return_id() -> str:
     return generate_id("RET")
 
 
-def generate_operator_id() -> str:
-    """Generate operator ID"""
-    return generate_id("OP")
-
-
 def generate_external_distribution_id() -> str:
     """Generate external inventory distribution ID"""
     return generate_id("EXT")

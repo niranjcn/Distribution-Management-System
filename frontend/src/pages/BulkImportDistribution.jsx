@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
-import { dashboardAPI, distributionsAPI, usersAPI, approvalRequestsAPI } from '../services/api';
+import { dashboardAPI, distributionsAPI, usersAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import {
@@ -197,27 +197,6 @@ const BulkImportDistribution = () => {
     setUploading(true);
     setResult(null);
     try {
-      if (role === 'sub_distribution_employee') {
-        const formData = new FormData();
-        formData.append('kind', 'distribution');
-        formData.append('file', file);
-        formData.append('to_user_id', toUserId);
-        if (notes) formData.append('notes', notes);
-        if (distributionDate) formData.append('date_of_distribution', distributionDate);
-        const staged = await approvalRequestsAPI.stageBulk(formData);
-        const payload = staged?.data?.payload;
-        if (!payload) throw new Error('Could not parse the uploaded file');
-        await approvalRequestsAPI.submit({
-          request_type: 'bulk_distribution',
-          summary: `Bulk distribute ${payload.rows?.length || 0} device(s) to ${selectedRecipient?.name || toUserId}: ${file.name}`,
-          payload,
-        });
-        setFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        showToast('Bulk distribution submitted for approval', 'success');
-        navigate('/approval-requests');
-        return;
-      }
       const response = await distributionsAPI.bulkUpload(file, toUserId, notes, distributionDate);
       setResult(response.data || null);
 

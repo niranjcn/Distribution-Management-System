@@ -16,7 +16,7 @@ import {
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import FilePreview from '../components/ui/FilePreview';
-import { usersAPI, dashboardAPI, approvalRequestsAPI } from '../services/api';
+import { usersAPI, dashboardAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { normalizeRole, ROLES } from '../utils/roles';
@@ -159,7 +159,7 @@ const BulkUploadUsers = () => {
           targetRole: 'operator',
           requiresParent: false,
           parentId: String(user?.parent_id || user?.id),
-          description: 'Upload operators for approval — assigned to your sub distribution',
+          description: 'Upload operators that belong to your sub distribution',
         },
         {
           id: 'operator_to_cluster_branch',
@@ -291,26 +291,6 @@ const BulkUploadUsers = () => {
       setUploading(true);
       setResult(null);
       const parentId = selectedMode.parentId || selectedParentId || undefined;
-      if (isEmployee) {
-        const formData = new FormData();
-        formData.append('kind', 'users');
-        formData.append('file', file);
-        formData.append('role', selectedMode.targetRole);
-        if (parentId) formData.append('parent_id', parentId);
-        const staged = await approvalRequestsAPI.stageBulk(formData);
-        const payload = staged?.data?.payload;
-        if (!payload) throw new Error('Could not parse the uploaded file');
-        await approvalRequestsAPI.submit({
-          request_type: 'bulk_users',
-          summary: `Bulk upload ${payload.rows?.length || 0} ${selectedMode.targetRole}(s): ${file.name}`,
-          payload,
-        });
-        setFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        showToast('Bulk user upload submitted for approval', 'success');
-        navigate('/approval-requests');
-        return;
-      }
       const res = await usersAPI.bulkUpload(file, selectedMode.targetRole, parentId);
       setResult(res.data);
       setFile(null);

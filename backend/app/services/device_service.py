@@ -55,32 +55,6 @@ async def _get_locked_distribution_device_ids(session) -> set:
     return {row[0] for row in result}
 
 
-async def _get_pending_distribution_request_device_ids(session) -> set:
-    """Device ids queued in a still-open distribution approval request.
-
-    Used only by the sub-distribution employee device-selection flow so a
-    device a branch has already requested for distribution cannot be picked
-    again for a new request. This never affects the general inventory list or
-    the selection lists of any other role.
-    """
-    ids = set()
-    payloads = (await session.execute(text("""
-        SELECT payload FROM approval_requests
-        WHERE request_type = 'distribution' AND status = 'pending'
-    """))).scalars().all()
-    for raw in payloads:
-        try:
-            data = json.loads(raw) if isinstance(raw, str) else {}
-        except (json.JSONDecodeError, TypeError):
-            continue
-        for did in (data.get("device_ids") or []):
-            try:
-                ids.add(int(did))
-            except (TypeError, ValueError):
-                continue
-    return ids
-
-
 def _augment_device_record(device: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not device:
         return device
@@ -671,15 +645,8 @@ async def get_held_devices(
     page_size: int = 100,
     search: Optional[str] = None,
     search_by: Optional[str] = None,
-    exclude_approval_pending: bool = False,
 ) -> Dict[str, Any]:
-    """Get all devices currently held by a user (any status) — for sub-level redistribution, paginated.
-
-    `exclude_approval_pending` is only set for the sub-distribution employee
-    device-selection flow, so devices already queued in a still-open
-    distribution approval request are hidden from a new selection. All other
-    roles keep the original behavior.
-    """
+    """Get all devices currently held by a user (any status) — for sub-level redistribution, paginated."""
     async with async_session_factory() as session:
         conditions = [Device.current_holder_id == int(holder_id)]
 
@@ -723,7 +690,6 @@ async def get_held_devices(
         )
         rows = (await session.execute(q)).scalars().all()
         locked_ids = await _get_locked_distribution_device_ids(session)
-        locked_ids.update(await _get_pending_distribution_request_device_ids(session) if exclude_approval_pending else set())
 
         devices = [
             _augment_device_record(r.to_dict())

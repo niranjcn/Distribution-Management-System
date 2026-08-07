@@ -36,6 +36,7 @@ ALLOWED_CREATE_BY_ROLE = {
     MANAGER: [PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
     SUB_DISTRIBUTION_MANAGER: [SUB_DISTRIBUTION_EMPLOYEE],
     SUB_DISTRIBUTOR: [SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
+    SUB_DISTRIBUTION_EMPLOYEE: [CLUSTER, OPERATOR],
     CLUSTER: [OPERATOR],
 }
 
@@ -216,8 +217,6 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
         return await _branch_contains_user(current_user.get("id"), target_user.get("id"), session=db)
 
     if actor_role == SUB_DISTRIBUTION_EMPLOYEE:
-        if write:
-            return False
         if target_role not in {CLUSTER, OPERATOR}:
             return False
         root_id = str(current_user.get("parent_id") or current_user.get("id"))
@@ -498,6 +497,12 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
         if actor_role == SUB_DISTRIBUTOR and not await _branch_contains_user(current_user.get("id"), user_data.parent_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected sub distributor is outside your branch")
 
+        if actor_role == SUB_DISTRIBUTION_EMPLOYEE and not await _branch_contains_user(current_user.get("parent_id"), user_data.parent_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Selected sub distributor is outside your sub distribution",
+            )
+
     if actor_role == CLUSTER and target_role == OPERATOR and not user_data.parent_id:
         user_data = user_data.model_copy(update={"parent_id": str(current_user["id"])})
 
@@ -517,6 +522,14 @@ async def create_user(user_data: UserCreate, current_user: dict = Depends(get_cu
         parent = await user_service.get_user_by_id(user_data.parent_id)
         if not parent or not await _branch_contains_user(current_user.get("id"), parent.get("id")):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Selected parent is outside your branch")
+
+    if actor_role == SUB_DISTRIBUTION_EMPLOYEE and target_role == OPERATOR:
+        parent = await user_service.get_user_by_id(user_data.parent_id)
+        if not parent or not await _branch_contains_user(current_user.get("parent_id"), parent.get("id")):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Selected parent is outside your sub distribution",
+            )
 
     if target_role == SUB_DISTRIBUTION_EMPLOYEE:
         if actor_role == SUB_DISTRIBUTOR and not user_data.parent_id:
@@ -705,7 +718,7 @@ async def reassign_user(
     current_user: dict = Depends(get_current_user),
 ):
     actor_role = normalize_role(current_user.get("role"))
-    if actor_role not in {SUPER_ADMIN, MANAGER}:
+    if actor_role not in {SUPER_ADMIN, MANAGER, SUB_DISTRIBUTION_EMPLOYEE}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super admins and managers can reassign users")
 
     new_parent_id = body.get("new_parent_id")
@@ -743,6 +756,19 @@ async def reassign_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An operator can only be reassigned to a cluster or sub-distributor",
         )
+
+    if actor_role == SUB_DISTRIBUTION_EMPLOYEE:
+        root_id = str(current_user.get("parent_id") or current_user.get("id"))
+        if not await _branch_contains_user(root_id, target_user.get("id")):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to reassign this user",
+            )
+        if not await _branch_contains_user(root_id, new_parent_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Selected new parent is outside your sub distribution",
+            )
 
     try:
         result = await user_service.reassign_user(
@@ -784,7 +810,7 @@ async def reassign_user(
 async def delete_user(request: Request, user_id: str, current_user: dict = Depends(get_current_user)):
     actor_role = normalize_role(current_user.get("role"))
 
-    if actor_role not in {SUPER_ADMIN, MANAGER}:
+    if actor_role not in {SUPER_ADMIN, MANAGER, SUB_DISTRIBUTION_EMPLOYEE}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     if str(current_user.get("id")) == str(user_id):

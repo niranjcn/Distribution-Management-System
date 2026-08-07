@@ -6,7 +6,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
-import { defectsAPI, devicesAPI, approvalRequestsAPI } from '../services/api';
+import { defectsAPI, devicesAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -279,11 +279,11 @@ const DefectReports = () => {
     setTablePage(1);
   }, [replacementFilter]);
 
-  const canReport = ['operator', 'sub_distributor', 'cluster'].includes(user?.role);
-  const canReview = ['super_admin', 'manager', 'pdic_staff', 'sub_distribution_employee'].includes(user?.role);
-  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff', 'sub_distribution_employee'].includes(user?.role);
+  const canReport = ['operator', 'sub_distributor', 'cluster', 'sub_distribution_employee'].includes(user?.role);
+  const canReview = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
+  const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canReplace = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
-  const canConfirmReplacement = ['operator', 'cluster', 'sub_distributor'].includes(user?.role);
+  const canConfirmReplacement = ['operator', 'cluster', 'sub_distributor', 'sub_distribution_employee'].includes(user?.role);
 
   const getDefectId = (defect) => String(defect?._id || defect?.id || '');
 
@@ -518,13 +518,7 @@ const DefectReports = () => {
                 <button
                   onClick={async (e) => {
                     e.stopPropagation();
-                    try {
-                      await defectsAPI.confirmReplacementReceipt(row._id || row.id);
-                      showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
-                      // Data refetch is handled automatically by appDataMutation event
-                    } catch (error) {
-                      showToast(error.message || 'Failed to confirm replacement receipt', 'error');
-                    }
+                    await handleConfirmReplacement(row);
                   }}
                   className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white text-xs font-medium rounded hover:bg-emerald-700 transition-colors"
                   title="Confirm Replacement Receipt"
@@ -558,21 +552,6 @@ const DefectReports = () => {
 
   const handleReview = async (action) => {
     try {
-      if (user?.role === 'sub_distribution_employee') {
-        await approvalRequestsAPI.submit({
-          request_type: 'defect_status',
-          summary: `${action === 'approved' ? 'Approve' : 'Reject'} defect ${selectedDefect.report_id || selectedDefect._id}`,
-          payload: {
-            defect_id: String(selectedDefect._id || selectedDefect.id),
-            status: action,
-            notes: reviewComment || undefined,
-          },
-        });
-        showToast('Defect review submitted for approval', 'success');
-        setShowReviewModal(false);
-        setReviewComment('');
-        return;
-      }
       await defectsAPI.updateDefectStatus(
         selectedDefect._id || selectedDefect.id,
         action,
@@ -594,22 +573,6 @@ const DefectReports = () => {
 
   const handleConfirmPayment = async (defectRow) => {
     try {
-      if (user?.role === 'sub_distribution_employee') {
-        await approvalRequestsAPI.submit({
-          request_type: 'payment_confirmation',
-          summary: `Confirm payment for defect ${defectRow.report_id || defectRow._id}`,
-          payload: {
-            defect_id: String(defectRow._id || defectRow.id),
-            notes: confirmPaymentNotes || undefined,
-          },
-        });
-        showToast('Payment confirmation submitted for approval', 'success');
-        setConfirmPaymentNotes('');
-        if (selectedDefect && String(selectedDefect._id || selectedDefect.id) === String(defectRow._id || defectRow.id)) {
-          setShowModal(false);
-        }
-        return;
-      }
       await defectsAPI.confirmPayment(defectRow._id || defectRow.id, confirmPaymentNotes);
       showToast('Payment confirmed successfully', 'success');
       setConfirmPaymentNotes('');
@@ -619,6 +582,19 @@ const DefectReports = () => {
       }
     } catch (error) {
       showToast(error.message || 'Failed to confirm payment', 'error');
+    }
+  };
+
+  const handleConfirmReplacement = async (defectRow) => {
+    try {
+      await defectsAPI.confirmReplacementReceipt(defectRow._id || defectRow.id);
+      showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
+      if (selectedDefect && String(selectedDefect._id || selectedDefect.id) === String(defectRow._id || defectRow.id)) {
+        setShowModal(false);
+      }
+      // Data refetch is handled automatically by appDataMutation event
+    } catch (error) {
+      showToast(error.message || 'Failed to confirm replacement receipt', 'error');
     }
   };
 
@@ -759,13 +735,7 @@ const DefectReports = () => {
                   </div>
                   <button
                     onClick={async () => {
-                      try {
-                        await defectsAPI.confirmReplacementReceipt(d._id || d.id);
-                        showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
-                        // Data refetch is handled automatically by appDataMutation event
-                      } catch (error) {
-                        showToast(error.message || 'Failed to confirm replacement receipt', 'error');
-                      }
+                      await handleConfirmReplacement(d);
                     }}
                     className="ml-2 flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors"
                   >
@@ -1023,14 +993,7 @@ const DefectReports = () => {
                 String(selectedDefect?.defective_device?.current_holder_id) === String(user?.id)) && (
               <Button
                 onClick={async () => {
-                  try {
-                    await defectsAPI.confirmReplacementReceipt(selectedDefect._id || selectedDefect.id);
-                    showToast('Replacement receipt confirmed! The device is now active in your account.', 'success');
-                    setShowModal(false);
-                    // Data refetch is handled automatically by appDataMutation event
-                  } catch (error) {
-                    showToast(error.message || 'Failed to confirm replacement receipt', 'error');
-                  }
+                  await handleConfirmReplacement(selectedDefect);
                 }}
               >
                 <CheckCircle2 className="w-4 h-4 mr-2" />

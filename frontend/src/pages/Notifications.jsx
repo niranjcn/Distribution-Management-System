@@ -179,7 +179,7 @@ const isAuthorizedForPath = (role, path) => {
     return ['sub_distributor', 'cluster', 'operator'].includes(role);
   }
   if (path.startsWith('/replacement-confirmation')) {
-    return role === 'operator';
+    return ['operator', 'cluster', 'sub_distributor', 'sub_distribution_employee'].includes(role);
   }
   if (path.startsWith('/approvals')) {
     return ['super_admin', 'manager', 'pdic_staff', 'sub_distributor'].includes(role);
@@ -193,7 +193,7 @@ const resolveNotificationLink = (notification, userRole) => {
 
   // Prefer explicit action routing for replacement confirmation workflows.
   if (
-    userRole === 'operator' &&
+    ['operator', 'cluster', 'sub_distributor', 'sub_distribution_employee'].includes(userRole) &&
     (action.includes('replacement') || action.includes('transfer_fix') || action.includes('transfer'))
   ) {
     return '/replacement-confirmation';
@@ -217,7 +217,8 @@ const resolveNotificationLink = (notification, userRole) => {
     if (notification?.category === 'distribution') return '/distributions';
     if (notification?.category === 'return') return '/returns';
     if (notification?.category === 'defect') {
-      return userRole === 'operator' && action.includes('replacement')
+      return ['operator', 'cluster', 'sub_distributor', 'sub_distribution_employee'].includes(userRole) &&
+        action.includes('replacement')
         ? '/replacement-confirmation'
         : '/defects';
     }

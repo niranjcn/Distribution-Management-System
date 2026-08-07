@@ -34,11 +34,9 @@ def test_app():
         from app.routes.defects import router as defects_router
         from app.routes.external_inventory import router as external_inventory_router
         from app.routes.notifications import router as notifications_router
-        from app.routes.operators import router as operators_router
         from app.routes.reassignment_requests import router as reassignment_requests_router
         from app.routes.reports import router as reports_router
         from app.routes.returns import router as returns_router
-        from app.routes.approval_requests import router as approval_requests_router
 
     app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
     app.include_router(users_router, prefix="/api/users", tags=["Users"])
@@ -49,11 +47,9 @@ def test_app():
     app.include_router(defects_router, prefix="/api/defects", tags=["Defects"])
     app.include_router(external_inventory_router, prefix="/api/external-inventory", tags=["External Inventory"])
     app.include_router(notifications_router, prefix="/api/notifications", tags=["Notifications"])
-    app.include_router(operators_router, prefix="/api/operators", tags=["Operators"])
     app.include_router(reassignment_requests_router, prefix="/api/reassignment-requests", tags=["Reassignment Requests"])
     app.include_router(reports_router, prefix="/api/reports", tags=["Reports"])
     app.include_router(returns_router, prefix="/api/returns", tags=["Returns"])
-    app.include_router(approval_requests_router, prefix="/api/approval-requests", tags=["Approval Requests"])
 
     from app.middleware.auth_middleware import get_current_user
 
@@ -207,18 +203,6 @@ def mock_defect_services():
 def mock_notification_services():
     patchers = [
         patch("app.routes.notifications.notification_service", spec=True),
-    ]
-    for p in patchers:
-        p.start()
-    yield
-    for p in patchers:
-        p.stop()
-
-
-@pytest.fixture
-def mock_operator_services():
-    patchers = [
-        patch("app.routes.operators.operator_service", spec=True),
     ]
     for p in patchers:
         p.start()

@@ -337,7 +337,7 @@ async def process_bulk_user_upload(
     from app.utils.security import get_password_hash as _hash
 
     actor_role = normalize_role(current_user.get("role"))
-    if actor_role not in {"super_admin", "manager", "sub_distributor", "cluster", "sub_distribution_manager"}:
+    if actor_role not in {"super_admin", "manager", "sub_distributor", "cluster", "sub_distribution_manager", "sub_distribution_employee"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     actor_name = current_user.get("name") or current_user.get("email") or "User"
@@ -383,6 +383,31 @@ async def process_bulk_user_upload(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Sub distributors can only create clusters under their own account",
             )
+        if target_role == "cluster" and actor_role == "sub_distribution_employee" \
+                and int(parent_id) != int(current_user.get("parent_id") or 0):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Clusters must be created under your own sub distribution",
+            )
+        if actor_role == "sub_distribution_employee" \
+                and int(parent_id) != int(current_user.get("parent_id") or 0):
+            async with async_session_factory() as session:
+                in_branch = (await session.execute(
+                    text("""
+                        WITH RECURSIVE descendants AS (
+                            SELECT id FROM users WHERE parent_id = :root
+                            UNION ALL
+                            SELECT u.id FROM users u INNER JOIN descendants d ON u.parent_id = d.id
+                        )
+                        SELECT 1 FROM descendants WHERE id = :pid LIMIT 1
+                    """),
+                    {"root": int(current_user.get("parent_id") or 0), "pid": int(parent_id)},
+                )).mappings().first()
+            if not in_branch:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Selected parent is outside your sub distribution",
+                )
         if target_role == "operator" and parent_role not in {"sub_distributor", "cluster"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

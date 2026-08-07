@@ -978,7 +978,15 @@ async def create_distribution_from_identifiers(
                     })
                     continue
             else:
-                if int(resolved_device.get("current_holder_id") or 0) != from_user_id:
+                if from_role == "sub_distribution_employee":
+                    emp_row = (await session.execute(
+                        text("SELECT parent_id FROM users WHERE id = :id"), {"id": from_user_id}
+                    )).mappings().first()
+                    branch_id = int((dict(emp_row) if emp_row else {}).get("parent_id") or from_user.get("parent_id") or 0)
+                    allowed_holder_ids = {from_user_id, branch_id} if branch_id else {from_user_id}
+                else:
+                    allowed_holder_ids = {from_user_id}
+                if int(resolved_device.get("current_holder_id") or 0) not in allowed_holder_ids:
                     errors.append({
                         "row": row_number,
                         "identifier": identifier_value,
@@ -1213,9 +1221,22 @@ async def confirm_receipt(
         raise ValueError("Distribution not found")
 
     user_id = int(user.get("id", user.get("_id", 0)))
+    user_role = str(user.get("role") or "").lower()
 
-    if int(dist["to_user_id"]) != user_id:
-        raise ValueError("Only the recipient can confirm receipt of this distribution")
+    recipient_id = int(dist["to_user_id"])
+    if recipient_id != user_id:
+        # Sub-distribution employees may confirm deliveries addressed to their
+        # branch (their parent sub-distributor) on the branch's behalf.
+        if user_role == "sub_distribution_employee":
+            async with async_session_factory() as session:
+                emp = (await session.execute(
+                    text("SELECT parent_id FROM users WHERE id = :id"), {"id": user_id}
+                )).mappings().first()
+            branch_id = int((dict(emp) if emp else {}).get("parent_id") or user.get("parent_id") or 0)
+            if recipient_id != branch_id:
+                raise ValueError("Only the recipient can confirm receipt of this distribution")
+        else:
+            raise ValueError("Only the recipient can confirm receipt of this distribution")
 
     if dist["status"] != DistributionStatus.PENDING_RECEIPT.value:
         raise ValueError("This distribution is not awaiting receipt confirmation")

@@ -33,14 +33,6 @@ def _ensure_distribution_create_access(current_user: dict) -> None:
         )
 
 
-def _ensure_not_employee_direct_write(current_user: dict) -> None:
-    if current_user.get("role") == "sub_distribution_employee":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sub distribution employees must route distribution requests through approval"
-        )
-
-
 def _ensure_sub_distribution_manager_read_only(current_user: dict) -> None:
     if current_user.get("role") == "sub_distribution_manager":
         raise HTTPException(
@@ -102,7 +94,6 @@ async def bulk_upload_distribution(
     filename_lower = (file.filename or "").lower()
     _ensure_not_md_director(current_user)
     _ensure_distribution_create_access(current_user)
-    _ensure_not_employee_direct_write(current_user)
 
     if not filename_lower.endswith((".xlsx", ".xls", ".csv")):
         raise HTTPException(
@@ -576,7 +567,6 @@ async def create_distribution(
     
     _ensure_not_md_director(current_user)
     _ensure_distribution_create_access(current_user)
-    _ensure_not_employee_direct_write(current_user)
 
     try:
         distribution = await distribution_service.create_distribution(
@@ -706,7 +696,6 @@ async def update_distribution_status(
     """Update distribution status"""
     _ensure_not_md_director(current_user)
     _ensure_sub_distribution_manager_read_only(current_user)
-    _ensure_not_employee_direct_write(current_user)
 
     try:
         before = await distribution_service.get_distribution_by_id(distribution_id)

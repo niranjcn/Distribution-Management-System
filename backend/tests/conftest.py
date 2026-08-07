@@ -8,7 +8,6 @@ _SUBMODULES_WITH_DISTRIBUTION = ["stats", "analytics"]
 _SUBMODULES_WITH_DEFECT = ["stats", "analytics"]
 _SUBMODULES_WITH_RETURN = ["stats", "analytics"]
 _SUBMODULES_WITH_USER = ["stats", "analytics"]
-_SUBMODULES_WITH_OPERATOR = ["stats"]
 _SUBMODULES_WITH_LOG_API = ["activities"]
 
 
@@ -30,7 +29,6 @@ def mock_services():
         ("defect_service", _SUBMODULES_WITH_DEFECT),
         ("return_service", _SUBMODULES_WITH_RETURN),
         ("user_service", _SUBMODULES_WITH_USER),
-        ("operator_service", _SUBMODULES_WITH_OPERATOR),
     ]
 
     all_patchers = []

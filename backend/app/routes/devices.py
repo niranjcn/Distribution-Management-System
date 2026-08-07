@@ -285,7 +285,6 @@ async def get_available_devices(
                 page_size=page_size,
                 search=search,
                 search_by=search_by,
-                exclude_approval_pending=True,
             )
         else:
             # Sub-level roles can redistribute any device they hold

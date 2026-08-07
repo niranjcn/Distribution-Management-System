@@ -126,6 +126,32 @@ async def _get_report_scope_user_ids(session, user: Dict[str, Any]) -> Optional[
     return scoped_ids
 
 
+async def _get_reporter_sub_distributor_id(session, reporter_id) -> Optional[int]:
+    """Return the id of the sub-distributor managing the reporter's branch, if any.
+
+    The reporter is typically a sub-distribution employee (or manager) whose
+    parent is the sub-distributor user that owns the branch.
+    """
+    if reporter_id is None:
+        return None
+    try:
+        reporter_row = (await session.execute(
+            text("SELECT id, parent_id FROM users WHERE id = :uid"),
+            {"uid": int(reporter_id)}
+        )).mappings().first()
+    except (TypeError, ValueError):
+        return None
+    if not reporter_row or not reporter_row.get("parent_id"):
+        return None
+    parent_row = (await session.execute(
+        text("SELECT id, role FROM users WHERE id = :pid"),
+        {"pid": int(reporter_row["parent_id"])}
+    )).mappings().first()
+    if parent_row and str(parent_row.get("role") or "") == "sub_distributor":
+        return int(parent_row["id"])
+    return None
+
+
 async def _enrich_defect_rows(session, defects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not defects:
         return defects
@@ -622,6 +648,23 @@ async def update_defect_status(
             if notifications:
                 await notification_service.bulk_create_notifications(notifications)
 
+            async with async_session_factory() as session:
+                sub_distributor_id = await _get_reporter_sub_distributor_id(session, defect["reported_by"])
+            if sub_distributor_id is not None and int(sub_distributor_id) != int(defect["reported_by"]):
+                await notification_service.create_notification(
+                    user_id=sub_distributor_id,
+                    title="Defect Approved — Return Initiated",
+                    message=(
+                        f"Defect {defect['report_id']} reported by "
+                        f"{defect.get('reported_by_name') or 'an employee'} has been approved. "
+                        f"A return request has been auto-created for the defective device. "
+                        "Please monitor the return and replacement progress."
+                    ),
+                    notification_type="info",
+                    category="defect",
+                    link=f"/defects?defectId={defect_id}"
+                )
+
         return await get_defect_by_id(defect_id)
     return None
 
@@ -849,6 +892,15 @@ async def get_pending_dues_users(
         )).mappings().all()
         result = [dict(r) for r in rows]
 
+        # An employer (sub_distribution_employee) acts on behalf of its branch
+        # sub-distributor, so its pending dues are stated as sub-distributor dues.
+        # This relabel applies ONLY to the employee role — a cluster/operator who
+        # has pending dues tied to them (even when visible to the sub-distributor)
+        # keeps their own role.
+        for row in result:
+            if row.get("user_role") == "sub_distribution_employee":
+                row["user_role"] = "sub_distributor"
+
         due_user_ids = [int(r["user_id"]) for r in result if r["user_id"] is not None]
         if due_user_ids:
             ph = ",".join([f":di_{i}" for i in range(len(due_user_ids))])
@@ -999,8 +1051,11 @@ async def replace_defect_device(
     pre_created_device: Optional[Dict[str, Any]] = None
 
     if register_device:
-        raw_type = str(register_device.get("device_type") or "").strip().lower()
-        is_sb = raw_type in {"sb", "set-top box", "set top box", "stb"}
+        raw_type = register_device.get("device_type") or ""
+        if hasattr(raw_type, "value"):
+            raw_type = raw_type.value
+        raw_type = str(raw_type or "").strip().lower()
+        is_sb = raw_type in {"sb", "set-top box", "set top box", "stb", "setup box"}
         if not is_sb:
             register_device.setdefault("band_type", "single_band")
         else:
@@ -1173,6 +1228,11 @@ async def replace_defect_device(
     reported_by_str = int(defect["reported_by"]) if defect.get("reported_by") else None
     recipient_ids = {uid for uid in [holder_user_id, reported_by_str] if uid is not None}
 
+    async with async_session_factory() as session:
+        sub_distributor_id = await _get_reporter_sub_distributor_id(session, reported_by_str)
+    if sub_distributor_id is not None:
+        recipient_ids.add(int(sub_distributor_id))
+
     title = (
         "Serviced Device Ready - Confirmation Required"
         if is_same_device_reassignment
@@ -1233,6 +1293,13 @@ async def confirm_replacement_receipt(
         holder_user_id = int(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
         reporter_user_id = int(defect.get("reported_by")) if defect.get("reported_by") else None
         allowed_confirmer_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid is not None}
+        if confirmer_role == "sub_distribution_employee":
+            emp = (await session.execute(
+                text("SELECT parent_id FROM users WHERE id = :id"), {"id": confirmer_id}
+            )).mappings().first()
+            branch_id = int((dict(emp) if emp else {}).get("parent_id") or 0)
+            if branch_id:
+                allowed_confirmer_ids.add(branch_id)
         if confirmer_id not in allowed_confirmer_ids:
             raise ValueError("Only the current holder or original defect reporter can confirm replacement receipt")
 
