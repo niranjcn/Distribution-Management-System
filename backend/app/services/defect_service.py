@@ -1716,38 +1716,32 @@ async def get_defect_stats(start_date: Optional[str] = None, end_date: Optional[
 
         date_filter = " AND ".join(conditions) if conditions else "1=1"
 
-        total = 0
-        by_status: Dict[str, int] = {}
-        rows = (await session.execute(
-            text(f"SELECT status, COUNT(*) AS cnt FROM defects WHERE {date_filter} GROUP BY status"),
+        row = (await session.execute(
+            text(f"""SELECT
+                    COUNT(*) AS total,
+                    SUM(status = 'reported') AS reported,
+                    SUM(status = 'under_review') AS under_review,
+                    SUM(status = 'resolved') AS resolved,
+                    SUM(severity = 'critical') AS critical,
+                    SUM(severity = 'high') AS high,
+                    SUM(severity = 'medium') AS medium,
+                    SUM(severity = 'low') AS low
+                FROM defects WHERE {date_filter}"""),
             params
-        )).mappings().all()
-        for row in rows:
-            status = str(row["status"])
-            count = int(row["cnt"])
-            total += count
-            by_status[status] = count
-
-        by_severity: Dict[str, int] = {}
-        rows = (await session.execute(
-            text(f"SELECT severity, COUNT(*) AS cnt FROM defects WHERE {date_filter} GROUP BY severity"),
-            params
-        )).mappings().all()
-        for row in rows:
-            by_severity[str(row["severity"])] = int(row["cnt"])
+        )).mappings().first()
 
         return {
-            "total": total,
+            "total": int(row["total"] or 0),
             "by_status": {
-                "reported": by_status.get("reported", 0),
-                "under_review": by_status.get("under_review", 0),
-                "resolved": by_status.get("resolved", 0),
+                "reported": int(row["reported"] or 0),
+                "under_review": int(row["under_review"] or 0),
+                "resolved": int(row["resolved"] or 0),
             },
             "by_severity": {
-                "critical": by_severity.get("critical", 0),
-                "high": by_severity.get("high", 0),
-                "medium": by_severity.get("medium", 0),
-                "low": by_severity.get("low", 0),
+                "critical": int(row["critical"] or 0),
+                "high": int(row["high"] or 0),
+                "medium": int(row["medium"] or 0),
+                "low": int(row["low"] or 0),
             }
         }
 
