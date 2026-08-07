@@ -274,6 +274,19 @@ async def get_available_devices(
                 search=search,
                 search_by=search_by,
             )
+        elif role == "sub_distribution_employee":
+            # Sub-distribution employees act on behalf of their assigned branch:
+            # they can distribute the devices held by their parent sub-distributor
+            # (and confirm them) rather than only devices personally assigned to them.
+            holder_id = current_user.get("parent_id") or current_user["id"]
+            result = await device_service.get_held_devices(
+                holder_id=holder_id,
+                page=page,
+                page_size=page_size,
+                search=search,
+                search_by=search_by,
+                exclude_approval_pending=True,
+            )
         else:
             # Sub-level roles can redistribute any device they hold
             result = await device_service.get_held_devices(

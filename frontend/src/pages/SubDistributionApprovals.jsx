@@ -8,6 +8,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { approvalRequestsAPI } from '../services/api';
+import ApprovalPayload from '../components/ApprovalPayload';
 import { ShieldAlert, Eye, Check, X, ClipboardCheck } from 'lucide-react';
 
 const TYPE_LABELS = {
@@ -171,9 +172,7 @@ const SubDistributionApprovals = () => {
             </div>
             <div>
               <p className="text-gray-500 mb-1">Payload</p>
-              <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-x-auto text-xs whitespace-pre-wrap">
-                {JSON.stringify(detail.payload, null, 2)}
-              </pre>
+              <ApprovalPayload type={detail.request_type} payload={detail.payload} />
             </div>
             <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2">
               Approved proposals are revalidated before being applied. If any detail is now invalid, the request will be returned for correction.

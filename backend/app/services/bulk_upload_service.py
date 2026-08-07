@@ -346,9 +346,11 @@ async def process_bulk_user_upload(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid target role '{target_role}'")
 
     # Permission matrix:
-    # - sub_distributor / cluster / sub_distribution_manager: can only upload operators
+    # - cluster:                       can only upload operators
+    # - sub_distributor / sub_distribution_manager: can upload operators AND
+    #   clusters created under their own account
     # - manager / super_admin: can upload any role
-    if actor_role in {"sub_distributor", "cluster", "sub_distribution_manager"} and target_role != "operator":
+    if actor_role == "cluster" and target_role != "operator":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"{actor_role} can only bulk-upload operators"
@@ -374,6 +376,12 @@ async def process_bulk_user_upload(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cluster parent must be a sub distributor",
+            )
+        if target_role == "cluster" and actor_role in {"sub_distributor", "sub_distribution_manager"} \
+                and int(parent_id) != int(current_user.get("id") or 0):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Sub distributors can only create clusters under their own account",
             )
         if target_role == "operator" and parent_role not in {"sub_distributor", "cluster"}:
             raise HTTPException(
