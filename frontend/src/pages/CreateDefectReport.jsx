@@ -5,7 +5,7 @@ import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import { useNotifications } from '../context/NotificationContext';
-import { devicesAPI, defectsAPI, approvalRequestsAPI } from '../services/api';
+import { devicesAPI, defectsAPI } from '../services/api';
 import { getDeviceSelectLabel } from '../utils/deviceDisplay';
 import { normalizeRole } from '../utils/roles';
 import { useAuth } from '../context/AuthContext';
@@ -64,7 +64,7 @@ const CreateDefectReport = () => {
       if (search) {
         params.search = search;
       }
-      const res = await devicesAPI.getDevices(params);
+      const res = isEmployee ? await devicesAPI.getAvailableDevices(params) : await devicesAPI.getDevices(params);
       const fetchedDevices = res.data || [];
       const pagination = res.pagination || {};
 
@@ -195,17 +195,6 @@ const CreateDefectReport = () => {
         description: normalizedDescription,
         images: uploadedUrls,
       };
-
-      if (isEmployee) {
-        await approvalRequestsAPI.submit({
-          request_type: 'defect',
-          payload: normalizedPayload,
-          summary: `Defect report for device ${String(formData.deviceId || '').trim()}`,
-        });
-        showToast('Defect report submitted for approval!', 'success');
-        navigate('/approval-requests');
-        return;
-      }
 
       await defectsAPI.createDefect(normalizedPayload);
       showToast('Defect report submitted successfully!', 'success');

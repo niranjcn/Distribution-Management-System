@@ -25,8 +25,7 @@ import {
   ArrowLeftRight,
   Database,
   DollarSign,
-  Eye,
-  ClipboardCheck
+  Eye
 } from 'lucide-react';
 import { normalizeRole, ROLE_LABELS, ROLES } from '../../utils/roles';
 
@@ -315,8 +314,6 @@ const Sidebar = ({ isOpen, onClose }) => {
           { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
         ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
-        { path: '/sub-distribution-approvals', icon: ClipboardCheck, label: 'Sub Distribution Approvals' },
-        { path: '/sub-distribution-operations-approvals', icon: ClipboardCheck, label: 'Operations Approvals' },
       ],
       [ROLES.SUB_DISTRIBUTOR]: [
         ...commonItems,
@@ -352,8 +349,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
-        { path: '/sub-distribution-approvals', icon: ClipboardCheck, label: 'Sub Distribution Approvals' },
-        { path: '/sub-distribution-operations-approvals', icon: ClipboardCheck, label: 'Operations Approvals' },
       ],
       [ROLES.CLUSTER]: [
         ...commonItems,
@@ -449,7 +444,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         ] : []),
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
-        { path: '/approval-requests', icon: ClipboardList, label: 'My Approval Requests' },
       ],
     };
 

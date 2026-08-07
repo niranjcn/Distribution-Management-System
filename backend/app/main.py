@@ -18,10 +18,9 @@ from app.database import init_db
 from app.core.cache_version_manager import cache_version_manager, cache_version_sync_loop
 from app.routes import (
     auth, users, devices, distributions, 
-    defects, returns, operators,
+    defects, returns,
     notifications, reports, dashboard, change_requests,
     external_inventory, reassignment_requests, digital_ids, approvals,
-    approval_requests
 )
 from app.middleware.error_handler import add_exception_handlers
 from app.middleware.auth_middleware import get_current_user, require_admin
@@ -205,7 +204,6 @@ app.include_router(devices.router, prefix=f"{settings.API_V1_PREFIX}/devices", t
 app.include_router(distributions.router, prefix=f"{settings.API_V1_PREFIX}/distributions", tags=["Distributions"])
 app.include_router(defects.router, prefix=f"{settings.API_V1_PREFIX}/defects", tags=["Defects"])
 app.include_router(returns.router, prefix=f"{settings.API_V1_PREFIX}/returns", tags=["Returns"])
-app.include_router(operators.router, prefix=f"{settings.API_V1_PREFIX}/operators", tags=["Operators"])
 app.include_router(notifications.router, prefix=f"{settings.API_V1_PREFIX}/notifications", tags=["Notifications"])
 app.include_router(reports.router, prefix=f"{settings.API_V1_PREFIX}/reports", tags=["Reports"])
 app.include_router(dashboard.router, prefix=f"{settings.API_V1_PREFIX}/dashboard", tags=["Dashboard"])
@@ -214,7 +212,6 @@ app.include_router(external_inventory.router, prefix=f"{settings.API_V1_PREFIX}/
 app.include_router(reassignment_requests.router, prefix=f"{settings.API_V1_PREFIX}/reassignment-requests", tags=["Reassignment Requests"])
 app.include_router(digital_ids.router, prefix=f"{settings.API_V1_PREFIX}/digital-ids", tags=["Digital IDs"])
 app.include_router(approvals.router, prefix=f"{settings.API_V1_PREFIX}/approvals", tags=["Approvals"])
-app.include_router(approval_requests.router, prefix=f"{settings.API_V1_PREFIX}/approval-requests", tags=["Approval Requests"])
 
 
 @app.get("/", tags=["Root"], summary="Root endpoint")

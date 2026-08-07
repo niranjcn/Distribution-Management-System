@@ -35,9 +35,6 @@ import EditRequests from './pages/EditRequests';
 import ReassignmentRequests from './pages/ReassignmentRequests';
 import UserSearch from './pages/UserSearch';
 import ViewAsDashboard from './pages/ViewAsDashboard';
-import MyApprovalRequests from './pages/MyApprovalRequests';
-import SubDistributionApprovals from './pages/SubDistributionApprovals';
-import SubDistributionOperationsApprovals from './pages/SubDistributionOperationsApprovals';
 
 
 import DeliveryConfirmations from './pages/DeliveryConfirmations';
@@ -279,32 +276,6 @@ function AppRoutes() {
               <Approvals />
             </ProtectedRoute>
           } 
-        />
-
-        {/* Sub-Distribution Employee Approvals */}
-        <Route
-          path="approval-requests"
-          element={
-            <ProtectedRoute allowedRoles={['sub_distribution_employee']}>
-              <MyApprovalRequests />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="sub-distribution-approvals"
-          element={
-            <ProtectedRoute allowedRoles={['sub_distribution_manager', 'sub_distributor']}>
-              <SubDistributionApprovals />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="sub-distribution-operations-approvals"
-          element={
-            <ProtectedRoute allowedRoles={['sub_distribution_manager', 'sub_distributor']}>
-              <SubDistributionOperationsApprovals />
-            </ProtectedRoute>
-          }
         />
 
         {/* Delivery Confirmations */}

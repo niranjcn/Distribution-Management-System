@@ -5,9 +5,9 @@ from sqlalchemy import text
 
 from app.database_sqlalchemy import async_session_factory
 from app.core.cache import cached
-from app.services import device_service, distribution_service, defect_service, return_service, user_service, operator_service
+from app.services import device_service, distribution_service, defect_service, return_service, user_service
 
-from .helpers import _build_date_filter, _resolve_scope_root_for_sub_distribution_manager, _get_descendant_user_ids
+from .helpers import _build_date_filter, _resolve_scope_root_for_sub_distribution_manager, _get_descendant_user_ids, _get_user_status_split_by_role
 
 
 async def get_dashboard_stats(user: Dict[str, Any],
@@ -280,7 +280,13 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
             received = (await session.execute(
                 text(f"SELECT COUNT(*) FROM distributions WHERE {rc}"), rp
             )).scalar() or 0
-        operator_stats_data = await operator_service.get_operator_stats(user_id)
+
+            operator_split = await _get_user_status_split_by_role(session, "operator", user_id)
+        operator_stats_data = {
+            "total": int(operator_split["active"] + operator_split["inactive"]),
+            "active": int(operator_split["active"]),
+            "inactive": int(operator_split["inactive"]),
+        }
         stats = {
             "my_devices": my_devices,
             "operators": operator_stats_data,

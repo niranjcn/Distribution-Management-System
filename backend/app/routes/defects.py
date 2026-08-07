@@ -396,11 +396,6 @@ async def create_defect(
 ):
     """Create a new defect report"""
     _ensure_not_md_director(current_user)
-    if current_user.get("role") == "sub_distribution_employee":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sub distribution employees must route defect reports through approval"
-        )
 
     try:
         defect = await defect_service.create_defect(

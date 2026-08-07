@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -100,6 +100,14 @@ class ReplacementDeviceCreate(BaseModel):
     band_type: Optional[DeviceBand] = None
     box_type: Optional[str] = None
     nuid: Optional[str] = None
+
+    @field_validator("device_type", mode="before")
+    @classmethod
+    def normalize_device_type(cls, value):
+        normalized = str(value or "").strip().lower()
+        if normalized in {"sb", "set-top box", "set top box", "stb", "setup box"}:
+            return DeviceType.SETUP_BOX
+        return value
 
     @model_validator(mode="after")
     def validate_sb_fields(self):

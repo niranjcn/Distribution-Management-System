@@ -5,7 +5,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import DeviceIdentity from '../components/ui/DeviceIdentity';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
-import { distributionsAPI, devicesAPI, approvalRequestsAPI } from '../services/api';
+import { distributionsAPI, devicesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import {
@@ -127,26 +127,6 @@ const fetchDistributionDevices = async (distributionId) => {
     if (!selectedDist) return;
     setReceiptSubmitting(true);
     try {
-      if (isEmployee) {
-        const distributionId = selectedDist._id || selectedDist.id;
-        await approvalRequestsAPI.submit({
-          request_type: 'delivery_receipt',
-          summary: `${received ? 'Confirm receipt' : 'Report non-receipt'} for ${selectedDist.distribution_id}`,
-          payload: {
-            distribution_id: String(distributionId),
-            received,
-            notes: receiptNotes || undefined,
-          },
-        });
-        showToast('Receipt confirmation submitted for approval', 'success');
-        setShowReceiptModal(false);
-        setShowDetailModal(false);
-        setReceiptNotes('');
-        setSelectedDist(null);
-        setDistributionDevices([]);
-        fetchDistributions();
-        return;
-      }
       await distributionsAPI.confirmReceipt(
         selectedDist._id || selectedDist.id,
         received,
