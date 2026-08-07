@@ -24,6 +24,14 @@ import {
 const IDENTIFIER_TYPE_OPTIONS = ['NU ID', 'IMEI', 'Serial Ref', 'MAC ID', 'Asset Tag', 'Other'];
 const ITEM_TYPE_OPTIONS = ['OTT Box', 'OLT', 'Remote', 'SB', 'Adapter', 'Others'];
 
+const ROLE_LABELS = {
+  sub_distributor: 'Sub Distributor',
+  cluster: 'Cluster',
+  operator: 'Operator',
+};
+
+const RECIPIENT_TYPE_OPTIONS = ['sub_distributor', 'cluster', 'operator'];
+
 const TABLE_PAGE_SIZE = 10;
 
 const initialItemForm = {
@@ -73,6 +81,9 @@ const ExternalInventory = ({ tab }) => {
   const [itemsPage, setItemsPage] = useState(1);
   const [itemsSearch, setItemsSearch] = useState('');
   const [appliedItemsSearch, setAppliedItemsSearch] = useState('');
+  const [itemsWarranty, setItemsWarranty] = useState('');
+  const [itemsIdentifierType, setItemsIdentifierType] = useState('');
+  const [itemsDeviceType, setItemsDeviceType] = useState('');
   const [items, setItems] = useState([]);
   const [itemsTotal, setItemsTotal] = useState(0);
   const [itemsLoading, setItemsLoading] = useState(true);
@@ -89,6 +100,7 @@ const [importResult, setImportResult] = useState(null);
   // ----- Recipients for distribution -----
   const [recipients, setRecipients] = useState([]);
   const [recipientsLoading, setRecipientsLoading] = useState(true);
+  const [recipientType, setRecipientType] = useState('');
 
   // ----- Distribution form state -----
   const [distributionForm, setDistributionForm] = useState({
@@ -103,6 +115,9 @@ const [importResult, setImportResult] = useState(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [historySearch, setHistorySearch] = useState('');
   const [appliedHistorySearch, setAppliedHistorySearch] = useState('');
+  const [historyWarranty, setHistoryWarranty] = useState('');
+  const [historyIdentifierType, setHistoryIdentifierType] = useState('');
+  const [historyDeviceType, setHistoryDeviceType] = useState('');
   const [historyData, setHistoryData] = useState([]);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -111,6 +126,15 @@ const [importResult, setImportResult] = useState(null);
     const params = { page, page_size: TABLE_PAGE_SIZE };
     if (appliedItemsSearch) {
       params.search = appliedItemsSearch;
+    }
+    if (itemsWarranty) {
+      params.warranty = itemsWarranty;
+    }
+    if (itemsIdentifierType) {
+      params.identifier_type = itemsIdentifierType;
+    }
+    if (itemsDeviceType) {
+      params.type = itemsDeviceType;
     }
     return params;
   };
@@ -132,9 +156,16 @@ const [importResult, setImportResult] = useState(null);
   const loadRecipients = async () => {
     setRecipientsLoading(true);
     try {
-      const response = await usersAPI.getUsers({ status: 'active', page_size: 10000 });
-      const rows = Array.isArray(response?.data) ? response.data : [];
-      setRecipients(rows);
+      const [sdRes, clRes, opRes] = await Promise.all([
+        usersAPI.getUsers({ role: 'sub_distributor', status: 'active', page_size: 10000 }).catch(() => ({ data: [] })),
+        usersAPI.getUsers({ role: 'cluster', status: 'active', page_size: 10000 }).catch(() => ({ data: [] })),
+        usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 10000 }).catch(() => ({ data: [] })),
+      ]);
+      setRecipients([
+        ...(Array.isArray(sdRes?.data) ? sdRes.data : []),
+        ...(Array.isArray(clRes?.data) ? clRes.data : []),
+        ...(Array.isArray(opRes?.data) ? opRes.data : []),
+      ]);
     } catch (error) {
       showToast(error.message || 'Failed to load recipients', 'error');
       setRecipients([]);
@@ -150,6 +181,15 @@ const [importResult, setImportResult] = useState(null);
       const params = { page, page_size: TABLE_PAGE_SIZE };
       if (appliedHistorySearch) {
         params.search = appliedHistorySearch;
+      }
+      if (historyWarranty) {
+        params.warranty = historyWarranty;
+      }
+      if (historyIdentifierType) {
+        params.identifier_type = historyIdentifierType;
+      }
+      if (historyDeviceType) {
+        params.type = historyDeviceType;
       }
       const response = await externalInventoryAPI.getDistributions(params);
       const rows = Array.isArray(response?.data) ? response.data : [];
@@ -173,7 +213,7 @@ const [importResult, setImportResult] = useState(null);
   useEffect(() => {
     loadItems(itemsPage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsPage, appliedItemsSearch]);
+  }, [itemsPage, appliedItemsSearch, itemsWarranty, itemsIdentifierType, itemsDeviceType]);
 
   useEffect(() => {
     loadRecipients();
@@ -184,7 +224,7 @@ const [importResult, setImportResult] = useState(null);
       loadHistory(historyPage);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyPage, appliedHistorySearch, canManage]);
+  }, [historyPage, appliedHistorySearch, historyWarranty, historyIdentifierType, historyDeviceType, canManage]);
 
   useEffect(() => {
     const handler = () => refreshAll();
@@ -206,6 +246,16 @@ const [importResult, setImportResult] = useState(null);
   const recipientLabel = (u) =>
     `${u?.name || u?.email || ''}${u?.email && u?.name ? ` (${u.email})` : ''}`;
 
+  const handleRecipientTypeChange = (type) => {
+    setRecipientType(type);
+    setDistributionForm((p) => ({ ...p, to_user_id: '' }));
+  };
+
+  const visibleRecipients = useMemo(
+    () => recipients.filter((u) => String(u.role) === recipientType),
+    [recipients, recipientType]
+  );
+
   const handleItemsSearchSubmit = () => {
     setAppliedItemsSearch(itemsSearch.trim());
     setItemsPage(1);
@@ -214,6 +264,9 @@ const [importResult, setImportResult] = useState(null);
   const handleItemsSearchReset = () => {
     setItemsSearch('');
     setAppliedItemsSearch('');
+    setItemsWarranty('');
+    setItemsIdentifierType('');
+    setItemsDeviceType('');
     setItemsPage(1);
   };
 
@@ -225,6 +278,9 @@ const [importResult, setImportResult] = useState(null);
   const handleHistorySearchReset = () => {
     setHistorySearch('');
     setAppliedHistorySearch('');
+    setHistoryWarranty('');
+    setHistoryIdentifierType('');
+    setHistoryDeviceType('');
     setHistoryPage(1);
   };
 
@@ -487,6 +543,26 @@ const [importResult, setImportResult] = useState(null);
     { key: 'quantity', label: 'Qty' },
     { key: 'previous_quantity', label: 'Previous' },
     { key: 'remaining_quantity', label: 'Remaining' },
+    {
+      key: 'warranty_status',
+      label: 'Warranty',
+      render: (value) => (
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+          value === 'expired' ? 'bg-red-50 text-red-700'
+          : value === 'active' ? 'bg-green-50 text-green-700'
+          : 'bg-gray-100 text-gray-600'
+        }`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${
+            value === 'expired' ? 'bg-red-500'
+            : value === 'active' ? 'bg-green-500'
+            : 'bg-gray-400'
+          }`} />
+          {value === 'expired' ? 'Warranty Expired'
+            : value === 'active' ? 'Warranty Active'
+            : 'No Warranty'}
+        </span>
+      ),
+    },
     { key: 'distributed_by_name', label: 'Distributed By' },
     {
       key: 'distributed_at',
@@ -546,7 +622,7 @@ const [importResult, setImportResult] = useState(null);
               <h3 className="text-sm font-semibold text-gray-800">Search Items</h3>
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-12">
-              <div className="md:col-span-8">
+              <div className="md:col-span-4">
                 <input
                   type="text"
                   value={itemsSearch}
@@ -561,7 +637,42 @@ const [importResult, setImportResult] = useState(null);
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
               </div>
-              <div className="flex gap-2 md:col-span-4">
+              <div className="md:col-span-2">
+                <select
+                  value={itemsWarranty}
+                  onChange={(e) => { setItemsWarranty(e.target.value); setItemsPage(1); }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All Warranty</option>
+                  <option value="active">Warranty Active</option>
+                  <option value="expired">Warranty Expired</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <select
+                  value={itemsIdentifierType}
+                  onChange={(e) => { setItemsIdentifierType(e.target.value); setItemsPage(1); }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All Identifier Types</option>
+                  {IDENTIFIER_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <select
+                  value={itemsDeviceType}
+                  onChange={(e) => { setItemsDeviceType(e.target.value); setItemsPage(1); }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All Types</option>
+                  {ITEM_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2 md:col-span-2">
                 <Button onClick={handleItemsSearchSubmit} className="w-full">
                   Search
                 </Button>
@@ -644,21 +755,55 @@ const [importResult, setImportResult] = useState(null);
               </select>
             </label>
             <label className="space-y-1">
-              <span className="text-sm font-medium text-gray-700">Recipient *</span>
-              <select
-                className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                value={distributionForm.to_user_id}
-                onChange={(e) => setDistributionForm((p) => ({ ...p, to_user_id: e.target.value }))}
-                disabled={recipientsLoading}
-              >
-                <option value="">Select recipient</option>
-                {recipients.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {recipientLabel(u)}
-                  </option>
+              <span className="text-sm font-medium text-gray-700">Select Recipient Type</span>
+              <div className="flex flex-wrap gap-2">
+                {RECIPIENT_TYPE_OPTIONS.map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => handleRecipientTypeChange(type)}
+                    className={`px-3 py-1.5 rounded-lg border-2 text-sm font-medium transition-colors ${
+                      recipientType === type
+                        ? type === 'sub_distributor' ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : type === 'cluster'         ? 'border-teal-500 bg-teal-50 text-teal-700'
+                                                     : 'border-green-500 bg-green-50 text-green-700'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-400'
+                    }`}
+                  >
+                    {ROLE_LABELS[type]}
+                  </button>
                 ))}
-              </select>
+              </div>
             </label>
+            {recipientType && (
+              <label className="space-y-1">
+                <span className="text-sm font-medium text-gray-700">
+                  Recipient *
+                  <span className="text-xs text-gray-400 ml-2">
+                    ({visibleRecipients.length} available)
+                  </span>
+                </span>
+                {visibleRecipients.length === 0 ? (
+                  <p className="text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+                    No {ROLE_LABELS[recipientType].toLowerCase()}s found.
+                  </p>
+                ) : (
+                  <select
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                    value={distributionForm.to_user_id}
+                    onChange={(e) => setDistributionForm((p) => ({ ...p, to_user_id: e.target.value }))}
+                    disabled={recipientsLoading}
+                  >
+                    <option value="">Select {ROLE_LABELS[recipientType]}...</option>
+                    {visibleRecipients.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {recipientLabel(u)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+            )}
             <label className="space-y-1">
               <span className="text-sm font-medium text-gray-700">Quantity</span>
               <input
@@ -695,7 +840,7 @@ const [importResult, setImportResult] = useState(null);
               <h3 className="text-sm font-semibold text-gray-800">Search Distribution History</h3>
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-12">
-              <div className="md:col-span-8">
+              <div className="md:col-span-4">
                 <input
                   type="text"
                   value={historySearch}
@@ -710,7 +855,42 @@ const [importResult, setImportResult] = useState(null);
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
               </div>
-              <div className="flex gap-2 md:col-span-4">
+              <div className="md:col-span-2">
+                <select
+                  value={historyWarranty}
+                  onChange={(e) => { setHistoryWarranty(e.target.value); setHistoryPage(1); }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All Warranty</option>
+                  <option value="active">Warranty Active</option>
+                  <option value="expired">Warranty Expired</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <select
+                  value={historyIdentifierType}
+                  onChange={(e) => { setHistoryIdentifierType(e.target.value); setHistoryPage(1); }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All Identifier Types</option>
+                  {IDENTIFIER_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <select
+                  value={historyDeviceType}
+                  onChange={(e) => { setHistoryDeviceType(e.target.value); setHistoryPage(1); }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All Types</option>
+                  {ITEM_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2 md:col-span-2">
                 <Button onClick={handleHistorySearchSubmit} className="w-full">
                   Search
                 </Button>

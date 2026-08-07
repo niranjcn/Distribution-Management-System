@@ -52,6 +52,8 @@ async def get_external_inventory_items(
     search_by: Optional[str] = Query("all"),
     device_type: Optional[str] = Query(None, alias="type"),
     status_filter: Optional[str] = Query(None, alias="status"),
+    identifier_type: Optional[str] = Query(None),
+    warranty: Optional[str] = Query(None),
     current_user: dict = Depends(require_any_role),
 ):
     try:
@@ -62,6 +64,8 @@ async def get_external_inventory_items(
             search_by=search_by,
             device_type=device_type,
             status_filter=status_filter,
+            identifier_type=identifier_type,
+            warranty=warranty,
             management=_is_management_user(current_user),
         )
         return {
@@ -681,6 +685,9 @@ async def get_external_inventory_distributions(
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
     item_id: Optional[int] = None,
+    identifier_type: Optional[str] = Query(None),
+    device_type: Optional[str] = Query(None, alias="type"),
+    warranty: Optional[str] = Query(None),
     current_user: dict = Depends(require_management),
 ):
     """Management-only reporting page listing every completed distribution."""
@@ -691,6 +698,9 @@ async def get_external_inventory_distributions(
             search=search,
             search_by=search_by,
             item_id=item_id,
+            identifier_type=identifier_type,
+            device_type=device_type,
+            warranty=warranty,
         )
         return {
             "success": True,

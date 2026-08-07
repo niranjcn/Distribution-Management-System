@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -54,6 +54,26 @@ SEARCH_FIELD_MAP = {
     "supplier_name": "supplier_name",
     "location": "location",
 }
+
+
+def _compute_warranty_status(warranty_start_date, warranty_duration) -> str:
+    """Classify an item's warranty as active, expired, or none based on
+    warranty_start_date + warranty_duration months vs today."""
+    if not warranty_start_date:
+        return "none"
+    try:
+        start = warranty_start_date.date() if hasattr(warranty_start_date, "date") else date.fromisoformat(str(warranty_start_date)[:10])
+    except ValueError:
+        return "none"
+    duration = int(warranty_duration or 0)
+    try:
+        expiry = start.replace(
+            year=start.year + (start.month - 1 + duration) // 12,
+            month=(start.month - 1 + duration) % 12 + 1,
+        )
+    except ValueError:
+        return "none"
+    return "expired" if expiry < date.today() else "active"
 
 _EXTERNAL_HISTORY_INSERT_SQL = """INSERT INTO external_device_history (
      history_id, item_id, item_name, identifier_type, identifier, device_type, price,
@@ -121,6 +141,8 @@ async def get_items(
     search_by: Optional[str] = None,
     device_type: Optional[str] = None,
     status_filter: Optional[str] = None,
+    identifier_type: Optional[str] = None,
+    warranty: Optional[str] = None,
     management: bool = True,
 ) -> Dict[str, Any]:
     """List catalog items. Depleted items (quantity = 0) are hidden from the
@@ -159,6 +181,25 @@ async def get_items(
             conditions.append(f"status = :{pname}")
             params[pname] = status_filter
             param_idx += 1
+
+        if identifier_type:
+            pname = f"p_{param_idx}"
+            conditions.append(f"identifier_type = :{pname}")
+            params[pname] = identifier_type
+            param_idx += 1
+
+        if warranty:
+            normalized_warranty = str(warranty).strip().lower()
+            if normalized_warranty == "expired":
+                conditions.append(
+                    "(warranty_start_date IS NOT NULL "
+                    "AND DATE_ADD(warranty_start_date, INTERVAL COALESCE(warranty_duration, 0) MONTH) < CURDATE())"
+                )
+            elif normalized_warranty == "active":
+                conditions.append(
+                    "(warranty_start_date IS NULL "
+                    "OR DATE_ADD(warranty_start_date, INTERVAL COALESCE(warranty_duration, 0) MONTH) >= CURDATE())"
+                )
 
         where_clause = " AND ".join(conditions)
 
@@ -259,7 +300,7 @@ async def update_item(
     item_data: InventoryItemUpdate,
     user: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    update_dict = {k: v for k, v in item_data.model_dump().items() if v is not None}
+    update_dict = item_data.model_dump(exclude_unset=True)
     if not update_dict:
         return await get_item_by_id(item_id)
 
@@ -872,27 +913,58 @@ async def get_distribution_history(
     search: Optional[str] = None,
     search_by: Optional[str] = None,
     item_id: Optional[int] = None,
+    identifier_type: Optional[str] = None,
+    device_type: Optional[str] = None,
+    warranty: Optional[str] = None,
 ) -> Dict[str, Any]:
     """List the completed external inventory distribution history (audit/report)."""
     async with async_session_factory() as session:
         conditions = ["1=1"]
         params: Dict[str, Any] = {}
         param_idx = 0
+        join_clause = (
+            " LEFT JOIN external_inventory_items i ON i.id = h.item_id"
+        )
 
         if item_id is not None:
             pname = f"p_{param_idx}"
-            conditions.append(f"item_id = :{pname}")
+            conditions.append(f"h.item_id = :{pname}")
             params[pname] = int(item_id)
             param_idx += 1
+
+        if identifier_type:
+            pname = f"p_{param_idx}"
+            conditions.append(f"h.identifier_type = :{pname}")
+            params[pname] = identifier_type
+            param_idx += 1
+
+        if device_type:
+            pname = f"p_{param_idx}"
+            conditions.append(f"h.device_type = :{pname}")
+            params[pname] = device_type
+            param_idx += 1
+
+        if warranty:
+            normalized_warranty = str(warranty).strip().lower()
+            if normalized_warranty == "expired":
+                conditions.append(
+                    "(i.warranty_start_date IS NOT NULL "
+                    "AND DATE_ADD(i.warranty_start_date, INTERVAL COALESCE(i.warranty_duration, 0) MONTH) < CURDATE())"
+                )
+            elif normalized_warranty == "active":
+                conditions.append(
+                    "(i.warranty_start_date IS NULL "
+                    "OR DATE_ADD(i.warranty_start_date, INTERVAL COALESCE(i.warranty_duration, 0) MONTH) >= CURDATE())"
+                )
 
         if search:
             like = f"%{search}%"
             search_field_map = {
-                "history_id": "history_id",
-                "item_name": "item_name",
-                "recipient_name": "recipient_name",
-                "distributed_by_name": "distributed_by_name",
-                "status": "status",
+                "history_id": "h.history_id",
+                "item_name": "h.item_name",
+                "recipient_name": "h.recipient_name",
+                "distributed_by_name": "h.distributed_by_name",
+                "status": "h.status",
             }
             normalized_search_by = str(search_by or "all").strip().lower()
             if normalized_search_by and normalized_search_by != "all" and normalized_search_by in search_field_map:
@@ -912,7 +984,7 @@ async def get_distribution_history(
         where_clause = " AND ".join(conditions)
 
         result = await session.execute(
-            text(f"SELECT COUNT(*) FROM external_device_history WHERE {where_clause}"),
+            text(f"SELECT COUNT(*) FROM external_device_history h{join_clause} WHERE {where_clause}"),
             params,
         )
         total = result.scalar()
@@ -924,13 +996,18 @@ async def get_distribution_history(
         params[pname_offset] = offset
 
         result = await session.execute(
-            text(f"""SELECT * FROM external_device_history
+            text(f"""SELECT h.*, i.warranty_start_date, i.warranty_duration
+                FROM external_device_history h{join_clause}
                 WHERE {where_clause}
-                ORDER BY distributed_at DESC
+                ORDER BY h.distributed_at DESC
                 LIMIT :{pname_limit} OFFSET :{pname_offset}"""),
             params,
         )
-        rows = [dict(r) for r in result.mappings().all()]
+        rows = []
+        for r in result.mappings().all():
+            row = dict(r)
+            row["warranty_status"] = _compute_warranty_status(row.get("warranty_start_date"), row.get("warranty_duration"))
+            rows.append(row)
 
         return {
             "data": rows,
