@@ -295,9 +295,14 @@ const TrackDevice = () => {
     });
   };
 
+  const normalizeHolderType = (holderType) => {
+    if (!holderType) return holderType;
+    return holderType === 'sub_distribution_employee' ? 'sub_distributor' : holderType;
+  };
+
   const getLocationColor = (holderType) => {
     if (!holderType) return 'bg-blue-100 text-blue-800';
-    const t = holderType.toLowerCase();
+    const t = normalizeHolderType(holderType).toLowerCase();
     if (t === 'noc' || t.includes('pdic')) return 'bg-blue-100 text-blue-800';
     if (t === 'sub_distributor') return 'bg-purple-100 text-purple-800';
     if (t === 'cluster') return 'bg-indigo-100 text-indigo-800';
@@ -308,7 +313,7 @@ const TrackDevice = () => {
 
   const getHolderTypeLabel = (holderType) => {
     if (!holderType || holderType === 'noc') return 'PDIC (Distribution)';
-    if (holderType === 'sub_distributor') return 'Sub Distributor';
+    if (normalizeHolderType(holderType) === 'sub_distributor') return 'Sub Distributor';
     if (holderType === 'cluster') return 'Cluster';
     if (holderType === 'operator') return 'Operator';
     return holderType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -814,7 +819,7 @@ const TrackDevice = () => {
 
                   <ChevronRight className="w-6 h-6 text-gray-300 rotate-90 sm:rotate-0" />
 
-                  <div className={`text-center ${searchResult.current_holder_type === 'sub_distributor' ? 'ring-2 ring-blue-500 rounded-lg p-2' : ''}`}>
+                  <div className={`text-center ${normalizeHolderType(searchResult.current_holder_type) === 'sub_distributor' ? 'ring-2 ring-blue-500 rounded-lg p-2' : ''}`}>
                     <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto">
                       <Box className="w-8 h-8 text-purple-600" />
                     </div>

@@ -32,6 +32,29 @@ LEGACY_ROLE_MAP = {
     "staff": PDIC_STAFF,
 }
 
+# Sub-distribution employees act on behalf of their parent sub-distributor, so
+# a device handled by an employee is attributed to the sub-distributor level.
+ROLE_TO_HOLDER_TYPE = {
+    SUPER_ADMIN: "noc",
+    MD_DIRECTOR: "noc",
+    MANAGER: "noc",
+    PDIC_STAFF: "pdic_staff",
+    SUB_DISTRIBUTION_MANAGER: "sub_distribution_manager",
+    SUB_DISTRIBUTOR: SUB_DISTRIBUTOR,
+    SUB_DISTRIBUTION_EMPLOYEE: SUB_DISTRIBUTOR,
+    CLUSTER: CLUSTER,
+    OPERATOR: OPERATOR,
+}
+
+
+def role_to_holder_type(role: str | None) -> str:
+    """Map a user role to the device holder_type it represents.
+
+    A ``sub_distribution_employee`` maps to ``sub_distributor`` because the
+    employee works for a sub-distributor branch and acts on its behalf.
+    """
+    return ROLE_TO_HOLDER_TYPE.get(normalize_role(role), "noc")
+
 
 def normalize_role(role: str | None) -> str:
     if not role:

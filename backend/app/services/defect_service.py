@@ -1293,6 +1293,8 @@ async def confirm_replacement_receipt(
         holder_user_id = int(old_device.get("current_holder_id")) if old_device.get("current_holder_id") else None
         reporter_user_id = int(defect.get("reported_by")) if defect.get("reported_by") else None
         allowed_confirmer_ids = {uid for uid in [holder_user_id, reporter_user_id] if uid is not None}
+        branch_id = 0
+        branch_name = None
         if confirmer_role == "sub_distribution_employee":
             emp = (await session.execute(
                 text("SELECT parent_id FROM users WHERE id = :id"), {"id": confirmer_id}
@@ -1300,6 +1302,10 @@ async def confirm_replacement_receipt(
             branch_id = int((dict(emp) if emp else {}).get("parent_id") or 0)
             if branch_id:
                 allowed_confirmer_ids.add(branch_id)
+                branch_row = (await session.execute(
+                    text("SELECT name FROM users WHERE id = :id"), {"id": branch_id}
+                )).mappings().first()
+                branch_name = (dict(branch_row) if branch_row else {}).get("name")
         if confirmer_id not in allowed_confirmer_ids:
             raise ValueError("Only the current holder or original defect reporter can confirm replacement receipt")
 
@@ -1341,12 +1347,22 @@ async def confirm_replacement_receipt(
         await session.commit()
 
     replacement_status = DeviceStatus.IN_USE.value if confirmer_role == "operator" else DeviceStatus.DISTRIBUTED.value
+    # A sub-distribution employee acts on behalf of their sub-distributor branch,
+    # so the replacement device is attributed to the branch, not the employee.
+    if confirmer_role == "sub_distribution_employee" and branch_id:
+        holder_id = branch_id
+        holder_name = branch_name or confirmer_name
+        holder_type = "sub_distributor"
+    else:
+        holder_id = int(confirmer_id)
+        holder_name = confirmer_name
+        holder_type = confirmer_role
     updated_device = await device_service.update_device_holder(
         device_id=str(new_device["id"]),
-        holder_id=int(confirmer_id),
-        holder_name=confirmer_name,
-        holder_type=confirmer_role,
-        location=confirmer_name,
+        holder_id=holder_id,
+        holder_name=holder_name,
+        holder_type=holder_type,
+        location=holder_name,
         status=replacement_status,
         performed_by=int(confirmer_id),
         performed_by_name=confirmer_name,

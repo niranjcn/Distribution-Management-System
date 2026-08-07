@@ -1239,7 +1239,8 @@ async def repair_device_holder_from_history(device_id: str) -> Optional[Dict[str
         role_to_type = {
             "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
             "sub_distribution_manager": "sub_distribution_manager",
-            "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator",
+            "sub_distributor": "sub_distributor", "sub_distribution_employee": "sub_distributor",
+            "cluster": "cluster", "operator": "operator",
         }
         holder_type = role_to_type.get(user_dict["role"], "noc")
         device_status = DeviceStatus.IN_USE.value if user_dict["role"] == "operator" else DeviceStatus.DISTRIBUTED.value

@@ -653,7 +653,8 @@ async def _insert_distribution_record(
     role_to_type = {
         "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
         "sub_distribution_manager": "sub_distribution_manager",
-        "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
+        "sub_distributor": "sub_distributor", "sub_distribution_employee": "sub_distributor",
+        "cluster": "cluster", "operator": "operator"
     }
 
     now_dt = datetime.now().replace(tzinfo=None)
@@ -1248,7 +1249,8 @@ async def confirm_receipt(
     role_to_type = {
         "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
         "sub_distribution_manager": "sub_distribution_manager",
-        "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
+        "sub_distributor": "sub_distributor", "sub_distribution_employee": "sub_distributor",
+        "cluster": "cluster", "operator": "operator"
     }
 
     if received:
@@ -1388,7 +1390,8 @@ async def confirm_disputed_return(
     role_to_type = {
         "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
         "sub_distribution_manager": "sub_distribution_manager",
-        "sub_distributor": "sub_distributor", "cluster": "cluster", "operator": "operator"
+        "sub_distributor": "sub_distributor", "sub_distribution_employee": "sub_distributor",
+        "cluster": "cluster", "operator": "operator"
     }
 
     sender_role = str(dist.get("from_user_type") or "")
