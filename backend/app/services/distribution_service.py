@@ -272,6 +272,98 @@ async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Opt
     return scoped_ids
 
 
+async def _user_can_access_distribution(
+    user: Dict[str, Any], from_user_id: Any, to_user_id: Any
+) -> bool:
+    """Grant access to a distribution's device details.
+
+    Management/PDIC roles may always view it. Everyone else may only view a
+    distribution they are a direct party to. The sole exception is sub-distribution
+    branch staff (employee / sub-distribution manager) who supervise the recipient,
+    so they can see deliveries made into their assigned sub-distribution without
+    widening access for any other role.
+    """
+    role = str(user.get("role", "")).lower()
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        return True
+    try:
+        user_id = int(user.get("id", user.get("_id", 0)))
+    except (TypeError, ValueError):
+        user_id = None
+    try:
+        from_id = int(from_user_id)
+    except (TypeError, ValueError):
+        from_id = None
+    try:
+        to_id = int(to_user_id)
+    except (TypeError, ValueError):
+        to_id = None
+    if (user_id is not None) and ((from_id == user_id) or (to_id == user_id)):
+        return True
+    if role not in ["sub_distribution_employee", "sub_distribution_manager"]:
+        return False
+    async with async_session_factory() as session:
+        scope_ids = await _get_distribution_scope_user_ids(session, user)
+    if scope_ids is None:
+        return True
+    return (from_id is not None and from_id in scope_ids) or (to_id is not None and to_id in scope_ids)
+
+
+async def _branch_staff_ids(
+    session, user_id: int, exclude: Optional[set] = None
+) -> List[int]:
+    """Return the ids of a sub-distribution's staff (sub-distribution managers +
+    sub-distribution employees) that supervise the branch ``user_id`` belongs to.
+
+    Used to keep branch staff informed when devices are delivered into their
+    assigned sub-distribution.
+    """
+    exclude = set(exclude or {})
+    branch_root = int(user_id)
+    seen: set = set()
+    while branch_root and branch_root not in seen:
+        seen.add(branch_root)
+        row = (await session.execute(
+            text("SELECT id, role, parent_id FROM users WHERE id = :id"),
+            {"id": branch_root}
+        )).mappings().first()
+        if not row:
+            branch_root = 0
+            break
+        if row["role"] == "sub_distributor":
+            break
+        nxt = int(row["parent_id"] or 0)
+        if nxt == branch_root or nxt <= 0:
+            branch_root = 0
+            break
+        branch_root = nxt
+
+    if not branch_root:
+        return []
+
+    scope = {int(branch_root)}
+    desc = (await session.execute(text("""
+        WITH RECURSIVE descendants AS (
+            SELECT id FROM users WHERE parent_id = :root
+            UNION ALL
+            SELECT u.id FROM users u INNER JOIN descendants d ON u.parent_id = d.id
+        )
+        SELECT id FROM descendants
+    """), {"root": branch_root})).scalars().all()
+    scope.update(int(x) for x in desc if x)
+
+    staff_ph = ",".join([f":s_{i}" for i in range(len(scope))])
+    staff_params = {f"s_{i}": int(s) for i, s in enumerate(scope)}
+    staff_rows = (await session.execute(
+        text(f"""SELECT id FROM users
+            WHERE role IN ('sub_distribution_manager','sub_distribution_employee')
+              AND status = 'active'
+              AND parent_id IN ({staff_ph})"""),
+        staff_params
+    )).mappings().all()
+    return [int(r["id"]) for r in staff_rows if int(r["id"]) not in exclude]
+
+
 async def _load_distribution_device_ids(
     session,
     distribution_codes: List[str],
@@ -501,6 +593,31 @@ async def _load_and_validate_recipient(
         else:
             raise ValueError("Sub-distributors can only distribute to clusters or operators")
 
+    elif from_role == "sub_distribution_employee":
+        emp_row = (await session.execute(
+            text("SELECT parent_id FROM users WHERE id = :id"), {"id": from_user_id}
+        )).mappings().first()
+        branch_id = int((dict(emp_row) if emp_row else {}).get("parent_id") or 0)
+        if not branch_id:
+            branch_id = int(from_user.get("parent_id") or 0)
+        if to_role == "cluster":
+            if branch_id and int(to_user.get("parent_id", 0)) != branch_id:
+                raise ValueError("You can only distribute to clusters directly under your sub distribution")
+            if not branch_id and int(to_user.get("parent_id", 0)) != from_user_id:
+                raise ValueError("You can only distribute to clusters directly under your sub distribution")
+        elif to_role == "operator":
+            parent_cluster = (await session.execute(
+                text("SELECT * FROM users WHERE id = :id"), {"id": int(to_user.get("parent_id") or 0)}
+            )).mappings().first()
+            if not parent_cluster:
+                raise ValueError("Operator's cluster not found")
+            parent_cluster = dict(parent_cluster)
+            owner_id = branch_id if branch_id else from_user_id
+            if int(parent_cluster.get("parent_id", 0)) != owner_id:
+                raise ValueError("You can only distribute to operators within your sub distribution")
+        else:
+            raise ValueError("Sub distribution employees can only distribute to clusters or operators")
+
     elif from_role == "cluster":
         if to_role == "operator":
             if int(to_user.get("parent_id", 0)) != from_user_id:
@@ -631,6 +748,32 @@ async def _notify_recipient(
         notification_type="warning", category="distribution",
         link="/delivery-confirmations"
     )
+
+    # Also notify the sub-distribution branch staff (employees / managers) who
+    # supervise the recipient, so deliveries into an assigned sub-distribution
+    # are not missed when only the named recipient is pinged. This is limited to
+    # deliveries addressed to a sub-distributor so no other distribution flow
+    # (sub-distributor -> cluster/operator, etc.) gains new notifications.
+    if str(to_user.get("role", "")).lower() == "sub_distributor":
+        from_user_id = int(from_user.get("id", from_user.get("_id", 0)) or 0)
+        async with async_session_factory() as session:
+            staff_ids = await _branch_staff_ids(
+                session, int(to_user["id"]), exclude={int(to_user["id"]), int(from_user_id) if from_user_id else -1}
+            )
+        if staff_ids:
+            await notification_service.bulk_create_notifications([
+                {
+                    "user_id": str(sid),
+                    "title": "Devices Sent to Your Sub Distribution",
+                    "message": f"{device_count} device(s) have been sent by {sender_label} into your "
+                        f"assigned sub distribution (Distribution ID: {dist_id}). Please confirm receipt "
+                        f"on your Delivery Confirmations page.",
+                    "notification_type": "warning",
+                    "category": "distribution",
+                    "link": "/delivery-confirmations",
+                }
+                for sid in staff_ids
+            ])
 
 
 async def create_distribution_from_identifiers(
@@ -913,6 +1056,19 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
 
         from_role = from_user["role"]
         from_user_id = int(from_user.get("id", from_user.get("_id", 0)))
+        # Sub-distribution employees act for their assigned branch, so they may
+        # redistribute devices held either by themselves or by the branch
+        # sub-distributor that the branch inventory belongs to.
+        if from_role == "sub_distribution_employee":
+            emp_row = (await session.execute(
+                text("SELECT parent_id FROM users WHERE id = :id"), {"id": from_user_id}
+            )).mappings().first()
+            branch_id = int((dict(emp_row) if emp_row else {}).get("parent_id") or 0)
+            if not branch_id:
+                branch_id = int(from_user.get("parent_id") or 0)
+            allowed_holder_ids = {from_user_id, branch_id} if branch_id else {from_user_id}
+        else:
+            allowed_holder_ids = {from_user_id}
 
         validated_devices: List[Dict[str, Any]] = []
         open_lock_device_ids: Set[str] = set()
@@ -969,7 +1125,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
                 if device["status"] != DeviceStatus.AVAILABLE.value:
                     raise ValueError(f"Device {device['device_id']} is not available")
             else:
-                if int(device.get("current_holder_id", 0)) != from_user_id:
+                if int(device.get("current_holder_id", 0)) not in allowed_holder_ids:
                     raise ValueError(f"Device {device['device_id']} is not in your possession")
                 if str(dev_id) in pending_blocked:
                     raise ValueError(
@@ -1335,11 +1491,8 @@ async def get_distribution_manifest_file(distribution_id: str, user: Dict[str, A
     if not dist:
         return None
 
-    role = user.get("role")
-    user_id = int(user.get("id", user.get("_id", 0)))
-    if role not in ["super_admin", "manager", "pdic_staff"]:
-        if user_id not in [int(dist.get("from_user_id", 0)), int(dist.get("to_user_id", 0))]:
-            raise ValueError("You are not allowed to access this distribution manifest")
+    if not await _user_can_access_distribution(user, dist.get("from_user_id"), dist.get("to_user_id")):
+        raise ValueError("You are not allowed to access this distribution manifest")
 
     manifest_file = dist.get("manifest_file")
     if not manifest_file:
@@ -1365,12 +1518,8 @@ async def get_distribution_mac_nuid_export(
     if not dist:
         raise ValueError("Distribution not found")
 
-    role = str(user.get("role", "")).lower()
-    user_id = int(user.get("id", user.get("_id", 0)))
-
-    if role not in ["super_admin", "manager", "pdic_staff"]:
-        if user_id not in [int(dist.get("from_user_id", 0)), int(dist.get("to_user_id", 0))]:
-            raise ValueError("You are not allowed to access this distribution export")
+    if not await _user_can_access_distribution(user, dist.get("from_user_id"), dist.get("to_user_id")):
+        raise ValueError("You are not allowed to access this distribution export")
 
     device_ids = dist.get("device_ids") or []
     if isinstance(device_ids, str):
@@ -1405,11 +1554,8 @@ async def get_distribution_devices(
     if not dist:
         raise ValueError("Distribution not found")
 
-    role = str(user.get("role", "")).lower()
-    user_id = int(user.get("id", user.get("_id", 0)))
-    if role not in ["super_admin", "manager", "pdic_staff"]:
-        if user_id not in [int(dist.get("from_user_id", 0)), int(dist.get("to_user_id", 0))]:
-            raise ValueError("You are not allowed to access this distribution's devices")
+    if not await _user_can_access_distribution(user, dist.get("from_user_id"), dist.get("to_user_id")):
+        raise ValueError("You are not allowed to access this distribution's devices")
 
     device_ids = dist.get("device_ids") or []
     if isinstance(device_ids, str):
@@ -1469,11 +1615,8 @@ async def get_distribution_device_summary(
         if not row:
             raise ValueError("Distribution not found")
 
-        role = str(user.get("role", "")).lower()
-        user_id = int(user.get("id", user.get("_id", 0)))
-        if role not in ["super_admin", "manager", "pdic_staff"]:
-            if user_id not in [int(row["from_user_id"]), int(row["to_user_id"])]:
-                raise ValueError("You are not allowed to access this distribution's devices")
+        if not await _user_can_access_distribution(user, row["from_user_id"], row["to_user_id"]):
+            raise ValueError("You are not allowed to access this distribution's devices")
 
         code = str(row["distribution_id"])
         membership = (

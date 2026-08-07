@@ -54,6 +54,7 @@ const ALLOWED_ROLES_BY_CREATOR = {
   sub_distribution_manager: ['sub_distribution_employee'],
   sub_distributor: [],
   cluster: ['operator'],
+  sub_distribution_employee: ['cluster', 'operator'],
 };
 
 const emptyForm = { name: '', email: '', password: '', role: 'cluster', phone: '', designation: '', address: '', pincode: '', networkName: '', parentId: '', digitalIdRows: [{ digitalId: '', broadbandId: '' }] };

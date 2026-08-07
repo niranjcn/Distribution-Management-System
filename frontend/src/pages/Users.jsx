@@ -24,6 +24,7 @@ const ALLOWED_ROLES_BY_CREATOR = {
   sub_distribution_manager: ['sub_distribution_employee'],
   sub_distributor: ['sub_distribution_manager', 'cluster', 'operator', 'sub_distribution_employee'],
   cluster:         ['operator'],
+  sub_distribution_employee: ['cluster', 'operator'],
 };
 
 const ROLE_LABELS = {

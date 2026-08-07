@@ -298,12 +298,15 @@ async def _validate_payload_and_scope(session, requester: Dict[str, Any], reques
     elif request_type == "bulk_users":
         _validate_bulk_rows(payload.get("rows"))
         target_role = payload.get("role")
-        if target_role != OPERATOR:
-            raise ValueError("Employees can only bulk-upload operators")
+        if target_role not in {OPERATOR, CLUSTER}:
+            raise ValueError("Employees can only bulk-upload operators or clusters")
         parent_id = payload.get("parent_id")
         if not parent_id:
-            raise ValueError("A parent is required when bulk-uploading operators")
-        if not await _branch_contains_user(session, int(requester["parent_id"]), int(parent_id)):
+            raise ValueError("A parent is required when bulk-uploading users")
+        if target_role == CLUSTER:
+            if int(parent_id) != int(requester["parent_id"]):
+                raise ValueError("Clusters must be created under your own sub distribution")
+        elif not await _branch_contains_user(session, int(requester["parent_id"]), int(parent_id)):
             raise ValueError("Parent is outside your sub distribution")
     elif request_type == "bulk_distribution":
         _validate_bulk_rows(payload.get("rows"))
@@ -360,6 +363,48 @@ async def _validate_payload_and_scope(session, requester: Dict[str, Any], reques
             raise ValueError("Defect report not found")
         if int(defect["reported_by"]) and not await _branch_contains_user(session, int(requester["parent_id"]), int(defect["reported_by"])):
             raise ValueError("Defect report is outside your sub distribution")
+
+
+async def _enrich_distribution_payload(session, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Embed human-readable device identifiers (NUID / serial / MAC) into a
+    distribution payload so approval reviewers see exactly which devices are
+    being sent, not just internal numeric ids. The extra `devices` field is
+    display-only; execution ignores it."""
+    device_ids = [str(d) for d in (payload.get("device_ids") or [])]
+    devices: List[Dict[str, Any]] = []
+
+    by_ids: Dict[str, Dict[str, Any]] = {}
+    numeric = []
+    for d in device_ids:
+        try:
+            numeric.append(int(d))
+        except (TypeError, ValueError):
+            continue
+    if numeric:
+        ph = ",".join(f":d{i}" for i in range(len(numeric)))
+        params = {f"d{i}": d for i, d in enumerate(numeric)}
+        rows = (await session.execute(
+            text(f"""SELECT id, device_id, serial_number, mac_address, nuid, device_type, model
+                    FROM devices WHERE id IN ({ph})"""),
+            params,
+        )).mappings().all()
+        by_ids = {str(r["id"]): dict(r) for r in rows}
+
+    for did in device_ids:
+        r = by_ids.get(did)
+        devices.append({
+            "id": did,
+            "device_id": (r.get("device_id") if r else None),
+            "serial_number": (r.get("serial_number") if r else None),
+            "mac_address": (r.get("mac_address") if r else None),
+            "nuid": (r.get("nuid") if r else None),
+            "device_type": (r.get("device_type") if r else None),
+            "model": (r.get("model") if r else None),
+        })
+
+    enriched = dict(payload)
+    enriched["devices"] = devices
+    return enriched
 
 
 async def _find_duplicate_pending(session, requester_id: int, request_type: str, payload: Dict[str, Any]) -> Optional[int]:
@@ -443,6 +488,9 @@ async def submit_request(
 
     async with async_session_factory() as session:
         await _validate_payload_and_scope(session, requester, request_type, payload)
+
+        if request_type == "distribution":
+            payload = await _enrich_distribution_payload(session, payload)
 
         duplicate_id = await _find_duplicate_pending(session, int(requester["id"]), request_type, payload)
         if duplicate_id:
@@ -811,6 +859,7 @@ async def _execute_request(request_row: Dict[str, Any], requester: Dict[str, Any
         "_id": requester["id"],
         "name": requester.get("name") or requester.get("email") or "Employee",
         "role": SUB_DISTRIBUTION_EMPLOYEE,
+        "parent_id": requester.get("parent_id"),
     }
 
     if request_type == "distribution":
