@@ -1,12 +1,11 @@
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
-import asyncio
 
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
 from app.core.cache import cached
-from app.services import device_service, user_service, defect_service, return_service, distribution_service
 
+from .aggregates import get_management_core_metrics
 from .helpers import (
     _build_named_date_filter,
     _month_start,
@@ -171,14 +170,14 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
     effective_start = start_date or month_start.isoformat()
     effective_year_start = start_date or year_start.isoformat()
 
-    device_stats, user_stats, defect_stats, return_stats, dist_stats, alerts = await asyncio.gather(
-        device_service.get_device_stats(start_date, end_date),
-        user_service.get_user_stats(),
-        defect_service.get_defect_stats(start_date, end_date),
-        return_service.get_return_stats(start_date, end_date),
-        distribution_service.get_distribution_stats(start_date, end_date),
-        get_system_alerts(user),
-    )
+    core = await get_management_core_metrics(start_date, end_date)
+    device_stats = core["device_stats"]
+    total_device_stats = core["total_device_stats"]
+    user_stats = core["user_stats"]
+    defect_stats = core["defect_stats"]
+    return_stats = core["return_stats"]
+    dist_stats = core["dist_stats"]
+    alerts = await get_system_alerts(user)
     approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
 
     async with async_session_factory() as session:
@@ -192,28 +191,14 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
         defects_this_year = (await session.execute(text(f"SELECT COUNT(*) FROM defects WHERE {dy_cond}"), dy_params)).scalar() or 0
 
         # Replacement metrics (current state - no date filter)
-        replacements_total = (await session.execute(
-            text("SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL")
-        )).scalar() or 0
-
-        replacements_confirmed = (await session.execute(
-            text("""SELECT COUNT(*) FROM defects
-               WHERE replacement_device_id IS NOT NULL
-               AND replacement_confirmed_at IS NOT NULL""")
-        )).scalar() or 0
-
-        replacements_pending = (await session.execute(
-            text("""SELECT COUNT(*) FROM defects
-               WHERE replacement_device_id IS NOT NULL
-               AND replacement_confirmed_at IS NULL""")
-        )).scalar() or 0
+        replacements_total = int(core["replacements_total"])
+        replacements_confirmed = int(core["replacements_confirmed"])
+        replacements_pending = int(core["replacements_pending"])
 
         # Role totals (current state - no date filter)
-        result = await session.execute(
-            text("SELECT role, COUNT(*) AS total FROM users GROUP BY role")
-        )
-        role_rows = result.all()
-        role_counts = {str(r[0]): int(r[1]) for r in role_rows}
+        role_counts = {
+            str(k): int(v) for k, v in (user_stats.get("by_role") or {}).items()
+        }
 
         result = await session.execute(
             text("""
@@ -235,12 +220,16 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
             for row in role_status_rows
         }
 
-        # Device status distribution (current state - no date filter)
-        result = await session.execute(
-            text("SELECT status, COUNT(*) AS total FROM devices GROUP BY status")
-        )
-        device_rows = result.all()
-        device_status_counts = {str(r[0]): int(r[1]) for r in device_rows}
+        # Device status distribution (current state - no date filter).
+        # Reuses the unfiltered device status aggregate computed by the shared
+        # management core, avoiding a duplicated full-table scan.
+        device_status_counts = {
+            "available": int(total_device_stats.get("available", 0)),
+            "distributed": int(total_device_stats.get("distributed", 0)),
+            "in_use": int(total_device_stats.get("in_use", 0)),
+            "defective": int(total_device_stats.get("defective", 0)),
+            "returned": int(total_device_stats.get("returned", 0)),
+        }
 
         result = await session.execute(
             text("""
@@ -388,11 +377,7 @@ async def _compute_advanced_dashboard_metrics(user: Dict[str, Any],
         repaired_within_sla_devices = int((await session.execute(
             text(f"""SELECT COUNT(*) FROM defects
                WHERE resolved_at IS NOT NULL
-               AND TIMESTAMPDIFF(
-                   DAY,
-                   STR_TO_DATE(SUBSTRING(REPLACE(created_at, 'T', ' '), 1, 19), '%%Y-%%m-%%d %%H:%%i:%%s'),
-                   STR_TO_DATE(SUBSTRING(REPLACE(resolved_at, 'T', ' '), 1, 19), '%%Y-%%m-%%d %%H:%%i:%%s')
-               ) <= 60
+               AND TIMESTAMPDIFF(DAY, created_at, resolved_at) <= 60
                AND {rr_cond}"""), rr_params
         )).scalar() or 0)
 
@@ -549,13 +534,9 @@ async def _compute_distribution_device_analytics(start_date: Optional[str] = Non
         )
         sent_by_type_rows = result.mappings().all()
 
-        total_sent = (await session.execute(
-            text(f"SELECT COUNT(*) FROM devices WHERE {date_cond}"), dd_params
-        )).scalar() or 0
-
-        remaining_available = (await session.execute(
-            text("SELECT COUNT(*) FROM devices WHERE status = 'available'")
-        )).scalar() or 0
+        # total_sent is the sum of the per-type GROUP BY above; a separate
+        # COUNT(*) would re-scan the same filtered rows.
+        total_sent = sum(int(row["total"]) for row in sent_by_type_rows)
 
         result = await session.execute(
             text("""SELECT
@@ -567,6 +548,10 @@ async def _compute_distribution_device_analytics(start_date: Optional[str] = Non
                ORDER BY total DESC""")
         )
         remaining_by_type_rows = result.mappings().all()
+
+        # remaining_available is the sum of the per-type GROUP BY above; a
+        # separate COUNT(*) would re-scan the same available-only rows.
+        remaining_available = sum(int(row["total"]) for row in remaining_by_type_rows)
 
         result = await session.execute(
             text(f"""SELECT

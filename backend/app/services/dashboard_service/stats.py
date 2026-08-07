@@ -1,12 +1,11 @@
-import asyncio
 from typing import Dict, Any, Optional
 
 from sqlalchemy import text
 
 from app.database_sqlalchemy import async_session_factory
 from app.core.cache import cached
-from app.services import device_service, distribution_service, defect_service, return_service, user_service
 
+from .aggregates import get_management_core_metrics
 from .helpers import _build_date_filter, _resolve_scope_root_for_sub_distribution_manager, _get_descendant_user_ids, _get_user_status_split_by_role
 
 
@@ -37,42 +36,18 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
     stats = {}
 
     if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
-        if start_date or end_date:
-            device_stats, dist_stats, defect_stats, return_stats, user_stats, total_stats = \
-                await asyncio.gather(
-                    device_service.get_device_stats(start_date, end_date),
-                    distribution_service.get_distribution_stats(start_date, end_date),
-                    defect_service.get_defect_stats(start_date, end_date),
-                    return_service.get_return_stats(start_date, end_date),
-                    user_service.get_user_stats(),
-                    device_service.get_device_stats(),
-                )
-            approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
-        else:
-            device_stats, dist_stats, defect_stats, return_stats, user_stats = \
-                await asyncio.gather(
-                    device_service.get_device_stats(),
-                    distribution_service.get_distribution_stats(),
-                    defect_service.get_defect_stats(),
-                    return_service.get_return_stats(),
-                    user_service.get_user_stats(),
-                )
-            approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
-            total_stats = device_stats
+        core = await get_management_core_metrics(start_date, end_date)
 
-        async with async_session_factory() as session:
-            cond, prm = _build_date_filter("1=1", {}, start_date, end_date)
-            distributions_filtered = (await session.execute(
-                text(f"SELECT COUNT(*) FROM distributions WHERE {cond}"), prm
-            )).scalar() or 0
-
-            replacements_in_range = (await session.execute(
-                text(f"SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL AND {cond}"), prm
-            )).scalar() or 0
-
-            total_replacements = (await session.execute(
-                text("SELECT COUNT(*) FROM defects WHERE replacement_device_id IS NOT NULL")
-            )).scalar() or 0
+        device_stats = core["device_stats"]
+        total_stats = core["total_device_stats"]
+        dist_stats = core["dist_stats"]
+        defect_stats = core["defect_stats"]
+        return_stats = core["return_stats"]
+        user_stats = core["user_stats"]
+        approval_stats = {"total_pending": 0, "approved": 0, "rejected": 0}
+        distributions_filtered = core["distributions_filtered"]
+        replacements_in_range = core["replacements_in_range"]
+        total_replacements = core["replacements_total"]
 
         total_active = (
             total_stats.get("available", 0) +

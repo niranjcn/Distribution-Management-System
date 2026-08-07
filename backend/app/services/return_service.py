@@ -444,38 +444,32 @@ async def get_return_stats(start_date: Optional[str] = None, end_date: Optional[
             params["end_date"] = end_date
         date_filter = " AND ".join(conditions) if conditions else "1=1"
 
-        total = 0
-        by_status: Dict[str, int] = {}
-        rows = (await session.execute(
-            text(f"SELECT status, COUNT(*) AS cnt FROM returns WHERE {date_filter} GROUP BY status"),
+        row = (await session.execute(
+            text(f"""SELECT
+                    COUNT(*) AS total,
+                    SUM(status = 'pending') AS pending,
+                    SUM(status = 'approved') AS approved,
+                    SUM(status = 'received') AS received,
+                    SUM(status = 'rejected') AS rejected,
+                    SUM(reason = 'defective') AS defective,
+                    SUM(reason = 'unused') AS unused,
+                    SUM(reason = 'end_of_contract') AS end_of_contract
+                FROM returns WHERE {date_filter}"""),
             params
-        )).mappings().all()
-        for row in rows:
-            status = str(row["status"])
-            count = int(row["cnt"])
-            total += count
-            by_status[status] = count
-
-        by_reason: Dict[str, int] = {}
-        rows = (await session.execute(
-            text(f"SELECT reason, COUNT(*) AS cnt FROM returns WHERE {date_filter} GROUP BY reason"),
-            params
-        )).mappings().all()
-        for row in rows:
-            by_reason[str(row["reason"])] = int(row["cnt"])
+        )).mappings().first()
 
         return {
-            "total": total,
+            "total": int(row["total"] or 0),
             "by_status": {
-                "pending": by_status.get("pending", 0),
-                "approved": by_status.get("approved", 0),
-                "received": by_status.get("received", 0),
-                "rejected": by_status.get("rejected", 0),
+                "pending": int(row["pending"] or 0),
+                "approved": int(row["approved"] or 0),
+                "received": int(row["received"] or 0),
+                "rejected": int(row["rejected"] or 0),
             },
             "by_reason": {
-                "defective": by_reason.get("defective", 0),
-                "unused": by_reason.get("unused", 0),
-                "end_of_contract": by_reason.get("end_of_contract", 0),
+                "defective": int(row["defective"] or 0),
+                "unused": int(row["unused"] or 0),
+                "end_of_contract": int(row["end_of_contract"] or 0),
             }
         }
 
