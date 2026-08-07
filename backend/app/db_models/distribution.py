@@ -1,9 +1,18 @@
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Index
 from app.db_models.base import Base
 
 
 class Distribution(Base):
     __tablename__ = "distributions"
+    __table_args__ = (
+        # Backs the "sent by scope" (from_user_id) counts and the
+        # received / pending_receipt counts (to_user_id + status).
+        Index("idx_distributions_from_user_id", "from_user_id"),
+        Index("idx_distributions_to_user_status", "to_user_id", "status"),
+        # Backs the distribution status breakdown (GROUP BY status) and
+        # status-filtered lists used by the management dashboard.
+        Index("idx_distributions_status", "status"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     distribution_id = Column(String(128), unique=True, nullable=False)

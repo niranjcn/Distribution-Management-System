@@ -9,6 +9,7 @@ import {
 import { Doughnut } from 'react-chartjs-2';
 import StatCard from '../../components/ui/StatCard';
 import Card from '../../components/ui/Card';
+import Skeleton from '../../components/ui/Skeleton';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Button from '../../components/ui/Button';
 import ErrorBoundary from '../../components/ui/ErrorBoundary';
@@ -60,39 +61,70 @@ const SubDistributorDashboard = () => {
   const [myOperators, setMyOperators] = useState([]);
   const [defectReports, setDefectReports] = useState([]);
   const [returnRequests, setReturnRequests] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [advancedLoading, setAdvancedLoading] = useState(true);
+  const [listsLoading, setListsLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        const dateParams = buildDateParams(dateRange);
-        const [statsRes, advancedRes, devRes, distRes, usersRes, defRes, retRes] = await Promise.all([
-          dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
-          dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
-          ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee', 'cluster'].includes(role)
-            ? devicesAPI.getMyOverview({ show_all: true, limit: 10 }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: { all_under_me: [] } }; })
-            : devicesAPI.getDevices().catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: [] }; }),
-          distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; }),
-          usersAPI.getUsers({ role: 'operator', page_size: 10 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; }),
-          defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
-          returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; })
-        ]);
-        setStats(statsRes.data || {});
-        setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
-        setMyDevices(Array.isArray(devRes.data) ? devRes.data : (devRes.data?.all_under_me || []));
-        setDeviceStats(devRes.data?.stats || {});
+    const dateParams = buildDateParams(dateRange);
+    let active = true;
+
+    // Batch 1 — authoritative stat cards from /dashboard/stats (fast).
+    setStatsLoading(true);
+    dashboardAPI.getStats(dateParams)
+      .then((res) => { if (active) setStats(res.data || {}); })
+      .catch((err) => {
+        console.error('Failed to load stats:', err);
+        if (active) showToast('Failed to load dashboard stats', 'error');
+      })
+      .finally(() => { if (active) setStatsLoading(false); });
+
+    // Batch 2 — charts + device chain (advanced-metrics + my device overview).
+    setAdvancedLoading(true);
+    dashboardAPI.getAdvancedMetrics(dateParams)
+      .then((res) => { if (active) setAdvanced(res.data || { kpis: {}, charts: {}, alerts: [] }); })
+      .catch((err) => {
+        console.error('Failed to load advanced metrics:', err);
+        if (active) showToast('Failed to load analytics', 'error');
+      });
+    const devicePromise = ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee', 'cluster'].includes(role)
+      ? devicesAPI.getMyOverview({ show_all: true, limit: 10 })
+      : devicesAPI.getDevices();
+    devicePromise
+      .then((res) => {
+        if (!active) return;
+        setMyDevices(Array.isArray(res.data) ? res.data : (res.data?.all_under_me || []));
+        setDeviceStats(res.data?.stats || {});
+      })
+      .catch((err) => {
+        console.error('Failed to load devices:', err);
+        if (active) showToast('Failed to load devices', 'error');
+      })
+      .finally(() => { if (active) setAdvancedLoading(false); });
+
+    // Batch 3 — bottom lists, slightly deferred so they do not compete with
+    // the top-heavy initial render.
+    setListsLoading(true);
+    const loadLists = async () => {
+      const [distRes, usersRes, defRes, retRes] = await Promise.all([
+        distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); return { data: [] }; }),
+        usersAPI.getUsers({ role: 'operator', page_size: 10 }).catch(err => { console.error('Failed to load operators:', err); return { data: [] }; }),
+        defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); return { data: [] }; }),
+        returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); return { data: [] }; }),
+      ]);
+      if (active) {
         setDistributions(distRes.data || []);
         setMyOperators(usersRes.data || []);
         setDefectReports(defRes.data || []);
         setReturnRequests(retRes.data || []);
-      } catch (error) {
-        console.error('Failed to load dashboard data:', error);
-      } finally {
-        setLoading(false);
       }
     };
-    fetchData();
+    const listTimer = window.setTimeout(() => loadLists().finally(() => { if (active) setListsLoading(false); }), 400);
+
+    return () => {
+      active = false;
+      window.clearTimeout(listTimer);
+    };
   }, [dateRange]);
 
   const charts = advanced.charts || {};
@@ -150,12 +182,12 @@ const SubDistributorDashboard = () => {
 
       <ErrorBoundary name="Stats">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <StatCard title="Received Devices" value={receivedDevicesCount} icon={Box} color="blue" />
-          <StatCard title="Pending Confirmations" value={pendingReceipts.length} icon={CheckSquare} color="orange" />
-          <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" />
-          <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" />
-          <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" />
-          <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" />
+          <StatCard title="Received Devices" value={receivedDevicesCount} icon={Box} color="blue" loading={statsLoading} />
+          <StatCard title="Pending Confirmations" value={pendingReceipts.length} icon={CheckSquare} color="orange" loading={listsLoading} />
+          <StatCard title="My Operators" value={stats.operator_count || myOperators.length} icon={Users} color="purple" loading={statsLoading} />
+          <StatCard title="Defect Reports" value={stats.defect_reports || defectReports.length} icon={AlertTriangle} color="red" loading={statsLoading} />
+          <StatCard title="Returns" value={stats.return_requests || returnRequests.length} icon={RotateCcw} color="indigo" loading={statsLoading} />
+          <StatCard title="Assigned" value={stats.assigned_to_operators || 0} icon={Package} color="green" loading={statsLoading} />
         </div>
       </ErrorBoundary>
 
@@ -167,9 +199,13 @@ const SubDistributorDashboard = () => {
                 <Box className="w-5 h-5 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">
-                  {Number(deviceStats.total_in_chain ?? (myDevices.length || 0))}
-                </p>
+                {advancedLoading ? (
+                  <Skeleton className="h-8 w-16 mb-2" />
+                ) : (
+                  <p className="text-2xl font-bold text-gray-800">
+                    {Number(deviceStats.total_in_chain ?? (myDevices.length || 0))}
+                  </p>
+                )}
                 <p className="text-sm text-gray-500">Total Devices</p>
               </div>
             </div>
@@ -178,9 +214,13 @@ const SubDistributorDashboard = () => {
                 <Package className="w-5 h-5 text-green-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">
-                  {Number(deviceStats.in_my_hand ?? (myDevices.filter((d) => String(d.current_holder_id) === String(user?.id)).length || 0))}
-                </p>
+                {advancedLoading ? (
+                  <Skeleton className="h-8 w-16 mb-2" />
+                ) : (
+                  <p className="text-2xl font-bold text-gray-800">
+                    {Number(deviceStats.in_my_hand ?? (myDevices.filter((d) => String(d.current_holder_id) === String(user?.id)).length || 0))}
+                  </p>
+                )}
                 <p className="text-sm text-gray-500">Total Devices In Hand</p>
               </div>
             </div>
@@ -189,9 +229,13 @@ const SubDistributorDashboard = () => {
                 <Users className="w-5 h-5 text-indigo-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-gray-800">
-                  {Number(deviceStats.under_subordinates ?? 0)}
-                </p>
+                {advancedLoading ? (
+                  <Skeleton className="h-8 w-16 mb-2" />
+                ) : (
+                  <p className="text-2xl font-bold text-gray-800">
+                    {Number(deviceStats.under_subordinates ?? 0)}
+                  </p>
+                )}
                 <p className="text-sm text-gray-500">Under the Chain</p>
               </div>
             </div>

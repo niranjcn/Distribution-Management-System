@@ -1,10 +1,16 @@
-from sqlalchemy import Column, Integer, String, Text, BigInteger, DateTime
+from sqlalchemy import Column, Integer, String, Text, BigInteger, DateTime, Index
 from sqlalchemy import Boolean as SqlBool
 from app.db_models.base import Base
 
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # Backs role-scoped hierarchy lookups ('role = X AND parent_id IN (...)').
+        Index("idx_users_role_parent", "role", "parent_id"),
+        # Backs the recursive descendant CTE that resolves scope purely by parent_id.
+        Index("idx_users_parent_id", "parent_id"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), unique=True, nullable=False)

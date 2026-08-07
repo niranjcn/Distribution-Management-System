@@ -1,9 +1,17 @@
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Index
 from app.db_models.base import Base
 
 
 class Device(Base):
     __tablename__ = "devices"
+    __table_args__ = (
+        # Backs role-scoped dashboard status breakdowns (current_holder_id)
+        # and the active-device status IN (...) counts.
+        Index("idx_devices_current_holder_status", "current_holder_id", "status"),
+        # Backs the global status breakdown (GROUP BY status) used by the
+        # management dashboard device counts.
+        Index("idx_devices_status", "status"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     device_id = Column(String(128), unique=True, nullable=False)

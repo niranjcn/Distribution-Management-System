@@ -6,7 +6,7 @@ import Card from '../../components/ui/Card';
 import StatusBadge from '../../components/ui/StatusBadge';
 import ErrorBoundary from '../../components/ui/ErrorBoundary';
 import DateRangeFilter, { buildDateParams } from '../../components/ui/DateRangeFilter';
-import { dashboardAPI, distributionsAPI, returnsAPI } from '../../services/api';
+import { dashboardAPI, distributionsAPI } from '../../services/api';
 import { useNotifications } from '../../context/NotificationContext';
 import HierarchySelector from '../../components/dashboard/HierarchySelector';
 import UserKpiSection from '../../components/dashboard/UserKpiSection';
@@ -37,37 +37,55 @@ const ManagerDashboard = () => {
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
   const [distributions, setDistributions] = useState([]);
-  const [returnRequests, setReturnRequests] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [listsLoading, setListsLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState(null);
   const [userKpi, setUserKpi] = useState(null);
   const [kpiLoading, setKpiLoading] = useState(false);
   const [distribAnalytics, setDistribAnalytics] = useState(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        const dateParams = buildDateParams(dateRange);
-        const [statsRes, advancedRes, distRes, retRes, distribAnalyticsRes] = await Promise.all([
-          dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
-          dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
-          distributionsAPI.getDistributions(dateParams).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; }),
-          returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; }),
-          dashboardAPI.getDistributionDeviceAnalytics(dateParams).catch(err => { console.error('Failed to load distribution analytics:', err); showToast('Failed to load distribution analytics', 'error'); return { data: null }; }),
-        ]);
-        setStats(statsRes.data || {});
-        setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
-        setDistributions(distRes.data || []);
-        setReturnRequests(retRes.data || []);
-        setDistribAnalytics(distribAnalyticsRes.data || null);
-      } catch (error) {
-        console.error('Failed to load dashboard data:', error);
-      } finally {
-        setLoading(false);
-      }
+    const dateParams = buildDateParams(dateRange);
+    let active = true;
+
+    // Batch 1 — device counters from /dashboard/stats (fast).
+    dashboardAPI.getStats(dateParams)
+      .then((res) => { if (active) setStats(res.data || {}); })
+      .catch((err) => {
+        console.error('Failed to load stats:', err);
+        if (active) showToast('Failed to load dashboard stats', 'error');
+      });
+
+    // Batch 2 — analytics cards + charts (advanced-metrics + distribution analytics).
+    dashboardAPI.getAdvancedMetrics(dateParams)
+      .then((res) => { if (active) setAdvanced(res.data || { kpis: {}, charts: {}, alerts: [] }); })
+      .catch((err) => {
+        console.error('Failed to load advanced metrics:', err);
+        if (active) showToast('Failed to load analytics', 'error');
+      });
+    dashboardAPI.getDistributionDeviceAnalytics(dateParams)
+      .then((res) => { if (active) setDistribAnalytics(res.data || null); })
+      .catch((err) => {
+        console.error('Failed to load distribution analytics:', err);
+        if (active) showToast('Failed to load distribution analytics', 'error');
+      });
+
+    // Batch 3 — recent distributions list, slightly deferred so it does not
+    // compete with the top-heavy initial render.
+    setListsLoading(true);
+    const listTimer = window.setTimeout(() => {
+      distributionsAPI.getDistributions(dateParams)
+        .then((res) => { if (active) setDistributions(res.data || []); })
+        .catch((err) => {
+          console.error('Failed to load distributions:', err);
+          if (active) showToast('Failed to load distributions', 'error');
+        })
+        .finally(() => { if (active) setListsLoading(false); });
+    }, 400);
+
+    return () => {
+      active = false;
+      window.clearTimeout(listTimer);
     };
-    fetchData();
   }, [dateRange]);
 
   const handleHierarchySelect = async (selection) => {
@@ -270,7 +288,7 @@ const ManagerDashboard = () => {
               </Link>
             }
           >
-            {loading ? (
+            {listsLoading ? (
               <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>
             ) : (
               <div className="space-y-3">
