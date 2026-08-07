@@ -186,15 +186,16 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
 
                 date_cond, date_prm = _build_date_filter("1=1", {}, start_date, end_date)
 
-                branch_devices = (await session.execute(
-                    text(f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({ph}) AND {date_cond}"),
+                # Single GROUP BY scan replaces branch_devices + available_devices
+                # (both filter current_holder_id IN scope + date) with one
+                # holder-scoped status breakdown.
+                mgr_status_rows = (await session.execute(
+                    text(f"SELECT status, COUNT(*) AS total FROM devices WHERE current_holder_id IN ({ph}) AND {date_cond} GROUP BY status"),
                     {**sp_map, **date_prm}
-                )).scalar() or 0
-
-                available_devices = (await session.execute(
-                    text(f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({ph}) AND status = 'available' AND {date_cond}"),
-                    {**sp_map, **date_prm}
-                )).scalar() or 0
+                )).mappings().all()
+                mgr_status_count = {str(r["status"]): int(r["total"]) for r in mgr_status_rows}
+                branch_devices = sum(mgr_status_count.values())
+                available_devices = mgr_status_count.get("available", 0)
 
                 sent = (await session.execute(
                     text(f"SELECT COUNT(*) FROM distributions WHERE from_user_id IN ({ph}) AND {date_cond}"),
@@ -272,10 +273,18 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
     elif role == "operator":
         async with async_session_factory() as session:
             uid = user_id
-            dc, dp = _build_date_filter("current_holder_id = :uid", {"uid": uid}, start_date, end_date)
-            my_devices = (await session.execute(
-                text(f"SELECT COUNT(*) FROM devices WHERE {dc}"), dp
-            )).scalar() or 0
+
+            # Single GROUP BY scan replaces three separate COUNT scans that all
+            # filter the same holder-scoped devices rows (total / status-in /
+            # in_use), deriving every count from one status breakdown.
+            oc, op_ = _build_date_filter("current_holder_id = :uid", {"uid": uid}, start_date, end_date)
+            status_rows = (await session.execute(
+                text(f"SELECT status, COUNT(*) AS total FROM devices WHERE {oc} GROUP BY status"), op_
+            )).mappings().all()
+            status_count = {str(r["status"]): int(r["total"]) for r in status_rows}
+            my_devices = sum(status_count.values())
+            active_devices = sum(status_count.get(s, 0) for s in ("available", "distributed", "in_use"))
+            in_use_devices = status_count.get("in_use", 0)
 
             dfc, dfp = _build_date_filter("reported_by = :uid2", {"uid2": uid}, start_date, end_date)
             my_defects = (await session.execute(
@@ -285,25 +294,6 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
             rc, rp = _build_date_filter("def.reported_by = :uid3", {"uid3": uid}, start_date, end_date)
             my_returns = (await session.execute(
                 text(f"SELECT COUNT(*) FROM returns r LEFT JOIN defects def ON r.defect_id = CAST(def.id AS CHAR) WHERE {rc.replace('created_at', 'r.created_at')}"), rp
-            )).scalar() or 0
-
-            # Accurate counts independent of any device-list page size. The
-            # dashboard reads these keys; without them it falls back to the
-            # (page-limited) device rows and shows e.g. 10 instead of the real total.
-            ac, ap = _build_date_filter(
-                "current_holder_id = :uid5 AND status IN ('available','distributed','in_use')",
-                {"uid5": uid}, start_date, end_date
-            )
-            active_devices = (await session.execute(
-                text(f"SELECT COUNT(*) FROM devices WHERE {ac}"), ap
-            )).scalar() or 0
-
-            ic, ip = _build_date_filter(
-                "current_holder_id = :uid6 AND status = 'in_use'",
-                {"uid6": uid}, start_date, end_date
-            )
-            in_use_devices = (await session.execute(
-                text(f"SELECT COUNT(*) FROM devices WHERE {ic}"), ip
             )).scalar() or 0
 
         stats = {

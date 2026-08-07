@@ -49,34 +49,62 @@ const OperatorDashboard = () => {
   const [myDefects, setMyDefects] = useState([]);
   const [myReturns, setMyReturns] = useState([]);
   const [distributions, setDistributions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [advancedLoading, setAdvancedLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        const dateParams = buildDateParams(dateRange);
-        const [statsRes, advancedRes, devRes, defRes, retRes, distRes] = await Promise.all([
-          dashboardAPI.getStats(dateParams).catch(err => { console.error('Failed to load stats:', err); showToast('Failed to load dashboard stats', 'error'); return { data: {} }; }),
-          dashboardAPI.getAdvancedMetrics(dateParams).catch(err => { console.error('Failed to load advanced metrics:', err); showToast('Failed to load analytics', 'error'); return { data: { kpis: {}, charts: {}, alerts: [] } }; }),
-          devicesAPI.getMyOverview({ show_all: true, limit: 10 }).catch(err => { console.error('Failed to load devices:', err); showToast('Failed to load devices', 'error'); return { data: { all_under_me: [] } }; }),
-          defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); showToast('Failed to load defects', 'error'); return { data: [] }; }),
-          returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); showToast('Failed to load returns', 'error'); return { data: [] }; }),
-          distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); showToast('Failed to load distributions', 'error'); return { data: [] }; })
-        ]);
-        setStats(statsRes.data || {});
-        setAdvanced(advancedRes.data || { kpis: {}, charts: {}, alerts: [] });
-        setMyDevices(Array.isArray(devRes.data) ? devRes.data : (devRes.data?.all_under_me || []));
+    const dateParams = buildDateParams(dateRange);
+    let active = true;
+
+    // Batch 1 — authoritative stat cards from /dashboard/stats (fast).
+    setStatsLoading(true);
+    dashboardAPI.getStats(dateParams)
+      .then((res) => { if (active) setStats(res.data || {}); })
+      .catch((err) => {
+        console.error('Failed to load stats:', err);
+        if (active) showToast('Failed to load dashboard stats', 'error');
+      })
+      .finally(() => { if (active) setStatsLoading(false); });
+
+    // Batch 2 — charts + my devices (advanced-metrics + my device overview).
+    setAdvancedLoading(true);
+    dashboardAPI.getAdvancedMetrics(dateParams)
+      .then((res) => { if (active) setAdvanced(res.data || { kpis: {}, charts: {}, alerts: [] }); })
+      .catch((err) => {
+        console.error('Failed to load advanced metrics:', err);
+        if (active) showToast('Failed to load analytics', 'error');
+      });
+    devicesAPI.getMyOverview({ show_all: true, limit: 10 })
+      .then((res) => {
+        if (!active) return;
+        setMyDevices(Array.isArray(res.data) ? res.data : (res.data?.all_under_me || []));
+      })
+      .catch((err) => {
+        console.error('Failed to load devices:', err);
+        if (active) showToast('Failed to load devices', 'error');
+      })
+      .finally(() => { if (active) setAdvancedLoading(false); });
+
+    // Batch 3 — bottom lists, slightly deferred so they do not compete with
+    // the top-heavy initial render.
+    const loadLists = async () => {
+      const [defRes, retRes, distRes] = await Promise.all([
+        defectsAPI.getDefects(dateParams).catch(err => { console.error('Failed to load defects:', err); return { data: [] }; }),
+        returnsAPI.getReturns(dateParams).catch(err => { console.error('Failed to load returns:', err); return { data: [] }; }),
+        distributionsAPI.getDistributions({ status: 'pending_receipt' }).catch(err => { console.error('Failed to load distributions:', err); return { data: [] }; }),
+      ]);
+      if (active) {
         setMyDefects(defRes.data || []);
         setMyReturns(retRes.data || []);
         setDistributions(distRes.data || []);
-      } catch (error) {
-        console.error('Failed to load dashboard data:', error);
-      } finally {
-        setLoading(false);
       }
     };
-    fetchData();
+    const listTimer = window.setTimeout(() => loadLists(), 400);
+
+    return () => {
+      active = false;
+      window.clearTimeout(listTimer);
+    };
   }, [dateRange]);
 
   const pendingReceipts = distributions.filter(
@@ -116,10 +144,10 @@ const OperatorDashboard = () => {
 
       <ErrorBoundary name="Stats">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="Assigned Devices" value={stats.assigned_devices || myDevices.length} icon={Box} color="blue" loading={loading} />
-          <StatCard title="Active" value={stats.active_devices || myDevices.filter(d => d.status === 'active').length} icon={Cpu} color="green" loading={loading} />
-          <StatCard title="In Use" value={stats.in_use_devices || myDevices.filter(d => d.status === 'in_use').length} icon={Cpu} color="purple" loading={loading} />
-          <StatCard title="My Defect Reports" value={stats.defect_reports || myDefects.length} icon={AlertTriangle} color="red" loading={loading} />
+          <StatCard title="Assigned Devices" value={stats.assigned_devices || myDevices.length} icon={Box} color="blue" loading={statsLoading} />
+          <StatCard title="Active" value={stats.active_devices || myDevices.filter(d => d.status === 'active').length} icon={Cpu} color="green" loading={statsLoading} />
+          <StatCard title="In Use" value={stats.in_use_devices || myDevices.filter(d => d.status === 'in_use').length} icon={Cpu} color="purple" loading={statsLoading} />
+          <StatCard title="My Defect Reports" value={stats.defect_reports || myDefects.length} icon={AlertTriangle} color="red" loading={statsLoading} />
         </div>
       </ErrorBoundary>
 
