@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 ALLOWED_CREATE_BY_ROLE = {
     SUPER_ADMIN: [SUPER_ADMIN, MD_DIRECTOR, MANAGER, PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
     MANAGER: [PDIC_STAFF, SUB_DISTRIBUTION_MANAGER, SUB_DISTRIBUTOR, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
-    SUB_DISTRIBUTION_MANAGER: [SUB_DISTRIBUTION_EMPLOYEE],
     SUB_DISTRIBUTOR: [SUB_DISTRIBUTION_MANAGER, CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE],
     SUB_DISTRIBUTION_EMPLOYEE: [CLUSTER, OPERATOR],
     CLUSTER: [OPERATOR],
@@ -303,7 +302,7 @@ async def get_users(
                 parent_ids_in_filter = operator_parent_scope
                 parent_id_filter = None
             else:
-                roles_in_filter = [CLUSTER, OPERATOR]
+                roles_in_filter = [CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE]
                 parent_ids_in_filter = operator_parent_scope
                 parent_id_filter = None
     elif actor_role == SUB_DISTRIBUTOR:

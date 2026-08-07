@@ -262,7 +262,7 @@ function AppRoutes() {
         <Route
           path="users/bulk-upload"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'sub_distribution_manager', 'sub_distributor', 'cluster', 'sub_distribution_employee']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'sub_distributor', 'cluster', 'sub_distribution_employee']}>
               <BulkUploadUsers />
             </ProtectedRoute>
           }
