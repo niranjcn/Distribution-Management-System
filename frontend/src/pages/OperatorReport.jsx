@@ -6,7 +6,8 @@ import ReportFilter from '../components/ui/ReportFilter';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { reportsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
-import { RefreshCw, BarChart3, Layers, Building2, Loader2 } from 'lucide-react';
+import { exportTablePdf } from '../utils/pdfExport';
+import { RefreshCw, BarChart3, Layers, Building2, Loader2, Download } from 'lucide-react';
 
 const PAGE_SIZE = 15;
 
@@ -146,6 +147,61 @@ const OperatorReport = () => {
     setAppliedSearch({ by: 'all', query: '' });
   };
 
+  const handleDownloadPdf = () => {
+    try {
+      const viewLabel = VIEW_TABS.find(v => v.key === activeView)?.label || 'Total';
+      let columns = [];
+      if (activeView === 'total') {
+        columns = [
+          { header: 'Sl No', render: (_, i) => i + 1 },
+          { header: 'Operator', render: (r) => r.operator_name },
+          { header: 'Digital ID', render: (r) => formatIds(r, 'digital_id') },
+          { header: 'Broadband ID', render: (r) => formatIds(r, 'broadband_id') },
+          { header: 'Sub Distribution', render: (r) => r.sub_name || '—' },
+          { header: 'Cluster', render: (r) => r.cluster_name || '—' },
+          { header: 'Device Count', key: 'device_count' },
+          { header: 'SB', key: 'sb_device_count' },
+          { header: 'ONT', key: 'ont_device_count' },
+          { header: 'Other', key: 'other_device_count' },
+        ];
+      } else {
+        const isSb = activeView === 'sb';
+        const vendors = isSb ? sbVendors : ontVendors;
+        columns = [
+          { header: 'Sl No', render: (_, i) => i + 1 },
+          { header: isSb ? 'Digital ID' : 'Broadband ID', render: (r) => formatIds(r, isSb ? 'digital_id' : 'broadband_id') },
+          { header: 'Operator', render: (r) => r.operator_name },
+          { header: 'Sub Distribution', render: (r) => r.sub_name || '—' },
+          { header: 'Cluster', render: (r) => r.cluster_name || '—' },
+          ...vendors.map(v => ({
+            header: v,
+            render: (r) => (isSb ? (r.sb_by_vendor || {}) : (r.ont_by_vendor || {}))[v] || 0,
+          })),
+          { header: 'Total', render: (r) => Object.values(isSb ? (r.sb_by_vendor || {}) : (r.ont_by_vendor || {})).reduce((a, b) => a + b, 0) },
+        ];
+      }
+
+      const filterNotes = [];
+      if (appliedSearch.query) filterNotes.push(`Search: ${appliedSearch.query}`);
+      if (subFilter) filterNotes.push(`Sub Distribution: ${subOptions.find(o => o.id === subFilter)?.name || subFilter}`);
+      if (clusterFilter) filterNotes.push(`Cluster: ${clusterOptions.find(o => o.id === clusterFilter)?.name || clusterFilter}`);
+      const rangeLabel = dateRange?.range;
+      if (rangeLabel && rangeLabel !== 'all') filterNotes.push(`Date range: ${rangeLabel}`);
+
+      exportTablePdf({
+        title: `Operator Report — ${viewLabel}`,
+        subtitle: filterNotes.join(' · ') || undefined,
+        columns,
+        rows: viewRows,
+        filename: `operator-report-${activeView}`,
+      });
+      showToast('PDF report downloaded successfully', 'success');
+    } catch (error) {
+      console.error('Failed to export PDF report', error);
+      showToast('Failed to export PDF report', 'error');
+    }
+  };
+
   const renderTotal = () => (
     <Card>
       {searchedRows.length === 0 ? (
@@ -263,6 +319,7 @@ const OperatorReport = () => {
         </div>
         <div className="flex items-center gap-3">
           <DateRangeFilter value={dateRange} onChange={setDateRange} />
+          <Button variant="outline" icon={Download} onClick={handleDownloadPdf}>Download PDF</Button>
           <Button variant="outline" icon={RefreshCw} onClick={fetchData}>Refresh</Button>
         </div>
       </div>
