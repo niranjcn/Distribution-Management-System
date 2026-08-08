@@ -11,6 +11,7 @@ from app.core.cache_version_manager import cache_version_manager
 from app.database_sqlalchemy import async_session_factory
 from app.db_models.device import Device, DeviceHistory
 from app.models.device import DeviceCreate, DeviceUpdate, DeviceStatus, HolderType
+from app.services.bulk_upload_service import chunks
 from app.utils.helpers import get_pagination, generate_device_id
 
 
@@ -373,22 +374,50 @@ async def delete_device(device_id: str) -> bool:
 
 
 async def bulk_delete_devices(device_ids: List[str]) -> Dict[str, Any]:
-    """Delete multiple devices. Returns deleted count and any missing IDs."""
+    """Delete multiple devices in bounded batches. Returns deleted count and any missing IDs."""
     deleted: List[int] = []
     not_found: List[str] = []
 
+    numeric_ids = []
+    for device_id in device_ids:
+        if str(device_id).isdigit():
+            numeric_ids.append(int(device_id))
+        else:
+            not_found.append(str(device_id))
+
+    if not numeric_ids:
+        return {"deleted": deleted, "not_found": not_found}
+
     async with async_session_factory() as session:
-        for device_id in device_ids:
-            if not str(device_id).isdigit():
-                not_found.append(str(device_id))
+        for batch in chunks(numeric_ids, 1000):
+            ph = ",".join([f":d_{i}" for i in range(len(batch))])
+            params = {f"d_{i}": did for i, did in enumerate(batch)}
+            rows = (await session.execute(
+                text(f"SELECT id FROM devices WHERE id IN ({ph})"),
+                params
+            )).mappings().all()
+            found_ids = [int(r["id"]) for r in rows if r["id"] is not None]
+
+            found_set = set(found_ids)
+            for did in batch:
+                if did not in found_set:
+                    not_found.append(str(did))
+
+            if not found_ids:
                 continue
-            inst = await session.get(Device, int(device_id))
-            if not inst:
-                not_found.append(str(device_id))
-                continue
-            await session.delete(inst)
-            await session.execute(text("DELETE FROM device_history WHERE device_id = :did"), {"did": int(device_id)})
-            deleted.append(int(device_id))
+
+            del_ph = ",".join([f":e_{i}" for i in range(len(found_ids))])
+            del_params = {f"e_{i}": did for i, did in enumerate(found_ids)}
+            await session.execute(
+                text(f"DELETE FROM device_history WHERE device_id IN ({del_ph})"),
+                del_params
+            )
+            await session.execute(
+                text(f"DELETE FROM devices WHERE id IN ({del_ph})"),
+                del_params
+            )
+            deleted.extend(found_ids)
+
         await bump_cache_version(session)
         await session.commit()
 
