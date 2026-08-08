@@ -4,6 +4,7 @@ import json
 
 from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
+from app.services.bulk_upload_service import chunks
 from sqlalchemy import text
 from app.utils.helpers import get_pagination
 from app.core.activity_logger import log_business_activity
@@ -288,14 +289,15 @@ async def reassign_users(
 
         if direct_children:
             child_ids = [int(child["id"]) for child in direct_children]
-            placeholders = ",".join(f":id_{i}" for i in range(len(child_ids)))
-            params_dict = {"parent_id": new_parent_id, "updated_at": now}
-            for i, cid in enumerate(child_ids):
-                params_dict[f"id_{i}"] = cid
-            await session.execute(
-                text(f"UPDATE users SET parent_id = :parent_id, updated_at = :updated_at WHERE id IN ({placeholders})"),
-                params_dict
-            )
+            for batch in chunks(child_ids, 1000):
+                placeholders = ",".join(f":id_{i}" for i in range(len(batch)))
+                params_dict = {"parent_id": new_parent_id, "updated_at": now}
+                for i, cid in enumerate(batch):
+                    params_dict[f"id_{i}"] = cid
+                await session.execute(
+                    text(f"UPDATE users SET parent_id = :parent_id, updated_at = :updated_at WHERE id IN ({placeholders})"),
+                    params_dict
+                )
 
         await session.execute(
             text("""UPDATE reassignment_requests

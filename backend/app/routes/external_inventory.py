@@ -44,6 +44,46 @@ def _resolve_actor_id(current_user: dict) -> int:
     return int(actor_id)
 
 
+def _read_bulk_rows(filename_lower: str, contents: bytes) -> tuple:
+    """Normalize an Excel (.xls/.xlsx) workbook into ``(headers, data_rows)``.
+
+    Row values are returned as lists so callers can pad short rows to the header
+    count in the same way CSV rows are handled. ``headers`` are stripped and
+    lowercased. The caller is responsible for size/row-count limits.
+    """
+    if filename_lower.endswith(".xls"):
+        import xlrd
+
+        wb = xlrd.open_workbook(file_contents=contents)
+        ws = wb.sheet_by_index(0)
+        if ws.nrows == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Excel file is empty",
+            )
+        headers = [str(ws.cell_value(0, col)).strip().lower() for col in range(ws.ncols)]
+        rows = [
+            [ws.cell_value(row_idx, col) for col in range(ws.ncols)]
+            for row_idx in range(1, ws.nrows)
+        ]
+        return headers, rows
+
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+    worksheet = workbook.active
+    header_row = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), None)
+    if header_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Excel file is empty",
+        )
+    headers = [str(cell).strip().lower() if cell is not None else "" for cell in header_row]
+    rows = [list(row) for row in worksheet.iter_rows(min_row=2, values_only=True)]
+    workbook.close()
+    return headers, rows
+
+
 @router.get("/items", summary="Get external inventory items")
 async def get_external_inventory_items(
     page: int = Query(1, ge=1),
@@ -117,7 +157,7 @@ async def bulk_upload_external_inventory_items(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_management),
 ):
-    """Bulk upload external inventory items from CSV.
+    """Bulk upload external inventory items from CSV or Excel.
 
     Required columns: name
     Optional columns: identifier_type, identifier, device_type, price, quantity,
@@ -125,33 +165,38 @@ async def bulk_upload_external_inventory_items(
     notes
     """
     filename_lower = (file.filename or "").lower()
-    if not filename_lower.endswith(".csv"):
+    if not filename_lower.endswith((".xlsx", ".xls", ".csv")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only CSV (.csv) files are supported",
+            detail="Only Excel (.xlsx, .xls) or CSV (.csv) files are supported",
         )
 
     try:
         contents = await file.read()
 
-        from app.services.bulk_upload_service import MAX_UPLOAD_FILE_SIZE, check_bulk_upload_row_count
-        if len(contents) > MAX_UPLOAD_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File too large. Maximum size is {MAX_UPLOAD_FILE_SIZE // (1024 * 1024)} MB",
-            )
+        from app.services.bulk_upload_service import (
+            check_bulk_upload_file,
+            check_bulk_upload_row_count,
+            validate_upload_signature,
+        )
+        # Enforces the 10 MB size cap, the xlsx decompressed-size (zip bomb) guard,
+        # and rejects mis-typed files via magic-byte signature checks.
+        check_bulk_upload_file(contents, filename_lower)
+        validate_upload_signature(filename_lower, contents)
 
-        decoded = contents.decode("utf-8-sig")
-        reader = csv.reader(io.StringIO(decoded))
-        all_rows = list(reader)
-        if not all_rows:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="CSV file is empty",
-            )
-
-        headers = [h.strip().lower() for h in all_rows[0]]
-        data_rows = all_rows[1:]
+        if filename_lower.endswith(".csv"):
+            decoded = contents.decode("utf-8-sig")
+            reader = csv.reader(io.StringIO(decoded))
+            all_rows = list(reader)
+            if not all_rows:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="CSV file is empty",
+                )
+            headers = [h.strip().lower() for h in all_rows[0]]
+            data_rows = all_rows[1:]
+        else:
+            headers, data_rows = _read_bulk_rows(filename_lower, contents)
         check_bulk_upload_row_count(data_rows)
 
         required = {"name"}
@@ -549,10 +594,13 @@ async def bulk_distribute_external_inventory_from_file(
         from app.services.bulk_upload_service import (
             check_bulk_upload_file,
             check_bulk_upload_row_count,
-            MAX_BULK_ROWS,
+            validate_upload_signature,
         )
 
+        # Enforces the 10 MB size cap, the xlsx decompressed-size (zip bomb) guard,
+        # and rejects mis-typed files via magic-byte signature checks.
         check_bulk_upload_file(contents, filename_lower)
+        validate_upload_signature(filename_lower, contents)
 
         if filename_lower.endswith(".csv"):
             decoded = contents.decode("utf-8-sig")
@@ -563,40 +611,11 @@ async def bulk_distribute_external_inventory_from_file(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="CSV file is empty",
                 )
-            headers = [str(h).strip().lower() for h in all_rows[0]]
+            headers = [h.strip().lower() for h in all_rows[0]]
             data_rows = all_rows[1:]
-            check_bulk_upload_row_count(data_rows)
-
-            def iter_data_rows():
-                for row in data_rows:
-                    padded = row + [""] * (len(headers) - len(row))
-                    yield tuple(padded[:len(headers)])
         else:
-            import openpyxl
-
-            workbook = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
-            worksheet = workbook.active
-            header_row = next(worksheet.iter_rows(min_row=1, max_row=1), None)
-            if not header_row:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Excel file is empty",
-                )
-
-            headers = [str(cell.value).strip().lower() if cell.value is not None else "" for cell in header_row]
-
-            row_count = 0
-
-            def iter_data_rows():
-                nonlocal row_count
-                for row in worksheet.iter_rows(min_row=2, values_only=True):
-                    row_count += 1
-                    if row_count > MAX_BULK_ROWS:
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Too many rows. Maximum is {MAX_BULK_ROWS}",
-                        )
-                    yield row
+            headers, data_rows = _read_bulk_rows(filename_lower, contents)
+        check_bulk_upload_row_count(data_rows)
 
         required = {"identifier_type", "identifier"}
         missing = required - set(headers)
@@ -607,9 +626,10 @@ async def bulk_distribute_external_inventory_from_file(
             )
 
         identifier_rows = []
-        for row_idx, row in enumerate(iter_data_rows(), start=2):
+        for row_idx, row in enumerate(data_rows, start=2):
+            padded = row + [""] * (len(headers) - len(row))
             row_data = {
-                headers[i]: (str(row[i]).strip() if i < len(row) and row[i] is not None else "")
+                headers[i]: (str(padded[i]).strip() if padded[i] is not None else "")
                 for i in range(len(headers))
             }
 

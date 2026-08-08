@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
@@ -15,7 +16,6 @@ import {
   RefreshCw,
   Trash2,
   Upload,
-  Download,
   Search,
   Send,
   ClipboardList,
@@ -33,6 +33,8 @@ const ROLE_LABELS = {
 const RECIPIENT_TYPE_OPTIONS = ['sub_distributor', 'cluster', 'operator'];
 
 const TABLE_PAGE_SIZE = 10;
+const TABLE_WINDOW_PAGES = 10;
+const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
 
 const initialItemForm = {
   name: '',
@@ -51,6 +53,7 @@ const initialItemForm = {
 const MANAGEMENT_ROLES = ['super_admin', 'manager', 'pdic_staff'];
 
 const ExternalInventory = ({ tab }) => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { showToast } = useNotifications();
   const normalizedRole = String(user?.role || '').trim().toLowerCase();
@@ -93,9 +96,6 @@ const ExternalInventory = ({ tab }) => {
   const [editingItemId, setEditingItemId] = useState('');
   const [itemForm, setItemForm] = useState(initialItemForm);
   const [submitting, setSubmitting] = useState(false);
-  const [importingItems, setImportingItems] = useState(false);
-const [importResult, setImportResult] = useState(null);
-  const importInputRef = useRef(null);
 
   // ----- Recipients for distribution -----
   const [recipients, setRecipients] = useState([]);
@@ -122,8 +122,15 @@ const [importResult, setImportResult] = useState(null);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  const buildItemsParams = (page) => {
-    const params = { page, page_size: TABLE_PAGE_SIZE };
+  const itemsQueryVersionRef = useRef(0);
+  const itemsLoadingWindowsRef = useRef(new Set());
+  const itemsLoadedWindowRef = useRef(0);
+  const historyQueryVersionRef = useRef(0);
+  const historyLoadingWindowsRef = useRef(new Set());
+  const historyLoadedWindowRef = useRef(0);
+
+  const buildItemsWindowParams = (windowPage) => {
+    const params = { page: windowPage, page_size: TABLE_WINDOW_SIZE };
     if (appliedItemsSearch) {
       params.search = appliedItemsSearch;
     }
@@ -139,17 +146,71 @@ const [importResult, setImportResult] = useState(null);
     return params;
   };
 
-  const loadItems = async (page = itemsPage) => {
-    setItemsLoading(true);
+  const loadItemsWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
+    if (itemsLoadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = itemsQueryVersionRef.current;
+    itemsLoadingWindowsRef.current.add(windowPage);
+    if (withLoading) setItemsLoading(true);
+
     try {
-      const response = await externalInventoryAPI.getItems(buildItemsParams(page));
+      const response = await externalInventoryAPI.getItems(buildItemsWindowParams(windowPage));
+      if (queryVersion !== itemsQueryVersionRef.current) {
+        return;
+      }
+
       const rows = Array.isArray(response?.data) ? response.data : [];
-      setItems(rows);
-      setItemsTotal(Number(response?.pagination?.total || rows.length));
+      const total = Number(response?.pagination?.total || rows.length);
+
+      setItems((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+
+      setItemsTotal(total);
+      itemsLoadedWindowRef.current = Math.max(itemsLoadedWindowRef.current, windowPage);
     } catch (error) {
       showToast(error.message || 'Failed to load items', 'error');
     } finally {
-      setItemsLoading(false);
+      itemsLoadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setItemsLoading(false);
+    }
+  };
+
+  const resetAndLoadItems = async () => {
+    itemsQueryVersionRef.current += 1;
+    itemsLoadedWindowRef.current = 0;
+    itemsLoadingWindowsRef.current = new Set();
+    setItems([]);
+    setItemsTotal(0);
+    setItemsPage(1);
+    await loadItemsWindow(1, { reset: true, withLoading: true });
+  };
+
+  const handleItemsPageChange = (nextPage) => {
+    setItemsPage(nextPage);
+
+    const requiredWindow = Math.ceil(nextPage / TABLE_WINDOW_PAGES);
+    const loadedPageCount = Math.max(1, Math.ceil((items.length || 0) / TABLE_PAGE_SIZE));
+    const totalPageCount = Math.max(1, Math.ceil((itemsTotal || 0) / TABLE_PAGE_SIZE));
+    const totalWindows = Math.ceil((itemsTotal || 0) / TABLE_WINDOW_SIZE);
+
+    if (requiredWindow > itemsLoadedWindowRef.current) {
+      loadItemsWindow(requiredWindow, { reset: false, withLoading: false });
+    }
+
+    if (nextPage >= loadedPageCount && loadedPageCount < totalPageCount) {
+      const nextWindow = itemsLoadedWindowRef.current + 1;
+      if (nextWindow <= totalWindows && nextWindow > itemsLoadedWindowRef.current) {
+        loadItemsWindow(nextWindow, { reset: false, withLoading: false });
+      }
     }
   };
 
@@ -174,57 +235,163 @@ const [importResult, setImportResult] = useState(null);
     }
   };
 
-  const loadHistory = async (page = historyPage) => {
+  const buildHistoryWindowParams = (windowPage) => {
+    const params = { page: windowPage, page_size: TABLE_WINDOW_SIZE };
+    if (appliedHistorySearch) {
+      params.search = appliedHistorySearch;
+    }
+    if (historyWarranty) {
+      params.warranty = historyWarranty;
+    }
+    if (historyIdentifierType) {
+      params.identifier_type = historyIdentifierType;
+    }
+    if (historyDeviceType) {
+      params.type = historyDeviceType;
+    }
+    return params;
+  };
+
+  const loadHistoryWindow = async (windowPage, { reset = false, withLoading = false } = {}) => {
     if (!canManage) return;
-    setHistoryLoading(true);
+    if (historyLoadingWindowsRef.current.has(windowPage)) return;
+    const queryVersion = historyQueryVersionRef.current;
+    historyLoadingWindowsRef.current.add(windowPage);
+    if (withLoading) setHistoryLoading(true);
+
     try {
-      const params = { page, page_size: TABLE_PAGE_SIZE };
-      if (appliedHistorySearch) {
-        params.search = appliedHistorySearch;
+      const response = await externalInventoryAPI.getDistributions(buildHistoryWindowParams(windowPage));
+      if (queryVersion !== historyQueryVersionRef.current) {
+        return;
       }
-      if (historyWarranty) {
-        params.warranty = historyWarranty;
-      }
-      if (historyIdentifierType) {
-        params.identifier_type = historyIdentifierType;
-      }
-      if (historyDeviceType) {
-        params.type = historyDeviceType;
-      }
-      const response = await externalInventoryAPI.getDistributions(params);
+
       const rows = Array.isArray(response?.data) ? response.data : [];
-      setHistoryData(rows);
-      setHistoryTotal(Number(response?.pagination?.total || rows.length));
+      const total = Number(response?.pagination?.total || rows.length);
+
+      setHistoryData((prev) => {
+        const merged = reset ? rows : [...prev, ...rows];
+        const unique = [];
+        const seen = new Set();
+        for (const row of merged) {
+          const rowId = String(row?.id || '');
+          if (!rowId || seen.has(rowId)) continue;
+          seen.add(rowId);
+          unique.push(row);
+        }
+        return unique;
+      });
+
+      setHistoryTotal(total);
+      historyLoadedWindowRef.current = Math.max(historyLoadedWindowRef.current, windowPage);
     } catch (error) {
       showToast(error.message || 'Failed to load distribution history', 'error');
     } finally {
-      setHistoryLoading(false);
+      historyLoadingWindowsRef.current.delete(windowPage);
+      if (withLoading) setHistoryLoading(false);
     }
+  };
+
+  const resetAndLoadHistory = async () => {
+    if (!canManage) return;
+    historyQueryVersionRef.current += 1;
+    historyLoadedWindowRef.current = 0;
+    historyLoadingWindowsRef.current = new Set();
+    setHistoryData([]);
+    setHistoryTotal(0);
+    setHistoryPage(1);
+    await loadHistoryWindow(1, { reset: true, withLoading: true });
+  };
+
+  const handleHistoryPageChange = (nextPage) => {
+    setHistoryPage(nextPage);
+
+    const requiredWindow = Math.ceil(nextPage / TABLE_WINDOW_PAGES);
+    const loadedPageCount = Math.max(1, Math.ceil((historyData.length || 0) / TABLE_PAGE_SIZE));
+    const totalPageCount = Math.max(1, Math.ceil((historyTotal || 0) / TABLE_PAGE_SIZE));
+    const totalWindows = Math.ceil((historyTotal || 0) / TABLE_WINDOW_SIZE);
+
+    if (requiredWindow > historyLoadedWindowRef.current) {
+      loadHistoryWindow(requiredWindow, { reset: false, withLoading: false });
+    }
+
+    if (nextPage >= loadedPageCount && loadedPageCount < totalPageCount) {
+      const nextWindow = historyLoadedWindowRef.current + 1;
+      if (nextWindow <= totalWindows && nextWindow > historyLoadedWindowRef.current) {
+        loadHistoryWindow(nextWindow, { reset: false, withLoading: false });
+      }
+    }
+  };
+
+  const getItemsExportRows = async () => {
+    let page = 1;
+    let collected = [];
+    let total = 0;
+    while (true) {
+      const response = await externalInventoryAPI.getItems({
+        ...buildItemsWindowParams(page),
+        page_size: 1000,
+      });
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+      page += 1;
+    }
+    return collected;
+  };
+
+  const getHistoryExportRows = async () => {
+    if (!canManage) return [];
+    let page = 1;
+    let collected = [];
+    let total = 0;
+    while (true) {
+      const response = await externalInventoryAPI.getDistributions({
+        ...buildHistoryWindowParams(page),
+        page_size: 1000,
+      });
+      const rows = Array.isArray(response?.data) ? response.data : [];
+      total = Number(response?.pagination?.total || rows.length);
+      collected = collected.concat(rows);
+      if (!rows.length || collected.length >= total) {
+        break;
+      }
+      page += 1;
+    }
+    return collected;
   };
 
   const refreshAll = () => {
     queryClient.invalidateQueries({ queryKey: inventoryKeys.all });
-    loadItems(itemsPage);
+    resetAndLoadItems();
     if (canManage) {
-      loadHistory(historyPage);
+      resetAndLoadHistory();
     }
   };
-
-  useEffect(() => {
-    loadItems(itemsPage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsPage, appliedItemsSearch, itemsWarranty, itemsIdentifierType, itemsDeviceType]);
 
   useEffect(() => {
     loadRecipients();
   }, []);
 
   useEffect(() => {
+    const run = async () => {
+      await resetAndLoadItems();
+    };
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedItemsSearch, itemsWarranty, itemsIdentifierType, itemsDeviceType]);
+
+  useEffect(() => {
     if (canManage) {
-      loadHistory(historyPage);
+      const run = async () => {
+        await resetAndLoadHistory();
+      };
+      run();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyPage, appliedHistorySearch, historyWarranty, historyIdentifierType, historyDeviceType, canManage]);
+  }, [appliedHistorySearch, historyWarranty, historyIdentifierType, historyDeviceType, canManage]);
 
   useEffect(() => {
     const handler = () => refreshAll();
@@ -368,93 +535,6 @@ const [importResult, setImportResult] = useState(null);
     } catch (error) {
       showToast(error.message || 'Failed to delete item', 'error');
     }
-  };
-
-  const handleImportItems = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      showToast('Please upload a CSV file (.csv)', 'error');
-      return;
-    }
-    try {
-      setImportingItems(true);
-      const result = await externalInventoryAPI.bulkUploadItems(file);
-      setImportResult(result.data || {});
-      showToast(result.message || 'Import completed', 'success');
-      refreshAll();
-    } catch (error) {
-      showToast(error.message || 'Failed to import items', 'error');
-    } finally {
-      setImportingItems(false);
-    }
-  };
-
-  const escapeCsvCell = (value) => {
-    const text = String(value ?? '');
-    if (text.includes(',') || text.includes('"') || text.includes('\n')) {
-      return `"${text.replace(/"/g, '""')}"`;
-    }
-    return text;
-  };
-
-  const handleDownloadModel = () => {
-    const headers = [
-      'name',
-      'identifier_type',
-      'identifier',
-      'device_type',
-      'price',
-      'quantity',
-      'supplier_name',
-      'location',
-      'warranty_start_date',
-      'warranty_duration',
-      'notes',
-    ];
-    const sampleRows = [
-      {
-        name: 'Sample OLT Device',
-        identifier_type: '',
-        identifier: '',
-        device_type: 'OLT',
-        price: '2799',
-        quantity: '10',
-        supplier_name: 'Sample Supplier',
-        location: 'Warehouse A',
-        warranty_start_date: '2026-01-15',
-        warranty_duration: '12',
-        notes: 'OLT example',
-      },
-      {
-        name: 'Sample Remote Device',
-        identifier_type: 'MAC ID',
-        identifier: 'AA:BB:CC:DD:EE:FF',
-        device_type: 'Remote',
-        price: '1599',
-        quantity: '5',
-        supplier_name: 'Sample Supplier',
-        location: 'Warehouse B',
-        warranty_start_date: '2026-02-01',
-        warranty_duration: '6',
-        notes: 'Remote example',
-      },
-    ];
-    const csvLines = [
-      headers.join(','),
-      ...sampleRows.map((row) => headers.map((key) => escapeCsvCell(row[key])).join(',')),
-    ];
-    const csvContent = `\uFEFF${csvLines.join('\n')}`;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', 'external-inventory-import-model.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   const handleDistribute = async () => {
@@ -684,17 +764,6 @@ const [importResult, setImportResult] = useState(null);
           </Card>
 
           <Card title="Inventory Items" subtitle="Individual distribution items" padding={false}>
-            {importResult && (importResult.error_count > 0 || importResult.skipped_count > 0) && (
-              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-sm text-slate-600">
-                  Import finished: {importResult.created_count} created, {importResult.skipped_count} skipped,{' '}
-                  {importResult.error_count} errors.
-                  {importResult.errors_truncated || importResult.skipped_truncated
-                    ? ' Only the first 500 failed rows are shown.'
-                    : ''}
-                </p>
-              </div>
-            )}
             <DataTable
               columns={itemColumns}
               data={items}
@@ -703,32 +772,15 @@ const [importResult, setImportResult] = useState(null);
               pageSize={TABLE_PAGE_SIZE}
               totalItems={itemsTotal || items.length}
               currentPage={itemsPage}
-              onPageChange={setItemsPage}
+              onPageChange={handleItemsPageChange}
+              getExportRows={getItemsExportRows}
               emptyMessage="No external inventory items available"
               onRowClick={canManage ? (row) => openEditItem(row) : undefined}
               actions={
                 canManage ? (
-                  <>
-                    <input
-                      ref={importInputRef}
-                      type="file"
-                      accept=".csv,text/csv"
-                      className="hidden"
-                      onChange={handleImportItems}
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      icon={Upload}
-                      loading={importingItems}
-                      onClick={() => importInputRef.current?.click()}
-                    >
-                      Import
-                    </Button>
-                    <Button size="sm" variant="secondary" icon={Download} onClick={handleDownloadModel}>
-                      Download Model
-                    </Button>
-                  </>
+                  <Button size="sm" variant="outline" icon={Upload} onClick={() => navigate('/external-inventory/bulk-import')}>
+                    Bulk Import
+                  </Button>
                 ) : null
               }
             />
@@ -910,7 +962,8 @@ const [importResult, setImportResult] = useState(null);
               pageSize={TABLE_PAGE_SIZE}
               totalItems={historyTotal || historyData.length}
               currentPage={historyPage}
-              onPageChange={setHistoryPage}
+              onPageChange={handleHistoryPageChange}
+              getExportRows={getHistoryExportRows}
               emptyMessage="No distributions recorded yet"
             />
           </Card>

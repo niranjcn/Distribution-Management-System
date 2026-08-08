@@ -17,6 +17,14 @@ from app.services.digital_id_search import build_identity_search_clause
 from app.utils.helpers import get_pagination, generate_distribution_id
 
 
+# Device-facing bulk operations (holder updates, history writes, clearing the
+# pending_receipt lock) are executed in bounded batches. Single `IN` statements
+# over the entire device list would exceed MySQL prepared-statement / packet
+# limits and serialize hundreds of thousands of ids into one query, which is the
+# dominant cost when confirming receipt of a large bulk distribution.
+_BULK_CHUNK_SIZE = 1000
+
+
 def _distribution_manifest_dir() -> Path:
     """Directory for generated distribution Excel manifests."""
     manifests_dir = Path(__file__).resolve().parents[2] / "distribution_manifests"
@@ -175,74 +183,128 @@ async def _bulk_update_device_holders(
     if not normalized_ids:
         return []
 
+    now = datetime.now().replace(tzinfo=None)
+
     async with async_session_factory() as session:
-        ph = ",".join([f":d_{i}" for i in range(len(normalized_ids))])
-        params = {f"d_{i}": did for i, did in enumerate(normalized_ids)}
-        rows = (await session.execute(
-            text(f"SELECT id, status FROM devices WHERE id IN ({ph})"),
-            params
-        )).mappings().all()
-        status_map = {str(r["id"]): r["status"] for r in rows if r["id"] is not None}
-        if not status_map:
-            return []
+        updated_ids: List[str] = []
 
-        existing_ids = [int(dev_id) for dev_id in status_map.keys()]
-        now = datetime.now().replace(tzinfo=None)
-
-        uph = ",".join([f":e_{i}" for i in range(len(existing_ids))])
-        update_params: Dict[str, Any] = {
-            "holder_id": holder_id,
-            "holder_name": holder_name,
-            "holder_type": holder_type,
-            "location": location,
-            "status": status,
-            "now": now,
-        }
-        for i, eid in enumerate(existing_ids):
-            update_params[f"e_{i}"] = eid
-
-        await session.execute(
-            text(f"""UPDATE devices
-                SET current_holder_id = :holder_id, current_holder_name = :holder_name, current_holder_type = :holder_type,
-                    current_location = :location, status = :status, updated_at = :now
-                WHERE id IN ({uph})"""),
-            update_params
+        # History rows are written straight from `devices` with an INSERT ...
+        # SELECT, so the per-device `status_before` is captured in SQL and
+        # hundreds of thousands of rows never round-trip through Python. The
+        # SELECT runs before the UPDATE below, so it still sees the pre-move
+        # status for each device in the batch.
+        history_sql = """INSERT INTO device_history (
+            device_id, action, distribution_id, from_user_id, from_user_name,
+            to_user_id, to_user_name, status_before, status_after,
+            location, notes, performed_by, performed_by_name, timestamp
         )
+        SELECT id, :action, :distribution_id, :from_user_id, :from_user_name,
+            :to_user_id, :to_user_name, status AS status_before, :status_after,
+            :location, :notes, :performed_by, :performed_by_name, :ts
+        FROM devices WHERE id IN ({ph})"""
 
-        history_rows = []
-        for dev_id in existing_ids:
-            history_rows.append({
-                "device_id": dev_id,
+        stock_update_sql = """
+            UPDATE devices
+            SET current_holder_id = :holder_id, current_holder_name = :holder_name,
+                current_holder_type = :holder_type, current_location = :location,
+                status = :status, updated_at = :now
+            WHERE id IN ({ph})"""
+
+        for batch in chunks(normalized_ids, _BULK_CHUNK_SIZE):
+            ph = ",".join([f":d_{i}" for i in range(len(batch))])
+            params = {f"d_{i}": did for i, did in enumerate(batch)}
+
+            rows = (await session.execute(
+                text(f"SELECT id, status FROM devices WHERE id IN ({ph})"),
+                params
+            )).mappings().all()
+            status_map = {str(r["id"]): r["status"] for r in rows if r["id"] is not None}
+            if not status_map:
+                continue
+
+            existing_ids = [int(dev_id) for dev_id in status_map.keys()]
+
+            hph = ",".join([f":h_{i}" for i in range(len(existing_ids))])
+            history_params = {
                 "action": action,
                 "distribution_id": distribution_id,
                 "from_user_id": from_user_id,
                 "from_user_name": from_user_name,
                 "to_user_id": holder_id,
                 "to_user_name": holder_name,
-                "status_before": status_map.get(str(dev_id)),
                 "status_after": status,
                 "location": location,
                 "notes": notes,
                 "performed_by": performed_by,
                 "performed_by_name": performed_by_name,
                 "ts": now,
-            })
-
-        if history_rows:
+            }
+            history_params.update({f"h_{i}": eid for i, eid in enumerate(existing_ids)})
             await session.execute(
-                text("""INSERT INTO device_history (
-                    device_id, action, distribution_id, from_user_id, from_user_name,
-                    to_user_id, to_user_name, status_before, status_after,
-                    location, notes, performed_by, performed_by_name, timestamp
-                ) VALUES (:device_id, :action, :distribution_id, :from_user_id, :from_user_name,
-                    :to_user_id, :to_user_name, :status_before, :status_after,
-                    :location, :notes, :performed_by, :performed_by_name, :ts)"""),
-                history_rows
+                text(history_sql.format(ph=",".join(f":h_{i}" for i in range(len(existing_ids))))),
+                history_params
             )
+
+            eph = ",".join([f":e_{i}" for i in range(len(existing_ids))])
+            update_params = {
+                "holder_id": holder_id,
+                "holder_name": holder_name,
+                "holder_type": holder_type,
+                "location": location,
+                "status": status,
+                "now": now,
+            }
+            update_params.update({f"e_{i}": eid for i, eid in enumerate(existing_ids)})
+            await session.execute(
+                text(stock_update_sql.format(ph=eph)),
+                update_params
+            )
+
+            updated_ids.extend(str(dev_id) for dev_id in existing_ids)
 
         await bump_cache_version(session)
         await session.commit()
-        return [str(dev_id) for dev_id in existing_ids]
+        return updated_ids
+
+
+async def _clear_distribution_device_locks(
+    session, device_ids: List[Any], now: datetime, distribution_code: Optional[str] = None
+) -> None:
+    """Chunked clear of `devices.current_distribution_id` for confirmed devices.
+
+    Operates in bounded batches so a large bulk distribution never builds a
+    single `IN` clause over the whole device list. When `distribution_code` is
+    given, only devices still carrying that lock are cleared.
+    """
+    if not device_ids:
+        return
+    for batch in chunks(device_ids, _BULK_CHUNK_SIZE):
+        int_ids = []
+        for dev_id in batch:
+            try:
+                int_ids.append(int(dev_id))
+            except (TypeError, ValueError):
+                continue
+        if not int_ids:
+            continue
+        uph = ",".join([f":r_{i}" for i in range(len(int_ids))])
+        rparams = {f"r_{i}": did for i, did in enumerate(int_ids)}
+        rparams["now"] = now
+        if distribution_code:
+            rparams["dist_code"] = distribution_code
+            await session.execute(
+                text(f"""UPDATE devices
+                    SET current_distribution_id = NULL, updated_at = :now
+                    WHERE id IN ({uph}) AND current_distribution_id = :dist_code"""),
+                rparams
+            )
+        else:
+            await session.execute(
+                text(f"""UPDATE devices
+                    SET current_distribution_id = NULL, updated_at = :now
+                    WHERE id IN ({uph})"""),
+                rparams
+            )
 
 
 async def _get_distribution_scope_user_ids(session, user: Dict[str, Any]) -> Optional[Set[int]]:
@@ -1284,15 +1346,7 @@ async def confirm_receipt(
         )
 
         async with async_session_factory() as session:
-            if device_ids:
-                uph = ",".join([f":r_{i}" for i in range(len(device_ids))])
-                rparams = {f"r_{i}": int(did) for i, did in enumerate(device_ids)}
-                await session.execute(
-                    text(f"""UPDATE devices
-                        SET current_distribution_id = NULL, updated_at = :now
-                        WHERE id IN ({uph})"""),
-                    {**rparams, "now": now}
-                )
+            await _clear_distribution_device_locks(session, device_ids, now)
             await session.commit()
 
         async with async_session_factory() as session:
@@ -1367,7 +1421,14 @@ async def confirm_receipt(
             }
         ])
 
-    return await get_distribution_by_id(distribution_id)
+    dist["status"] = DistributionStatus.APPROVED.value if received else DistributionStatus.DISPUTED.value
+    dist["notes"] = notes if notes is not None else dist.get("notes")
+    dist["updated_at"] = now
+    if received:
+        dist["confirmed_at"] = now.date()
+        dist["confirmed_by"] = user_id
+        dist["confirmed_by_name"] = user["name"]
+    return dist
 
 
 async def confirm_disputed_return(
@@ -1433,14 +1494,7 @@ async def confirm_disputed_return(
                 distribution_id=dist.get("distribution_id"),
             )
             if dist.get("distribution_id"):
-                uph = ",".join([f":d_{i}" for i in range(len(device_ids))])
-                dparams = {f"d_{i}": int(did) for i, did in enumerate(device_ids)}
-                await session.execute(
-                    text(f"""UPDATE devices
-                        SET current_distribution_id = NULL, updated_at = :now2
-                        WHERE id IN ({uph})"""),
-                    {**dparams, "now2": now}
-                )
+                await _clear_distribution_device_locks(session, device_ids, now)
             await session.commit()
 
     await notification_service.create_notification(
@@ -1455,7 +1509,11 @@ async def confirm_disputed_return(
         link=f"/distributions?distributionId={distribution_id}",
     )
 
-    return await get_distribution_by_id(distribution_id)
+    dist["status"] = DistributionStatus.REJECTED.value
+    dist["delivery_date"] = now.date()
+    dist["notes"] = notes if notes is not None else dist.get("notes")
+    dist["updated_at"] = now
+    return dist
 
 
 async def cancel_distribution(distribution_id: str, user: dict) -> bool:
@@ -1480,28 +1538,24 @@ async def cancel_distribution(distribution_id: str, user: dict) -> bool:
         device_ids = dist.get("device_ids") or []
         if dist.get("distribution_id") and device_ids:
             dist_code = dist["distribution_id"]
-            hist_rows = [
-                {
-                    "device_id": int(did),
-                    "distribution_id": dist_code,
-                    "notes": f"Distribution {dist_code} cancelled",
-                    "ts": now,
-                }
-                for did in device_ids
-            ]
-            await session.execute(
-                text("""INSERT INTO device_history (
-                    device_id, action, distribution_id, notes, timestamp
-                ) VALUES (:device_id, 'distribution_record', :distribution_id, :notes, :ts)"""),
-                hist_rows
-            )
-            uph = ",".join([f":c_{i}" for i in range(len(device_ids))])
-            cparams = {f"c_{i}": int(did) for i, did in enumerate(device_ids)}
-            await session.execute(
-                text(f"""UPDATE devices
-                    SET current_distribution_id = NULL, updated_at = :now2
-                    WHERE id IN ({uph}) AND current_distribution_id = :dist_code"""),
-                {**cparams, "now2": now, "dist_code": dist_code}
+            for batch in chunks(device_ids, _BULK_CHUNK_SIZE):
+                batch_hist = [
+                    {
+                        "device_id": int(did),
+                        "distribution_id": dist_code,
+                        "notes": f"Distribution {dist_code} cancelled",
+                        "ts": now,
+                    }
+                    for did in batch
+                ]
+                await session.execute(
+                    text("""INSERT INTO device_history (
+                        device_id, action, distribution_id, notes, timestamp
+                    ) VALUES (:device_id, 'distribution_record', :distribution_id, :notes, :ts)"""),
+                    batch_hist
+                )
+            await _clear_distribution_device_locks(
+                session, device_ids, now, distribution_code=dist_code
             )
 
         await bump_cache_version(session)
@@ -1763,13 +1817,9 @@ async def sync_approved_distributions(user: Dict[str, Any]) -> Dict[str, Any]:
                 synced_count += len(updated)
 
                 if dist.get("distribution_id"):
-                    uph = ",".join([f":s_{i}" for i in range(len(device_ids))])
-                    sparams = {f"s_{i}": int(did) for i, did in enumerate(device_ids)}
-                    await session.execute(
-                        text(f"""UPDATE devices
-                            SET current_distribution_id = NULL, updated_at = :now2
-                            WHERE id IN ({uph}) AND current_distribution_id = :dist_code"""),
-                        {**sparams, "now2": datetime.now().replace(tzinfo=None), "dist_code": dist["distribution_id"]}
+                    await _clear_distribution_device_locks(
+                        session, device_ids, datetime.now().replace(tzinfo=None),
+                        distribution_code=dist["distribution_id"]
                     )
 
         await session.commit()

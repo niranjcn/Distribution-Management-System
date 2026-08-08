@@ -47,6 +47,7 @@ import BulkImportDevices from './pages/BulkImportDevices';
 import BulkImportDistribution from './pages/BulkImportDistribution';
 import BulkUploadUsers from './pages/BulkUploadUsers';
 import ExternalBulkDistribution from './pages/ExternalBulkDistribution';
+import ExternalBulkImport from './pages/ExternalBulkImport';
 import { normalizeRole, isForcedCredentialUpdateRequired } from './utils/roles';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 import { AlertTriangle } from 'lucide-react';
@@ -367,6 +368,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff']}>
               <ExternalInventory tab="distribution" />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="external-inventory/bulk-import"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'manager', 'pdic_staff']}>
+              <ExternalBulkImport />
             </ProtectedRoute>
           }
         />
