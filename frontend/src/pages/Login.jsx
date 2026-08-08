@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import Modal from '../components/ui/Modal';
+import Button from '../components/ui/Button';
 import {
   Eye,
   EyeOff,
@@ -18,6 +20,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showForgotModal, setShowForgotModal] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -181,9 +184,13 @@ const Login = () => {
                 <input type="checkbox" className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500" />
                 <span className="ml-2 text-sm text-gray-500">Remember me</span>
               </label>
-              <a href="#" className="text-sm text-green-700 hover:text-green-800 font-medium">
+              <button
+                type="button"
+                onClick={() => setShowForgotModal(true)}
+                className="text-sm text-green-700 hover:text-green-800 font-medium"
+              >
                 Forgot password?
-              </a>
+              </button>
             </div>
 
             <button
@@ -221,6 +228,19 @@ const Login = () => {
           </form>
         </div>
       </div>
+
+      <Modal
+        isOpen={showForgotModal}
+        onClose={() => setShowForgotModal(false)}
+        title="Forgot Password"
+        footer={
+          <Button onClick={() => setShowForgotModal(false)}>OK</Button>
+        }
+      >
+        <p className="text-sm text-gray-600">
+          Please contact PDIC to reset your password.
+        </p>
+      </Modal>
     </div>
   );
 };

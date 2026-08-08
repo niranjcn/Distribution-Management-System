@@ -230,6 +230,7 @@ const Sidebar = ({ isOpen, onClose }) => {
         ...commonItems,
         reportMenu,
         { path: '/view-as', icon: Eye, label: 'View User Dashboard' },
+        { path: '/activities', icon: FileText, label: 'Activities' },
         {
           key: 'users',
           icon: Users,

@@ -238,7 +238,9 @@ const Activities = () => {
         <p className="mt-1 text-sm text-slate-200">
           {normalizeRole(user?.role) === 'sub_distributor'
             ? 'Actions performed by your sub-distribution employees.'
-            : 'Admin-wide timeline of meaningful actions performed by users.'}
+            : normalizeRole(user?.role) === 'manager'
+              ? 'Timeline of actions performed by your team and staff.'
+              : 'Admin-wide timeline of meaningful actions performed by users.'}
         </p>
       </div>
 

@@ -1466,10 +1466,10 @@ const Users = () => {
                     <p className="font-medium text-gray-800">
                       {(() => {
                         if (selectedUser.created_by_name) {
-                          return `${selectedUser.created_by_name}${selectedUser.created_by_email ? ` (${selectedUser.created_by_email})` : ''}`;
+                          return selectedUser.created_by_name;
                         }
                         const creator = users.find(u => String(u.id) === String(selectedUser.created_by));
-                        return creator ? `${creator.name} (${creator.email})` : (selectedUser.created_by ? `User #${selectedUser.created_by}` : 'N/A');
+                        return creator ? creator.name : (selectedUser.created_by ? `User #${selectedUser.created_by}` : 'N/A');
                       })()}
                     </p>
                   </div>

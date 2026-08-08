@@ -167,6 +167,7 @@ class TestDashboardAdminActivities:
             start_date="2025-01-01",
             end_date="2025-01-31",
             actor_ids=None,
+            exclude_roles=None,
         )
 
     def test_sub_distributor_scopes_to_employee_ids(
@@ -194,6 +195,7 @@ class TestDashboardAdminActivities:
             start_date=None,
             end_date=None,
             actor_ids=[101, 102],
+            exclude_roles=None,
         )
 
     def test_sub_distributor_with_no_employees_passes_empty_ids(
@@ -218,6 +220,31 @@ class TestDashboardAdminActivities:
             start_date=None,
             end_date=None,
             actor_ids=[],
+            exclude_roles=None,
+        )
+
+    def test_manager_scopes_to_excluded_roles(
+        self, client, mock_dashboard_services, set_role
+    ):
+        import app.routes.dashboard as dash_mod
+
+        dash_mod.dashboard_service.get_admin_activities = AsyncMock(
+            return_value=self._fake_result()
+        )
+
+        set_role("manager")
+        client.get(self.ACTIVITIES_URL)
+
+        dash_mod.dashboard_service.get_admin_activities.assert_awaited_once_with(
+            page=1,
+            page_size=50,
+            actor=None,
+            category=None,
+            search=None,
+            start_date=None,
+            end_date=None,
+            actor_ids=None,
+            exclude_roles=["super_admin", "md_director"],
         )
 
     def test_unauthenticated_returns_401(self, client, test_app):

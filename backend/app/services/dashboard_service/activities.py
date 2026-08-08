@@ -77,6 +77,7 @@ async def get_admin_activities(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     actor_ids: Optional[List[int]] = None,
+    exclude_roles: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """SQL-paginated admin-wide activities.
 
@@ -87,6 +88,10 @@ async def get_admin_activities(
 
     When ``actor_ids`` is provided the feed is scoped to those actor ids only
     (used for sub-distributor employee-activity feeds).
+
+    When ``exclude_roles`` is provided, activity performed by users holding any
+    of those roles is hidden (used for the manager feed, which does not surface
+    executive-level activity). Rows with no attributable actor are still shown.
     """
     normalized_category = (category or "all").strip().lower()
 
@@ -140,6 +145,13 @@ async def get_admin_activities(
             conditions.append(f"actor_id IN ({placeholders})")
             for i, actor_id in enumerate(actor_ids):
                 params[f"actor_id_{i}"] = int(actor_id)
+
+    if exclude_roles:
+        roles_csv = ", ".join(f"'{str(r).replace(chr(39), '')}'" for r in exclude_roles)
+        conditions.append(
+            f"(actor_id IS NULL OR actor_id NOT IN "
+            f"(SELECT id FROM users WHERE role IN ({roles_csv})))"
+        )
 
     where = " AND ".join(conditions)
 
