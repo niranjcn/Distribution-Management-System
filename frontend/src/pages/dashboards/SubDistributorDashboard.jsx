@@ -41,9 +41,14 @@ const doughnutOptions = {
   },
 };
 
-const SubDistributorDashboard = () => {
-  const { user } = useAuth();
+const SubDistributorDashboard = ({ viewAsUser }) => {
+  const { user: authUser } = useAuth();
   const { showToast } = useNotifications();
+  // When used from the "View User Dashboard" read-only preview, render the
+  // target user's dashboard using their identity and data instead of the
+  // logged-in viewer's.
+  const user = viewAsUser || authUser;
+  const isViewAs = !!viewAsUser;
   const role = String(user?.role || '').toLowerCase();
   const isSubDistributionManager = role === 'sub_distribution_manager';
   const isCluster = role === 'cluster';
@@ -68,6 +73,46 @@ const SubDistributorDashboard = () => {
   useEffect(() => {
     const dateParams = buildDateParams(dateRange);
     let active = true;
+
+    // View-as mode: the dashboard is a read-only preview of the target user's
+    // actual dashboard. All the numbers come from the single view-as endpoint
+    // which is already scoped to that user, so no parallel list calls needed.
+    if (isViewAs) {
+      setStatsLoading(true);
+      setAdvancedLoading(true);
+      setListsLoading(true);
+      dashboardAPI.getViewAsDashboard(viewAsUser.id, { ...dateParams, page_size: 500 })
+        .then((res) => {
+          if (!active) return;
+          if (!res.success) throw new Error(res.message || 'Failed to load dashboard');
+          const d = res.data || {};
+          setStats(d.stats || {});
+          setAdvanced(d.advanced || { kpis: {}, charts: {}, alerts: [] });
+          setDistributions(Array.isArray(d.distributions) ? d.distributions : []);
+          setMyOperators(Array.isArray(d.users) ? d.users : []);
+          setDefectReports(Array.isArray(d.defects) ? d.defects : []);
+          setReturnRequests(Array.isArray(d.returns) ? d.returns : []);
+          const devs = Array.isArray(d.devices) ? d.devices : [];
+          setMyDevices(devs);
+          const ds = d.device_stats || {};
+          const totalInChain = Number(ds.total_in_chain ?? d.devices_total ?? devs.length ?? 0);
+          const inMyHand = Number(ds.in_my_hand ?? devs.filter((dev) => String(dev.current_holder_id) === String(viewAsUser.id)).length ?? 0);
+          const underSubordinates = Number(ds.under_subordinates ?? Math.max(0, totalInChain - inMyHand));
+          setDeviceStats({
+            total_in_chain: totalInChain,
+            in_my_hand: inMyHand,
+            under_subordinates: underSubordinates,
+          });
+        })
+        .catch((err) => {
+          console.error('Failed to load view-as dashboard:', err);
+          if (active) showToast('Failed to load dashboard', 'error');
+        })
+        .finally(() => {
+          if (active) { setStatsLoading(false); setAdvancedLoading(false); setListsLoading(false); }
+        });
+      return () => { active = false; };
+    }
 
     // Batch 1 — authoritative stat cards from /dashboard/stats (fast).
     setStatsLoading(true);
@@ -125,7 +170,7 @@ const SubDistributorDashboard = () => {
       active = false;
       window.clearTimeout(listTimer);
     };
-  }, [dateRange]);
+  }, [dateRange, viewAsUser?.id]);
 
   const charts = advanced.charts || {};
   const myDeviceSplitData = useMemo(() => ({

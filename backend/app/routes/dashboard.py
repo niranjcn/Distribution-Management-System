@@ -340,7 +340,7 @@ async def view_as_dashboard(
     try:
         async with async_session_factory() as session:
             result = await session.execute(
-                text("SELECT id, name, email, role FROM users WHERE id = :id"),
+                text("SELECT id, name, email, role, parent_id FROM users WHERE id = :id"),
                 {"id": int(target_user_id)}
             )
             row = result.mappings().first()
@@ -348,8 +348,8 @@ async def view_as_dashboard(
                 raise HTTPException(status_code=404, detail="User not found")
 
             target_role = str(row["role"])
-            if target_role not in ("sub_distributor", "cluster", "operator", "sub_distribution_manager"):
-                raise HTTPException(status_code=400, detail="Can only view dashboards for sub-distributors, clusters, and operators")
+            if target_role not in ("sub_distributor", "cluster", "operator", "sub_distribution_manager", "sub_distribution_employee"):
+                raise HTTPException(status_code=400, detail="Can only view dashboards for sub-distributors, clusters, operators, and sub-distribution employees")
 
             target_user = {
                 "_id": str(row["id"]),
@@ -357,6 +357,7 @@ async def view_as_dashboard(
                 "role": target_role,
                 "name": str(row.get("name", "")),
                 "email": str(row.get("email", "")),
+                "parent_id": str(row["parent_id"]) if row.get("parent_id") is not None else None,
             }
 
         data = await dashboard_service.get_view_as_dashboard(target_user, start_date, end_date, page=page, page_size=page_size)

@@ -574,6 +574,22 @@ html {
   color: var(--text-secondary) !important;
 }
 
+/* Soft-gradient banners (page headers like External Inventory / View User
+   Dashboard, the scoped-view panel, distribution metrics callouts) keep a
+   light blue/green gradient in dark mode while the schema-var text turns
+   light, making the text invisible. Re-surface them with the dark card
+   gradient so the var()-driven light text stays readable. */
+.ops-theme-dark .ops-theme .bg-gradient-to-r.from-blue-50,
+.ops-theme-dark .ops-theme .bg-gradient-to-r.from-green-50,
+.ops-theme-dark .ops-theme .bg-gradient-to-br.from-blue-50:not(.stat-card-glow),
+.ops-theme-dark .ops-theme .bg-gradient-to-br.from-green-50:not(.stat-card-glow) {
+  background-image: linear-gradient(to right, var(--bg-card) 0%, var(--bg-card-hover) 100%) !important;
+}
+
+.ops-theme-dark .ops-theme .border-blue-100 {
+  border-color: var(--border-color) !important;
+}
+
 .ops-theme-dark .stat-card {
   background: var(--bg-card) !important;
   border-color: var(--border-color) !important;
