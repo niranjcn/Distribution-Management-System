@@ -4,9 +4,9 @@ from pydantic import BaseModel
 from app.services import dashboard_service, user_service
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
-from app.middleware.auth_middleware import get_current_user, require_admin_or_md, require_any_role, require_admin_or_manager_or_md_or_staff, require_admin_or_md_or_sub_distributor
+from app.middleware.auth_middleware import get_current_user, require_any_role, require_admin_or_manager_or_md_or_staff, require_admin_or_manager_or_md, require_activities_viewers
 from app.core.activity_logger import log_business_activity
-from app.utils.roles import normalize_role, SUB_DISTRIBUTOR
+from app.utils.roles import normalize_role, SUB_DISTRIBUTOR, SUPER_ADMIN, MD_DIRECTOR, MANAGER
 
 router = APIRouter()
 
@@ -253,18 +253,24 @@ async def get_admin_activities(
     search: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    current_user: dict = Depends(require_admin_or_md_or_sub_distributor),
+    current_user: dict = Depends(require_activities_viewers),
 ):
     """Get activities with filtering.
 
-    Super admins and MD directors see the admin-wide feed. A sub-distributor
-    sees only the actions performed by their sub-distribution employees.
+    Super admins and MD directors see the full admin-wide feed. A manager sees
+    the same feed minus activity performed by executive-level users. A
+    sub-distributor sees only the actions performed by their sub-distribution
+    employees.
     """
     try:
         actor_ids = None
-        if normalize_role(current_user.get("role")) == SUB_DISTRIBUTOR:
+        exclude_roles = None
+        role = normalize_role(current_user.get("role"))
+        if role == SUB_DISTRIBUTOR:
             sub_id = str(current_user.get("_id", current_user.get("id", "")))
             actor_ids = await _get_employee_ids(sub_id)
+        elif role == MANAGER:
+            exclude_roles = [SUPER_ADMIN, MD_DIRECTOR]
 
         result = await dashboard_service.get_admin_activities(
             page=page,
@@ -275,6 +281,7 @@ async def get_admin_activities(
             start_date=start_date,
             end_date=end_date,
             actor_ids=actor_ids,
+            exclude_roles=exclude_roles,
         )
 
         return {
@@ -327,7 +334,7 @@ async def view_as_dashboard(
     end_date: str = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=500),
-    current_user: dict = Depends(require_admin_or_md)
+    current_user: dict = Depends(require_admin_or_manager_or_md)
 ):
     """Get dashboard data as seen by the target user (admin/manager only)."""
     try:

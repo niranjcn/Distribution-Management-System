@@ -347,7 +347,7 @@ function AppRoutes() {
         <Route
           path="activities"
           element={
-            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'sub_distributor']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'md_director', 'manager', 'sub_distributor']}>
               <Activities />
             </ProtectedRoute>
           }

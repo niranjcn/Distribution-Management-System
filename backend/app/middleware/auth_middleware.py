@@ -121,6 +121,7 @@ class PermissionChecker:
 require_admin = RoleChecker(["super_admin"])
 require_admin_or_md = RoleChecker(["super_admin", "md_director"])
 require_admin_or_md_or_sub_distributor = RoleChecker(["super_admin", "md_director", "sub_distributor"])
+require_activities_viewers = RoleChecker(["super_admin", "md_director", "manager", "sub_distributor"])
 require_admin_or_manager = RoleChecker(["super_admin", "manager"])
 require_admin_or_manager_or_md = RoleChecker(["super_admin", "manager", "md_director"])
 require_admin_or_manager_or_md_or_staff = RoleChecker(["super_admin", "manager", "md_director", "pdic_staff"])
