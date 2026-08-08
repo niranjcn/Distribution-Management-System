@@ -3,15 +3,10 @@
 **Who you are:** PDIC Staff are the hands-on operational team at headquarters. You
 register and manage devices, create and confirm distributions, handle defects and
 returns, manage external inventory, and keep the management approval queue moving.
-You work from the **Manager Dashboard**, exactly like the Manager — with three
-differences:
+You work from the **Manager Dashboard**, exactly like the Manager.
 
-- You **do not** manage user accounts (no User Management, no user hierarchy, no bulk
-  user upload, no change-request review).
-- You **do not** see the Backup page or the Activities audit log, and you cannot view
-  another user's dashboard.
-- Your **device edits, deletes, and status changes are requests** — they are applied
-  only after a Manager or Super Admin approves them (see section 4).
+Your **device edits, deletes, and status changes are requests** — submit them and they
+are applied after a Manager or Super Admin approves them (see section 4).
 
 Everything else — devices, distributions, defects, returns, approvals, reports, and
 external inventory — works for you just as it does for the Manager.
@@ -162,9 +157,8 @@ in a separate section at the bottom). To narrow this list efficiently:
   **Open Replacement Device** button — click it to jump straight to the replacement.
 - **Fix a broken holder:** if a device shows the wrong holder, open it and click
   **Fix Holder** (re-applies the most recent distribution).
-- **Request a status change:** as PDIC Staff you cannot change a device's status
-  directly — you submit a **status change request** from the device page, which a
-  Manager or Super Admin approves (see 4.6).
+- **Request a status change:** submit a **status change request** from the device page,
+  which a Manager or Super Admin approves (see 4.6).
 - **Refresh:** after a distribution, click **Refresh** on the device page to pull the
   latest journey.
 
@@ -327,9 +321,8 @@ Use this when adding many devices at once (a new shipment, a warehouse transfer)
 
 ### 4.4 Step-by-step: request an edit to a device
 
-**Who can apply edits directly:** only the Manager and Super Admin. As PDIC Staff your
-edit is a **request** a Manager/Super Admin must approve — it is **not** applied
-immediately.
+Your edit is a **request** a Manager or Super Admin approves — submit it and it is
+applied once approved.
 
 1. In **Devices**, find the device (search or filter).
 2. Click the **amber pencil (Edit)** icon on its row — or open Device Details and click
@@ -348,8 +341,8 @@ stays as it was. You are notified either way.
 
 ### 4.5 Step-by-step: request a delete
 
-Deleting a device permanently removes it. Because this cannot be undone, as PDIC Staff
-you **request** a delete rather than perform it — a Manager or Super Admin approves it.
+Deleting a device permanently removes it. Because this has no undo, you **request** a
+delete and a Manager or Super Admin approves it.
 
 **Requesting a delete for one or more devices:**
 
@@ -370,7 +363,7 @@ has no undo, and approval is up to the Manager.
 ### 4.6 Step-by-step: request a device status change
 
 Changing a device's status (e.g. to defective, in use, maintenance) affects who can
-distribute it, so as PDIC Staff this is also a **request**.
+distribute it, so you submit this as a **request** too.
 
 1. Open **Track Device** and find the device.
 2. Use the **Request Status Change** option on the device page.
@@ -411,9 +404,9 @@ distributions, viewing them, the statuses, and the confirmation/approval workflo
 4. **You resolve disputes** — when the devices are physically back with the sender,
    you click **Confirm devices are back** to unlock redistribution.
 
-> **The golden rule:** the recipient **cannot redistribute** the devices until they
-> confirm receipt. Until then the devices stay with the sender. This is what makes the
-> "disputed" state safe — nothing moves twice by accident.
+> **The golden rule:** the devices stay with the sender until the recipient confirms
+> receipt. Only after confirmation can the recipient redistribute them further down the
+> chain. This is what makes the "disputed" state safe — nothing moves twice by accident.
 
 ### 5.2 Step-by-step: create a distribution individually
 
@@ -808,7 +801,7 @@ catalog automatically.
 3. **Select Recipient Type** — choose **Sub Distributor**, **Cluster**, or **Operator**.
 4. **Recipient** — choose the specific person. The count next to the label shows how many
    of that type are available (only **active** accounts are listed). If none exist you get
-   a warning and cannot continue.
+   a warning — pick another recipient type or check back once an active account is added.
 5. **Quantity** (minimum 1) and optional **Notes**.
 6. Click **Distribute**.
 
