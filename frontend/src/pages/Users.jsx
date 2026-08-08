@@ -1634,11 +1634,11 @@ const Users = () => {
             </div>
 
             {/* Parent selector — shown when admin/manager creates sub-distributor/cluster/operator,
-                OR when sub_distributor creates an operator (must select a parent), OR when cluster creates an operator */}
+                OR when sub_distributor creates an operator (must select a parent).
+                Cluster creating an operator is NOT shown — the parent is the cluster itself automatically. */}
             {((isAdminOrManager) && (['sub_distribution_manager', 'cluster', 'operator', 'sub_distribution_employee'].includes(formData.role))) ||
              (currentUser?.role === 'sub_distribution_manager' && formData.role === 'sub_distribution_employee') ||
-             (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ||
-             (currentUser?.role === 'cluster' && formData.role === 'operator') ? (
+             (currentUser?.role === 'sub_distributor' && formData.role === 'operator') ? (
               <div>
                 {isAdminOrManager && formData.role === 'operator' ? (
                   <div className="space-y-3">
