@@ -340,7 +340,8 @@ const UserHierarchy = () => {
   }, [currentUser, visibleUsers, isAdminOrManager]);
 
   const handleRoleChange = (role) => {
-    setFormData(prev => ({ ...prev, role, parentId: '' }));
+    const isAutoParent = (currentUser?.role === 'cluster' && role === 'operator');
+    setFormData(prev => ({ ...prev, role, parentId: isAutoParent ? currentUser.id : '' }));
     setSelectedOperatorSubDistId('');
     setOperatorPlacement('sub_distributor');
     if (role === 'sub_distribution_manager' || role === 'cluster' || role === 'operator' || role === 'sub_distribution_employee') loadParentOptions(role);
@@ -349,7 +350,9 @@ const UserHierarchy = () => {
 
   const openAdd = () => {
     const defaultRole = creatableRoles[0] || 'cluster';
-    setFormData({ ...emptyForm, role: defaultRole });
+    let parentId = '';
+    if (currentUser?.role === 'cluster' && defaultRole === 'operator') parentId = String(currentUser.id);
+    setFormData({ ...emptyForm, role: defaultRole, parentId });
     setParentOptions([]);
     setSubDistributorOptions([]);
     setSelectedOperatorSubDistId('');
@@ -656,7 +659,8 @@ const UserHierarchy = () => {
             </Field>
 
             {/* Parent assignment */}
-            {(formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator' || formData.role === 'sub_distribution_employee') && (
+            {(formData.role === 'sub_distribution_manager' || formData.role === 'cluster' || formData.role === 'operator' || formData.role === 'sub_distribution_employee') &&
+            !(currentUser?.role === 'cluster' && formData.role === 'operator') && (
               <div className="space-y-3">
                 {isAdminOrManager && formData.role === 'operator' ? (
                   <>
