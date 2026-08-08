@@ -108,7 +108,8 @@ const Devices = () => {
   const [editSubmitting, setEditSubmitting] = useState(false);
 
   const isManagement = ['super_admin', 'md_director', 'manager', 'pdic_staff'].includes(user?.role);
-  const hasHierarchy = ['sub_distribution_manager', 'sub_distributor', 'cluster'].includes(user?.role);
+  const hasHierarchy = ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee', 'cluster', 'operator'].includes(user?.role);
+  const hasSubordinates = ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee', 'cluster'].includes(user?.role);
   const isAllDevicesView = isManagement && activeTab === 'all';
   const canRegister = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const isStaff = user?.role === 'pdic_staff';
@@ -686,7 +687,7 @@ const Devices = () => {
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Devices</h1>
           <p className="text-gray-500 mt-1 text-sm sm:text-base">
             {isManagement ? 'All registered devices in the system'
-              : hasHierarchy ? 'Devices across your entire distribution chain'
+              : hasSubordinates ? 'Devices across your entire distribution chain'
               : 'Your assigned devices'}
           </p>
         </div>
@@ -737,7 +738,7 @@ const Devices = () => {
                 </div>
                 <p className="text-2xl font-bold text-blue-600">{overviewStats.in_my_hand || 0}</p>
               </Card>
-              {hasHierarchy && (
+              {hasSubordinates && (
                 <Card className="!p-4">
                   <div className="flex items-center gap-2 mb-1">
                     <Users className="w-4 h-4 text-purple-500" />
@@ -787,7 +788,9 @@ const Devices = () => {
           {[
             { key: 'all', label: `All in Chain (${overviewStats.total_in_chain || 0})` },
             { key: 'mine', label: `In My Hand (${overviewStats.in_my_hand || 0})` },
-            { key: 'hierarchy', label: `Under My Hierarchy (${overviewStats.under_subordinates || 0})` },
+            ...(hasSubordinates
+              ? [{ key: 'hierarchy', label: `Under My Hierarchy (${overviewStats.under_subordinates || 0})` }]
+              : []),
           ].map(tab => (
             <button
               key={tab.key}

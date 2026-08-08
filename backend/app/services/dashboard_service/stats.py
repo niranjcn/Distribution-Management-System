@@ -74,7 +74,7 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
             "registered_in_range": filtered_total,
             "distributed_in_range": device_stats.get("distributed", 0) + device_stats.get("in_use", 0),
             "inactive_in_range": max(0, filtered_total - filtered_active),
-            "defective_in_range": device_stats.get("defective", 0),
+            "defective_in_range": defect_stats.get("total", 0),
             "replacements_in_range": replacements_in_range,
             "available_devices": device_stats.get("available", 0),
             "in_use_devices": device_stats.get("in_use", 0),
@@ -135,6 +135,9 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
             received = (await session.execute(
                 text(f"SELECT COUNT(*) FROM distributions WHERE {rc}"), rp
             )).scalar() or 0
+            received_devices = (await session.execute(
+                text(f"SELECT COALESCE(SUM(device_count), 0) FROM distributions WHERE {rc}"), rp
+            )).scalar() or 0
 
             sub_rows = (await session.execute(
                 text("SELECT id FROM users WHERE role = 'sub_distribution_manager' AND parent_id = :pid"),
@@ -164,7 +167,7 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
 
         stats = {
             "my_devices": my_devices,
-            "received_devices": my_devices,
+            "received_devices": received_devices,
             "available_devices": available_devices,
             "distributions_sent": sent,
             "distributions_received": received,

@@ -20,7 +20,7 @@ class User(Base):
     status = Column(String(32), default="active")
     force_email_change = Column(SqlBool, default=False)
     force_password_change = Column(SqlBool, default=False)
-    phone = Column(String(64))
+    phone = Column(String(64), unique=True)
     designation = Column(String(255))
     address = Column(String(255))
     pincode = Column(String(255))

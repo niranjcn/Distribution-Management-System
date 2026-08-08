@@ -222,7 +222,24 @@ const TrackDevice = () => {
   const filteredAllDevices = allDevices;
 
   const activeDevices = filteredAllDevices.filter((device) => device.status !== 'replaced');
-  const replacedDevices = filteredAllDevices.filter((device) => device.status === 'replaced');
+  // Replacement defects are handled at PDIC/management level; each row in
+  // `Replaced Devices` is the defective device still held at PDIC. Devices
+  // that were serviced and already sent back down the chain (status becomes
+  // `distributed`/`in_use`/`available`, holder a chain user) are excluded.
+  // Non-management roles skip the section entirely. The mapping list is
+  // fetched independently of the paginated device window, so it includes
+  // every replaced device regardless of where the defective unit sits.
+  const PDIC_STATUSES = new Set(['defective', 'replaced', 'returned', 'maintenance']);
+  const replacedDevices = isManagement
+    ? replacementMappings
+        .filter((defect) => Boolean(defect?.replacement_device || defect?.replacement_device_id))
+        .map((defect) => defect?.defective_device || defect)
+        .filter(
+          (device) =>
+            PDIC_STATUSES.has((device?.status || '').toLowerCase()) &&
+            !['sub_distributor', 'cluster', 'operator'].includes(device?.current_holder_type)
+        )
+    : [];
 
   const searchedReplacementMapping = searchResult
     ? replacementMapByDefectiveId[String(searchResult.id)]
@@ -256,7 +273,7 @@ const TrackDevice = () => {
   };
 
   const handleDeviceClick = async (device) => {
-    const identifier = device?.serial_number || device?.nuid || device?.mac_address || '';
+    const identifier = device?.serial_number || device?.nuid || device?.mac_address || device?.device_serial || device?.device_nuid || '';
     setSearchQuery(identifier);
     await handleSearchBySerial(identifier);
   };
@@ -568,41 +585,44 @@ const TrackDevice = () => {
                 ))}
               </div>
 
-              <div className="pt-4 mt-4 border-t border-gray-200">
-                <h3 className="text-sm font-semibold text-red-700 line-through decoration-red-500 mb-3">Replaced Devices</h3>
-                {replacedDevices.length === 0 ? (
-                  <p className="text-sm text-gray-500">No replaced devices in your current scope.</p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {replacedDevices.map((device) => {
-                      const mapping = replacementMapByDefectiveId[String(device.id)];
-                      return (
-                        <div
-                          key={device.id}
-                          onClick={() => handleDeviceClick(device)}
-                          className="flex items-center gap-3 p-4 border border-red-200 rounded-lg cursor-pointer hover:border-red-400 hover:bg-red-50 transition-all"
-                        >
-                          <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <AlertTriangle className="w-5 h-5 text-red-600" />
+              {isManagement && (
+                <div className="pt-4 mt-4 border-t border-gray-200">
+                  <h3 className="text-sm font-semibold text-red-700 line-through decoration-red-500 mb-3">Replaced Devices</h3>
+                  {replacedDevices.length === 0 ? (
+                    <p className="text-sm text-gray-500">No replaced devices in your current scope.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {replacedDevices.map((device) => {
+                        const deviceKey = String(device?.id || device?.device_id || '');
+                        const mapping = replacementMapByDefectiveId[deviceKey];
+                        return (
+                          <div
+                            key={`${deviceKey}-${mapping?.report_id || ''}`}
+                            onClick={() => handleDeviceClick(device)}
+                            className="flex items-center gap-3 p-4 border border-red-200 rounded-lg cursor-pointer hover:border-red-400 hover:bg-red-50 transition-all"
+                          >
+                            <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                              <AlertTriangle className="w-5 h-5 text-red-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <DeviceIdentity device={device} />
+                              <p className="text-xs text-red-600 truncate">
+                                {mapping?.replacement_device?.device_id
+                                  ? `Replaced by ${mapping.replacement_device.device_id}`
+                                  : 'Replacement mapping available'}
+                              </p>
+                            </div>
+                            <div className="flex flex-col items-end gap-1">
+                              <StatusBadge status="replaced" size="sm" />
+                              <ChevronRight className="w-4 h-4 text-gray-400" />
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <DeviceIdentity device={device} />
-                            <p className="text-xs text-red-600 truncate">
-                              {mapping?.replacement_device?.device_id
-                                ? `Replaced by ${mapping.replacement_device.device_id}`
-                                : 'Replacement mapping available'}
-                            </p>
-                          </div>
-                          <div className="flex flex-col items-end gap-1">
-                            <StatusBadge status="replaced" size="sm" />
-                            <ChevronRight className="w-4 h-4 text-gray-400" />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {hasMoreDevices && (
                 <div className="pt-4 mt-4 border-t border-gray-200 flex justify-center">

@@ -27,7 +27,7 @@ class UserBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     role: UserRole
     status: UserStatus = UserStatus.ACTIVE
-    phone: str = Field(..., min_length=10)
+    phone: Optional[str] = Field(None, min_length=10)
     designation: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None

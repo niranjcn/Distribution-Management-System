@@ -265,6 +265,13 @@ async def complete_forced_credential_update(
                 detail="Email already in use",
             )
 
+        existing_phone_q = select(User.id).where(and_(User.phone == new_phone.strip(), User.id != int(user_id)))
+        if (await session.execute(existing_phone_q)).scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Phone already in use",
+            )
+
         if verify_password(new_password, user["password_hash"]):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

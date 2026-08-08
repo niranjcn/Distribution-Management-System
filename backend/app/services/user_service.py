@@ -247,6 +247,14 @@ async def create_user(user_data: UserCreate, creator_id: Optional[int] = None) -
         if existing:
             raise ValueError("Email already exists")
 
+        phone_val = str(user_data.phone).strip() if user_data.phone else ""
+        if phone_val:
+            existing_phone = (
+                await session.execute(select(User.id).where(User.phone == phone_val))
+            ).scalar_one_or_none()
+            if existing_phone:
+                raise ValueError("Phone already exists")
+
         if user_data.role.value == "operator" and user_data.parent_id:
             count_q = select(func.count()).select_from(User).where(
                 and_(User.role == "operator", User.parent_id == int(user_data.parent_id))
@@ -345,6 +353,16 @@ async def update_user(user_id: str, user_data: UserUpdate) -> Optional[Dict[str,
 
         data = user_data.model_dump(exclude_unset=True)
         changed = False
+
+        if "phone" in data:
+            if isinstance(data["phone"], str) and not data["phone"].strip():
+                data["phone"] = None
+            elif data["phone"] is not None:
+                existing_phone = (
+                    await session.execute(select(User.id).where(and_(User.phone == str(data["phone"]), User.id != int(user_id))))
+                ).scalar_one_or_none()
+                if existing_phone:
+                    raise ValueError("Phone already in use")
 
         field_mapping = {
             "name": "name", "phone": "phone",

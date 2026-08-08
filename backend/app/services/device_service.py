@@ -1363,7 +1363,16 @@ async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]
 
 @_ttl_async_cache(ttl_seconds=60, max_size=64)
 async def _cached_device_stats(cache_version: int, start_date: Optional[str], end_date: Optional[str]) -> Dict[str, int]:
-    """Version-keyed cached core for get_device_stats (see wrapper below)."""
+    """Version-keyed cached core for get_device_stats (see wrapper below).
+
+    ``defective`` is derived from the defect lifecycle rather than the transient
+    ``devices.status`` column: it counts devices with an active (unresolved,
+    non-rejected) defect report, i.e. "currently defective". This keeps
+    serviced-and-returned devices counted while their defect is still open even
+    though the device status has moved on (e.g. to ``maintenance`` /
+    ``in_use``). ``returned`` still reflects devices physically at PDIC
+    (``status = 'returned'``).
+    """
     async with async_session_factory() as session:
         conditions = []
         if start_date:
@@ -1382,6 +1391,11 @@ async def _cached_device_stats(cache_version: int, start_date: Optional[str], en
             stats["total"] += count
             if status in stats:
                 stats[status] = count
+
+        defective = (await session.execute(
+            text("SELECT COUNT(DISTINCT device_id) FROM defects WHERE status NOT IN ('resolved', 'rejected')")
+        )).scalar() or 0
+        stats["defective"] = int(defective)
         return stats
 
 
