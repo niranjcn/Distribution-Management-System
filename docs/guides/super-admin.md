@@ -302,7 +302,7 @@ what devices/data they can see and who approves their work.
 | **Manager** | Operations: users, devices, distribution, approvals | Top of the tree |
 | **PDIC Staff** | HQ operational team: devices, distribution, defects, external inventory | Top of the tree |
 | **Sub Distribution Manager** | Runs a field region, approves field requests | Under a Sub Distributor |
-| **Sub Distributor** | Runs distribution in the field, approves sub requests | Under the company |
+| **Sub Distributor** | Runs distribution in the field, confirms deliveries, creates team users | Under the company |
 | **Cluster** | Field support: deliveries, defects, returns | Under a Sub Distributor (or Sub Dist. Manager) |
 | **Operator** | Direct device work: own devices, defect reports, confirmations | Under a Cluster or Sub Distributor |
 | **Sub Distribution Employee** | Field work, submits approval requests | Under a Sub Distributor |
