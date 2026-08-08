@@ -28,8 +28,17 @@ async def get_view_as_dashboard(
     stats = await get_dashboard_stats(target_user, start_date, end_date)
     advanced = await get_advanced_dashboard_metrics(target_user, start_date, end_date)
 
+    # Authoritative device chain stats for the target user, computed by the same
+    # service the Devices page / their own dashboard uses. This handles the
+    # per-role semantics (manager/employee scope to their parent sub-distributor,
+    # subordinate counts per role) instead of deriving them from a paginated list.
+    overview = await device_service.get_user_device_overview(user_id, role, limit=10)
+    device_stats = overview.get("stats") or {}
+
     async with async_session_factory() as session:
         scope_root_id = _resolve_scope_root_for_sub_distribution_manager(target_user, user_id)
+        if role == "sub_distribution_employee":
+            scope_root_id = str(target_user.get("parent_id") or user_id)
 
         if role in ("sub_distributor",):
             rows = (await session.execute(
@@ -53,7 +62,7 @@ async def get_view_as_dashboard(
         else:
             target_users = []
 
-        scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id)) if role in ("sub_distribution_manager", "sub_distributor") else [str(user_id)]
+        scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id)) if role in ("sub_distribution_manager", "sub_distributor", "sub_distribution_employee") else [str(user_id)]
 
         dev_ph = ",".join([f":d_{i}" for i in range(len(scope_ids))]) if scope_ids else "''"
         dev_params: Dict[str, Any] = {f"d_{i}": sid for i, sid in enumerate(scope_ids)}
@@ -133,6 +142,7 @@ async def get_view_as_dashboard(
         "user": {"id": target_user.get("id"), "name": target_user.get("name", ""), "role": target_user.get("role", "")},
         "stats": stats,
         "advanced": advanced,
+        "device_stats": device_stats,
         "devices": target_devices,
         "devices_total": devices_total,
         "devices_page": page,

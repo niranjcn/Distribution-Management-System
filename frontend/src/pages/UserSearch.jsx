@@ -8,6 +8,7 @@ const ROLE_ICONS = {
   sub_distributor: Building2,
   cluster: UserCog,
   operator: HardHat,
+  sub_distribution_employee: HardHat,
 };
 
 const ROLE_LABELS = {
@@ -15,6 +16,7 @@ const ROLE_LABELS = {
   cluster: 'Cluster',
   operator: 'Operator',
   sub_distribution_manager: 'Sub Distribution Manager',
+  sub_distribution_employee: 'Sub Distribution Employee',
 };
 
 const UserSearch = () => {
@@ -31,7 +33,7 @@ const UserSearch = () => {
   useEffect(() => {
     usersAPI.getUsers({ page_size: 10000 }).then(res => {
       const all = Array.isArray(res.data) ? res.data : [];
-      setUsers(all.filter(u => ['sub_distributor', 'cluster', 'operator', 'sub_distribution_manager'].includes(u.role)));
+      setUsers(all.filter(u => ['sub_distributor', 'cluster', 'operator', 'sub_distribution_manager', 'sub_distribution_employee'].includes(u.role)));
     }).catch(() => {});
   }, []);
 
@@ -73,7 +75,7 @@ const UserSearch = () => {
           <Users className="w-7 h-7 text-green-600" />
           <h1 className="text-2xl sm:text-3xl font-bold text-green-900">View User Dashboard</h1>
         </div>
-        <p className="text-green-700 text-sm sm:text-base mt-1">Search for a sub-distributor, cluster, or operator to view their dashboard.</p>
+        <p className="text-green-700 text-sm sm:text-base mt-1">Search for a sub-distributor, sub-distribution manager, cluster, operator, or sub-distribution employee to view their dashboard.</p>
       </div>
 
       <div className="flex gap-3">

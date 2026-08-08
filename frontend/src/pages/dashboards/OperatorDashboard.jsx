@@ -39,9 +39,14 @@ const doughnutOptions = {
   },
 };
 
-const OperatorDashboard = () => {
-  const { user } = useAuth();
+const OperatorDashboard = ({ viewAsUser }) => {
+  const { user: authUser } = useAuth();
   const { showToast } = useNotifications();
+  // When used from the "View User Dashboard" read-only preview, render the
+  // target user's dashboard using their identity and data instead of the
+  // logged-in viewer's.
+  const user = viewAsUser || authUser;
+  const isViewAs = !!viewAsUser;
   const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [stats, setStats] = useState({});
   const [advanced, setAdvanced] = useState({ kpis: {}, charts: {}, alerts: [] });
@@ -55,6 +60,33 @@ const OperatorDashboard = () => {
   useEffect(() => {
     const dateParams = buildDateParams(dateRange);
     let active = true;
+
+    // View-as mode: read-only preview of the target user's actual dashboard.
+    // All numbers come from the single view-as endpoint scoped to that user.
+    if (isViewAs) {
+      setStatsLoading(true);
+      setAdvancedLoading(true);
+      dashboardAPI.getViewAsDashboard(viewAsUser.id, { ...dateParams, page_size: 500 })
+        .then((res) => {
+          if (!active) return;
+          if (!res.success) throw new Error(res.message || 'Failed to load dashboard');
+          const d = res.data || {};
+          setStats(d.stats || {});
+          setAdvanced(d.advanced || { kpis: {}, charts: {}, alerts: [] });
+          setMyDevices(Array.isArray(d.devices) ? d.devices : []);
+          setMyDefects(Array.isArray(d.defects) ? d.defects : []);
+          setMyReturns(Array.isArray(d.returns) ? d.returns : []);
+          setDistributions(Array.isArray(d.distributions) ? d.distributions : []);
+        })
+        .catch((err) => {
+          console.error('Failed to load view-as dashboard:', err);
+          if (active) showToast('Failed to load dashboard', 'error');
+        })
+        .finally(() => {
+          if (active) { setStatsLoading(false); setAdvancedLoading(false); }
+        });
+      return () => { active = false; };
+    }
 
     // Batch 1 — authoritative stat cards from /dashboard/stats (fast).
     setStatsLoading(true);
@@ -105,7 +137,7 @@ const OperatorDashboard = () => {
       active = false;
       window.clearTimeout(listTimer);
     };
-  }, [dateRange]);
+  }, [dateRange, viewAsUser?.id]);
 
   const pendingReceipts = distributions.filter(
     d => d.status === 'pending_receipt' && String(d.to_user_id) === String(user?.id)
