@@ -13,7 +13,7 @@ which covers login, the shared interface, notifications, and your profile.
 | **Manager** | Manage users, devices, distributions, approve workflows, reports | [manager.md](manager.md) |
 | **PDIC Staff** | Register and manage devices, distributions, defects, external inventory | [pdic-staff.md](pdic-staff.md) |
 | **Sub Distribution MD / Manager** | Manage sub-distribution team, approve field requests, scoped reports | [sub-distribution-manager.md](sub-distribution-manager.md) |
-| **Sub Distributor** | Run distribution in the field, confirm deliveries, approve sub requests | [sub-distributor.md](sub-distributor.md) |
+| **Sub Distributor** | Run distribution in the field, confirm deliveries, report defects, create users | [sub-distributor.md](sub-distributor.md) |
 | **Cluster** | Field distribution, deliveries, defect reporting, returns | [cluster.md](cluster.md) |
 | **Operator** | Personal device and distribution work, defect reports, confirmations | [operator.md](operator.md) |
 | **Sub Distribution Employee** | Field work, delivery confirmations, submit approval requests | [sub-distribution-employee.md](sub-distribution-employee.md) |
