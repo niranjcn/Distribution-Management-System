@@ -57,9 +57,17 @@ def create_refresh_token(data: dict) -> str:
 
 
 def decode_token(token: str) -> Optional[TokenData]:
-    """Decode and validate JWT token"""
+    """Decode and validate an access JWT token.
+
+    Only tokens whose ``type`` claim is "access" are accepted. Refresh tokens
+    (type "refresh") are never valid for authenticating a request, so importing
+    one into an Authorization header or the access_token cookie cannot turn it
+    into a long-lived login.
+    """
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != "access":
+            return None
         user_id: str = payload.get("sub")
         email: str = payload.get("email")
         role: str = payload.get("role")

@@ -6,8 +6,10 @@ from jose import JWTError
 from app.services.auth_service import (
     _parse_datetime,
     create_user_token,
+    get_current_user_from_token,
     refresh_access_token,
 )
+from app.utils.security import create_access_token, create_refresh_token, decode_token
 
 
 class _FakeInstance:
@@ -150,3 +152,51 @@ class TestRefreshAccessToken:
 
         assert result is None
         blacklist.assert_not_awaited()
+
+
+def _token_claims(**overrides):
+    claims = {"sub": "1", "email": "admin@test.com", "role": "super_admin", "name": "Admin"}
+    claims.update(overrides)
+    return claims
+
+
+class TestTokenTypeSeparation:
+    """Access tokens authenticate; refresh tokens must never be accepted."""
+
+    def test_decode_token_accepts_access_token(self):
+        token = create_access_token(data=_token_claims())
+        decoded = decode_token(token)
+        assert decoded is not None
+        assert decoded.user_id == "1"
+        assert decoded.role == "super_admin"
+
+    def test_decode_token_rejects_refresh_token(self):
+        decoded = decode_token(create_refresh_token(data=_token_claims()))
+        assert decoded is None
+
+    async def test_get_current_user_rejects_refresh_token_before_db(self):
+        refresh = create_refresh_token(data=_token_claims())
+        with (
+            patch("app.services.auth_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
+            patch("app.services.auth_service.async_session_factory") as sess_factory,
+        ):
+            result = await get_current_user_from_token(refresh)
+
+        assert result is None
+        # Rejection happens during decode, before any DB lookup happens.
+        sess_factory.assert_not_called()
+
+    async def test_get_current_user_accepts_access_token(self, sample_user):
+        access = create_access_token(data=_token_claims())
+        with (
+            patch("app.services.auth_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
+            patch(
+                "app.services.auth_service.async_session_factory",
+                return_value=_FakeSession(sample_user),
+            ),
+        ):
+            result = await get_current_user_from_token(access)
+
+        assert result is not None
+        assert result["id"] == "1"
+        assert result["role"] == "super_admin"
