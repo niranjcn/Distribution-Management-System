@@ -30,7 +30,11 @@ services:
       - mysql_data:/var/lib/mysql
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "--silent"]
+      # Connect over TCP (127.0.0.1), not the Unix socket. During first-boot
+      # initialisation MySQL only runs a socket-only temporary server
+      # (port 0), so a TCP ping can only succeed once the real server is up
+      # and the entrypoint has finished creating the DB/user/init scripts.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent", "--connect-timeout=5"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -71,6 +75,10 @@ services:
       DB_PORT: 3306
       DB_USER: dms_user
       DB_PASSWORD: ${MYSQL_PASSWORD}
+      # Migrations run on startup as root (not the runtime dms_user), so the
+      # runtime user never needs schema-changing privileges.
+      MIGRATION_DB_USER: root
+      MIGRATION_DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       DB_NAME: distribution_management_system
       HOST: 0.0.0.0
       PORT: 8080
