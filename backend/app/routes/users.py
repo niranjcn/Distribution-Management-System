@@ -229,8 +229,6 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
         return await _branch_contains_user(root_id, target_user.get("id"), session=db)
 
     if actor_role == SUB_DISTRIBUTOR:
-        if write:
-            return False
         if target_role not in {CLUSTER, OPERATOR, SUB_DISTRIBUTION_EMPLOYEE}:
             return False
         return await _branch_contains_user(current_user.get("id"), target_user.get("id"), session=db)
@@ -242,8 +240,6 @@ async def _can_access_user(current_user: dict, target_user: dict, *, write: bool
         return await _branch_contains_user(root_id, target_user.get("id"), session=db)
 
     if actor_role == CLUSTER:
-        if write:
-            return False
         return target_role == OPERATOR and str(target_user.get("parent_id")) == str(current_user.get("id"))
 
     return False
@@ -642,7 +638,7 @@ async def update_user(user_id: str, user_data: UserUpdate, current_user: dict = 
             if edited & restricted_fields:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot change status, permissions, or role")
         else:
-            if actor_role in {MD_DIRECTOR, SUB_DISTRIBUTION_MANAGER}:
+            if actor_role == MD_DIRECTOR:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="This role has read-only access to users",
