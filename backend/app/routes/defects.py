@@ -374,6 +374,12 @@ async def get_defect(
                 detail="Defect report not found"
             )
 
+        if not await defect_service.user_can_view_defect(current_user, defect):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions"
+            )
+
         return {
             "success": True,
             "message": "Defect report retrieved successfully",

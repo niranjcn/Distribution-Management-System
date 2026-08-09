@@ -126,6 +126,25 @@ async def _get_report_scope_user_ids(session, user: Dict[str, Any]) -> Optional[
     return scoped_ids
 
 
+async def user_can_view_defect(user: Dict[str, Any], defect: Dict[str, Any]) -> bool:
+    """Whether ``user`` may view the given defect report by ID.
+
+    Mirrors the scoped defect list: management/PDIC roles see all defects;
+    everyone else may only view defects reported by themselves or by users
+    within their sub-distribution scope.
+    """
+    role = str(user.get("role") or "").lower()
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        return True
+
+    async with async_session_factory() as session:
+        scope_ids = await _get_report_scope_user_ids(session, user)
+    if scope_ids is None:
+        return True
+
+    return str(defect.get("reported_by")) in scope_ids
+
+
 async def _get_reporter_sub_distributor_id(session, reporter_id) -> Optional[int]:
     """Return the id of the sub-distributor managing the reporter's branch, if any.
 
