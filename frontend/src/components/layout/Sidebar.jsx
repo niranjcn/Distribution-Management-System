@@ -145,6 +145,7 @@ const Sidebar = ({ isOpen, onClose }) => {
       label: 'External Inventory',
       children: [
         { path: '/external-inventory', label: 'Items' },
+        { path: '/external-inventory/bulk-import', label: 'Bulk Import' },
         { path: '/external-inventory/distribution', label: 'Distribution' },
         { path: '/external-inventory/bulk', label: 'Bulk Distribution' },
         { path: '/external-inventory/distributed', label: 'Distributed Items' },

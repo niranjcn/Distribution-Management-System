@@ -42,8 +42,17 @@ def generate_return_id() -> str:
 
 
 def generate_external_distribution_id() -> str:
-    """Generate external inventory distribution ID"""
-    return generate_id("EXT")
+    """Generate external inventory distribution history ID.
+
+    Unlike the generic 4-digit ``generate_id`` (only 10,000 combinations, which
+    collides on bulk isolates of 100k+ rows), this uses a long hex token, so a
+    single distribution of 150k items cannot collide on the unique
+    ``external_device_history.history_id`` key.
+    """
+    from secrets import token_hex
+
+    year = datetime.now().year
+    return f"EXT-{year}-{token_hex(8).upper()}"
 
 
 def get_pagination(page: int, page_size: int, total: int) -> Dict[str, int]:

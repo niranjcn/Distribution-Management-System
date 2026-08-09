@@ -795,6 +795,7 @@ async def bulk_distribute_from_file(
         history_rows: List[Dict[str, Any]] = []
         pending_decrements: Dict[int, int] = {}
         seen_pairs: set = set()
+        seen_history_ids: set = set()
         for entry in entries:
             row_idx = entry["row"]
             identifier_type = entry["identifier_type"]
@@ -844,6 +845,9 @@ async def bulk_distribute_from_file(
             pending_decrements[item_id] = quantity_value
 
             history_id = generate_external_distribution_id()
+            while history_id in seen_history_ids:
+                history_id = generate_external_distribution_id()
+            seen_history_ids.add(history_id)
             history_rows.append({
                 "history_id": history_id,
                 "item_id": item_id,
