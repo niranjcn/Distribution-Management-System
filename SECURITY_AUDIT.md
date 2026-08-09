@@ -78,31 +78,25 @@ The findings below are grouped by severity. Several are already tracked in `PROD
   - Out-of-scope requests return `403 "Insufficient permissions"`, matching the existing `GET /users/{user_id}` pattern.
 - **Verification:** `16 failed, 434 passed` both before and after the change (identical pre-existing failures); no new failures introduced.
 
-### 5. Digital ID endpoints lack ownership/scope checks
+### 5. Digital ID endpoints lack ownership/scope checks — **FIXED (2026-08-09)**
 
-- **Files:** `backend/app/routes/digital_ids.py:19-118`
-- **Issue:** Any authenticated user can create/read/update/delete digital identities for **any** `user_id` (IDOR + data integrity).
-- **Fix:** Restrict to self/own branch, mirroring the `_can_access_user` pattern used by user management.
+- **Files:** `backend/app/routes/digital_ids.py`
+- **Issue:** Any authenticated user could create/read/update/delete digital identities for **any** `user_id` (IDOR + data integrity).
+- **Fix (applied):** Each `/digital-ids` endpoint now resolves the target user and reuses `users._can_access_user` via a `_target_user_or_403` helper (write for create/update/delete, read for the GET). Self and in-branch management remain allowed; everything else gets `403`. Also relaxed `_can_access_user` so sub-distribution roles and clusters can edit users within their scope.
 
-### 6. Defect/return creation does not validate device holder
-
-- **Files:** `backend/app/services/defect_service.py:350`, `backend/app/services/return_service.py:169`
-- **Issue:** Any authenticated user can file a defect/return against a device held by another branch. The lineage fields (`operator_id`, `sub_distributor_id`) get attributed to the *reporter's* hierarchy, corrupting ownership analytics and misdirecting notifications.
-- **Fix:** Validate the device's `current_holder_id`/scope matches the reporter before accepting the defect/return.
-
-### 7. `backend/dms.db` (SQLite) is tracked in git
+### 6. `backend/dms.db` (SQLite) is tracked in git
 
 - **Files:** `backend/dms.db` (331 KB, ~100k rows across users/devices/distributions/notifications)
 - **Issue:** Contains real seed users, password hashes, phones, devices, distributions, and notifications. Tracked in the repository.
 - **Fix:** `git rm --cached backend/dms.db`, add to `.gitignore`/`.dockerignore` (already in `.dockerignore`), and purge from git history if the repo is public.
 
-### 8. Refresh tokens never rotate
+### 7. Refresh tokens never rotate — **FIXED (2026-08-09)**
 
 - **Files:** `backend/app/services/auth_service.py`
-- **Issue:** The same refresh token remains valid until expiry (blacklist only on logout). A stolen refresh token is replayable for the full 7-day lifetime.
-- **Fix:** Issue a new refresh token on each use (rotation) and blacklist the previous one.
+- **Issue:** The same refresh token remained valid until expiry (blacklist only on logout). A stolen refresh token was replayable for the full 7-day lifetime.
+- **Fix (applied):** `refresh_access_token` now rotates the refresh token on every use — the presented token is blacklisted and a brand-new refresh token is issued alongside the new access token (the `/auth/refresh` route already sets the new refresh cookie when one is returned). Reuse of an already-rotated token fails the blacklist check and is rejected with `401`.
 
-### 9. Admin credential update bypasses password strength policy
+### 8. Admin credential update bypasses password strength policy
 
 - **Files:** `backend/app/models/user.py:129`
 - **Issue:** `AdminCredentialUpdate.password` only enforces `min_length=8`, while self-service password changes enforce full complexity.
@@ -113,39 +107,39 @@ The findings below are grouped by severity. Several are already tracked in `PROD
 
 ## LOW
 
-### 10. User enumeration via distinct login errors
+### 9. User enumeration via distinct login errors
 
 - **Files:** `backend/app/routes/auth.py:41-44, 63-65`
 - **Issue:** Bad credentials return `401 "Invalid email/phone or password"`, but inactive accounts return `403 "Account is not active"`, letting attackers distinguish active accounts.
 - **Fix:** Return a generic 401 for both cases (or delay the inactive response).
 
-### 11. DB password in child-process environment
+### 10. DB password in child-process environment
 
 - **Files:** `backend/app/services/db_backup_scheduler.py:229`
 - **Issue:** `env["MYSQL_PWD"] = settings.DB_PASSWORD` exposes the database password in the `mysqldump` subprocess environment.
 - **Tracking:** `PRODUCTION_RISKS.md` #9.
 - **Fix:** Pass credentials via a restricted mechanism or dedicated backup user; avoid environment leakage where feasible.
 
-### 12. Unauthenticated `/metrics` endpoint
+### 11. Unauthenticated `/metrics` endpoint
 
 - **Files:** `backend/app/main.py:233-236`
 - **Issue:** Prometheus metrics are served without authentication; any network client can read request rates and endpoint paths.
 - **Tracking:** `PRODUCTION_RISKS.md` #50.
 - **Fix:** Restrict to the internal network or require authentication.
 
-### 13. Weak seed admin password fallback
+### 12. Weak seed admin password fallback
 
 - **Files:** `backend/app/services/seed_service.py:66`
 - **Issue:** `os.getenv("ADMIN_INITIAL_PASSWORD") or "Admin@123"` — a weak hardcoded fallback. Mitigated by forced credential rotation (`force_email_change=1`, `force_password_change=1`), but the fallback exists in code and docs.
 - **Tracking:** `PRODUCTION_RISKS.md` #48.
 - **Fix:** Fail startup if `ADMIN_INITIAL_PASSWORD` is unset in production; remove the weak default.
 
-### 14. No rate limits on non-auth mutations
+### 13. No rate limits on non-auth mutations
 
 - **Issue:** Defects, returns, digital IDs, and notifications endpoints have no rate limiting, enabling abuse/spam.
 - **Fix:** Apply `slowapi` limits to high-volume mutation endpoints.
 
-### 15. Sample/bulk CSVs with password columns tracked in git
+### 14. Sample/bulk CSVs with password columns tracked in git
 
 - **Files:** `clusters.csv`, `operators.csv`, `sub_distributors.csv`, `users_bulk_upload_sample.csv`
 - **Issue:** Committed CSV fixtures contain `password` columns (`Pass@123`). They use `@example.com` addresses (test data), so risk is low, but the files are public.
@@ -156,7 +150,7 @@ The findings below are grouped by severity. Several are already tracked in `PROD
 ## Recommended Next Steps
 
 1. Fix the three HIGH items (init-script password, DB grants, Grafana/Prometheus exposure).
-2. Scope by-id lookups and digital-ID ownership (items 4-6) using the existing `_can_access_user` pattern.
+2. Scope remaining by-id lookups (e.g. `track_device_by_serial`) and any future record creation using the existing `_can_access_user` pattern.
 3. Remove `backend/dms.db` from the repository.
 4. Enable refresh-token rotation and enforce password strength on admin-set credentials.
 5. Address LOW items opportunistically (login error uniformity, rate limits, seed fallback).

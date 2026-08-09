@@ -18,6 +18,8 @@ const getCookieValue = (name) => {
 
 // Attempt to refresh the access token using the httpOnly refresh-token cookie.
 // Uses a deduplication guard so concurrent 401s only trigger one refresh request.
+// Retries once on a 401: with refresh-token rotation, another tab may have just
+// rotated the token, in which case the cookie already holds the new one.
 const attemptTokenRefresh = async () => {
   if (_refreshing) {
     // Another refresh is already in flight — wait for it
@@ -26,30 +28,39 @@ const attemptTokenRefresh = async () => {
 
   _refreshing = true;
   _refreshPromise = (async () => {
-    try {
-      const csrfToken = getCookieValue('csrftoken');
-      const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
-        },
-      });
-      if (res.ok) {
-        log('[API] Token refresh succeeded');
-        return true;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const csrfToken = getCookieValue('csrftoken');
+        const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+          },
+        });
+        if (res.ok) {
+          log('[API] Token refresh succeeded');
+          return true;
+        }
+        if (attempt === 0 && res.status === 401) {
+          log('[API] Token refresh rejected; retrying once with current cookie');
+          continue;
+        }
+        logError('[API] Token refresh failed with status:', res.status);
+        return false;
+      } catch (err) {
+        logError('[API] Token refresh request error:', err.message);
+        return false;
       }
-      logError('[API] Token refresh failed with status:', res.status);
-      return false;
-    } catch (err) {
-      logError('[API] Token refresh request error:', err.message);
-      return false;
-    } finally {
-      _refreshing = false;
-      _refreshPromise = null;
     }
+    return false;
   })();
+
+  _refreshPromise.finally(() => {
+    _refreshing = false;
+    _refreshPromise = null;
+  });
 
   return _refreshPromise;
 };
