@@ -59,7 +59,7 @@ layout (sidebar on the left, profile menu and notification bell top-right).
    - [7.3 Step-by-step: register an item individually](#73-step-by-step-register-an-item-individually)
    - [7.4 Step-by-step: edit an item](#74-step-by-step-edit-an-item)
    - [7.5 Step-by-step: delete an item](#75-step-by-step-delete-an-item)
-   - [7.6 Step-by-step: bulk upload items from CSV](#76-step-by-step-bulk-upload-items-from-csv)
+   - [7.6 Step-by-step: bulk upload items from a file](#76-step-by-step-bulk-upload-items-from-a-file)
    - [7.7 Step-by-step: distribute a single item](#77-step-by-step-distribute-a-single-item)
    - [7.8 Step-by-step: bulk distribution from a file](#78-step-by-step-bulk-distribution-from-a-file)
    - [7.9 The Distributed Items page (history)](#79-the-distributed-items-page-history)
@@ -734,15 +734,22 @@ You can manage items and distribute them. Everyone else can only look at the cat
 
 ### 7.2 The page layout
 
-Open **External Inventory** from the sidebar. Management gets a dropdown with four
+Open **External Inventory** from the sidebar. Management gets a dropdown with five
 pages:
 
 - **Items** — the stock catalog.
+- **Bulk Import** — add many items at once from a CSV/Excel file.
 - **Distribution** — give one item to one recipient.
 - **Bulk Distribution** — give many items to one recipient from a file.
 - **Distributed Items** — history of every distribution made.
 
-The header has a **Refresh** button and an **Add Item** button.
+**Items**, **Distribution** and **Distributed Items** are tabs on the External Inventory
+page itself; **Bulk Import** and **Bulk Distribution** open as their own pages. The header
+has a **Refresh** button and an **Add Item** button. On the **Items** tab, a **Search Items**
+card above the table lets you search by name, identifier, type, supplier, or location, and
+filter by **Warranty**, **Identifier Type**, and **Type**. The table also has a **Bulk
+Import** button in its top-right.
+
 The table lists the available items. Depleted items (quantity zero) drop out of the
 catalog automatically.
 
@@ -778,20 +785,26 @@ catalog automatically.
 > Already-made distributions stay in the **Distributed Items** history — deleting the
 > item does not remove the record of what was given away.
 
-### 7.6 Step-by-step: bulk upload items from CSV
+### 7.6 Step-by-step: bulk upload items from a file
 
-1. On **Items**, click **Download Model** to get a ready-made template
+1. On **External Inventory → Items**, click the **Bulk Import** button (top-right of the
+   table) — or open **External Inventory → Bulk Import** from the sidebar.
+2. Read the **File Requirements** card: `.csv`, `.xlsx`, and `.xls` files up to **10 MB**,
+   and at most **300,000** data rows. The required column is `name`; all other columns are
+   optional.
+3. Click **Download CSV Model** to get a ready-made template
    (`external-inventory-import-model.csv`) with the header row and two sample rows.
-2. Open it, replace the samples with your items, and keep the header. The required column
-   is `name`; optional columns are `identifier_type`, `identifier`, `device_type`, `price`,
-   `quantity`, `supplier_name`, `location`, `warranty_start_date` (format `YYYY-MM-DD`),
-   `warranty_duration` (months), and `notes`. The same rules as 7.3 apply: an identifier
-   needs its identifier type, and identifier pairs must be unique.
-3. Click **Import** and pick your `.csv` file.
-4. The banner above the table reports the outcome, e.g. **"Import complete: 9 created,
-   0 skipped, 1 errors"**. Problem rows (missing name, bad quantity/price/date, duplicate
-   or already-existing identifier pair, quantity below 1) are listed by row number with
-   the reason, so you can fix and re-import them.
+4. Open it, replace the samples with your items, and keep the header. The optional columns
+   are `identifier_type`, `identifier`, `device_type`, `price`, `quantity`, `supplier_name`,
+   `location`, `warranty_start_date` (format `YYYY-MM-DD`), `warranty_duration` (months),
+   and `notes`. The same rules as 7.3 apply: an identifier needs its identifier type, and
+   identifier pairs must be unique.
+5. **Drag and drop** your file onto the upload box (or click to browse), then click
+   **Import Items**.
+6. The **Import Result** card reports **Rows Processed**, **Created**, and
+   **Skipped / Errors**. Problem rows (missing name, bad quantity/price/date, duplicate or
+   already-existing identifier pair, quantity below 1) are listed by row number with the
+   reason, so you can fix and re-import them.
 
 ### 7.7 Step-by-step: distribute a single item
 
@@ -866,7 +879,7 @@ The badge appears in the Distributed Items list, and both lists have an
 |--------|-----------|
 | Browse the Items catalog (name & price only) | Yes |
 | Add, Edit, Delete items | Yes |
-| Bulk upload items from CSV | Yes |
+| Bulk upload items from a CSV/Excel file | Yes |
 | Distribute a single item | Yes |
 | Bulk distribution from a file | Yes |
 | View the Distributed Items history | Yes |
