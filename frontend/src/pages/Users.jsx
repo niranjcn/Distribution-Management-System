@@ -1002,6 +1002,54 @@ const Users = () => {
                 </div>
               </Card>
             )}
+            {(() => {
+              const directOps = clusterOperatorsMap[String(currentUser?.id)] || [];
+              if (directOps.length === 0) return null;
+              return (
+                <Card>
+                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                      <UsersIcon className="w-4 h-4 text-green-500" /> Operators (Directly Under Me)
+                    </h3>
+                    <span className="text-sm text-gray-500">{directOps.length} operator{directOps.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="space-y-2 p-3">
+                    {directOps.map(op => (
+                      <div key={op.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                            <span className="text-xs font-medium text-green-600">
+                              {(op.name || '').split(' ').filter(Boolean).map(n => n[0]).join('') || '?'}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-800">{op.name}</p>
+                            <p className="text-xs text-gray-500">{op.email}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <StatusBadge status={op.status} size="sm" />
+                          <button
+                            onClick={() => { setSelectedUser(op); setShowViewModal(true); }}
+                            className="p-1 hover:bg-gray-100 rounded"
+                            title="View operator"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-gray-500" />
+                          </button>
+                          <button
+                            onClick={() => { openReassignModal(op); }}
+                            className="p-1 hover:bg-amber-50 rounded"
+                            title="Reassign operator"
+                          >
+                            <Network className="w-4 h-4 text-amber-500" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              );
+            })()}
             {users.filter(u => u.role === 'cluster').map(cluster => {
               const clusterOps = clusterOperatorsMap[String(cluster.id)] || [];
               const isCollapsed = !!collapsedClusters[cluster.id];

@@ -157,9 +157,10 @@ async def _compute_dashboard_stats(user: Dict[str, Any],
                 cluster_ids = [int(r["id"]) for r in cluster_rows]
 
             operator_count = 0
-            if cluster_ids:
-                oph = ",".join([f":oc_{i}" for i in range(len(cluster_ids))])
-                oparams = {f"oc_{i}": cid for i, cid in enumerate(cluster_ids)}
+            operator_parent_ids = [int(user_id)] + cluster_ids
+            if operator_parent_ids:
+                oph = ",".join([f":oc_{i}" for i in range(len(operator_parent_ids))])
+                oparams = {f"oc_{i}": cid for i, cid in enumerate(operator_parent_ids)}
                 operator_count = (await session.execute(
                     text(f"SELECT COUNT(*) FROM users WHERE role = 'operator' AND parent_id IN ({oph})"),
                     oparams

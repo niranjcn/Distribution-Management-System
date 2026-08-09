@@ -603,6 +603,25 @@ async def get_distribution_by_code(distribution_code: str) -> Optional[Dict[str,
         return await _attach_device_ids(session, dict(row))
 
 
+async def _resolve_sub_distribution_root_id(session, user: Dict[str, Any]) -> Optional[int]:
+    """Walk up the parent chain to find the enclosing sub_distributor id."""
+    current = user
+    for _ in range(20):
+        role = str(current.get("role") or "").lower()
+        if role == "sub_distributor":
+            return int(current["id"])
+        parent_id = current.get("parent_id")
+        if not parent_id:
+            return None
+        row = (await session.execute(
+            text("SELECT * FROM users WHERE id = :id"), {"id": int(parent_id)}
+        )).mappings().first()
+        if not row:
+            return None
+        current = dict(row)
+    return None
+
+
 async def _load_and_validate_recipient(
     session, dist_data: DistributionCreate, from_user: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -691,10 +710,12 @@ async def _load_and_validate_recipient(
         if to_role == "operator":
             if int(dist_data.to_user_id) == from_user_id:
                 raise ValueError("You cannot distribute to yourself")
-            if str(to_user.get("parent_id", "")) != str(from_user.get("parent_id", "")):
-                raise ValueError("You can only distribute to operators in the same cluster")
+            from_root = await _resolve_sub_distribution_root_id(session, from_user)
+            to_root = await _resolve_sub_distribution_root_id(session, to_user)
+            if not from_root or from_root != to_root:
+                raise ValueError("You can only distribute to operators within your sub-distribution")
         else:
-            raise ValueError("Operators can only distribute to other operators in the same cluster")
+            raise ValueError("Operators can only distribute to other operators within their sub-distribution")
 
     return to_user
 

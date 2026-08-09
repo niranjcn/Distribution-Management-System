@@ -92,7 +92,7 @@ const CreateDistribution = () => {
           const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; });
           setAllOperators(opRes.data || []);
         } else if (role === 'operator') {
-          // Backend returns only sibling operators (same parent_id); exclude self
+          // Backend returns all active operators within the operator's sub-distribution; exclude self
           const opRes = await usersAPI.getUsers({ role: 'operator', status: 'active', page_size: 1000000 }).catch(err => { console.error('Failed to load operators:', err); showToast('Failed to load operators', 'error'); return { data: [] }; });
           setAllOperators((opRes.data || []).filter(o => String(o.id) !== String(user?.id)));
         } else if (isEmployee) {
