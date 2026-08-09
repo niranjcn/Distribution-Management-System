@@ -83,6 +83,26 @@ async def _get_descendant_ids(root_user_id: str) -> set:
         return descendants
 
 
+async def _resolve_sub_distribution_root_id(user_id: str) -> Optional[str]:
+    """Resolve the sub-distribution (sub_distributor) root id for a user.
+
+    Walks up the parent chain until it finds the enclosing sub_distributor.
+    Returns None if no sub_distributor ancestor exists.
+    """
+    current_id = user_id
+    for _ in range(20):
+        user = await user_service.get_user_by_id(str(current_id))
+        if not user:
+            return None
+        if normalize_role(user.get("role")) == SUB_DISTRIBUTOR:
+            return str(user["id"])
+        parent_id = user.get("parent_id")
+        if not parent_id:
+            return None
+        current_id = str(parent_id)
+    return None
+
+
 async def _filter_readable_users(current_user: dict, users: List[dict]) -> List[dict]:
     """Read-level authorization filter for list endpoints.
 
@@ -341,7 +361,21 @@ async def get_users(
             raise HTTPException(status_code=403, detail="Employees can only view clusters and operators")
     elif actor_role == OPERATOR:
         if normalized_role_filter == OPERATOR:
-            parent_id_filter = str(current_user.get("parent_id", ""))
+            sub_dist_root = await _resolve_sub_distribution_root_id(str(current_user["id"]))
+            if sub_dist_root:
+                sub_dist_manager_result = await user_service.get_users(
+                    role=SUB_DISTRIBUTION_MANAGER, parent_id=sub_dist_root, page_size=1_000_000
+                )
+                sub_dist_manager_ids = [int(m["id"]) for m in sub_dist_manager_result["data"]]
+                candidate_cluster_parent_ids = [int(sub_dist_root)] + sub_dist_manager_ids
+                clusters_result = await user_service.get_users(
+                    role=CLUSTER, parent_ids_in=candidate_cluster_parent_ids, page_size=1_000_000
+                )
+                cluster_ids = [int(c["id"]) for c in clusters_result["data"]]
+                parent_ids_in_filter = list(dict.fromkeys([int(sub_dist_root)] + cluster_ids))
+                parent_id_filter = None
+            else:
+                parent_id_filter = str(current_user.get("parent_id", ""))
         else:
             raise HTTPException(status_code=403, detail="Operators can only list operators")
 

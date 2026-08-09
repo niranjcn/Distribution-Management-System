@@ -562,7 +562,7 @@ async def create_distribution(
     - admin/manager/staff: can distribute PDIC devices to any sub-level user
     - sub_distributor: can distribute their held devices to clusters or operators under them
     - cluster: can distribute their held devices to operators under them
-    - operator: can distribute their held devices to operators in the same cluster
+    - operator: can distribute their held devices to operators within their sub-distribution
     """
     
     _ensure_not_md_director(current_user)

@@ -195,7 +195,13 @@ const UserHierarchy = () => {
         ]);
         const clusters = (clusterRes.data || []);
         const operators = (opRes.data || []);
-        setAllUsers([...clusters, ...operators]);
+        const seen = new Set();
+        setAllUsers([...clusters, ...operators].filter(u => {
+          const id = String(u.id);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        }));
       } else {
         const res = await usersAPI.getUsers({ page_size: HIERARCHY_PAGE_SIZE });
         setAllUsers(res.data || []);
