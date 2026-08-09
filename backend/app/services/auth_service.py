@@ -118,11 +118,18 @@ async def create_user_token(user: dict) -> dict:
 
 
 async def refresh_access_token(refresh_token: str) -> Optional[dict]:
-    """Validate refresh token and issue a new access token."""
+    """Validate a refresh token and rotate it.
+
+    On success the presented refresh token is blacklisted and a brand-new
+    refresh token is issued alongside a fresh access token. This means a stolen
+    refresh token can only be used once: any replay of a previously-used token
+    fails the blacklist check below and is rejected.
+    """
     if not verify_token_type(refresh_token, "refresh"):
         return None
 
     if await is_token_blacklisted(refresh_token):
+        # Reuse of a token that has already been rotated (or revoked on logout).
         return None
 
     try:
@@ -141,6 +148,9 @@ async def refresh_access_token(refresh_token: str) -> Optional[dict]:
 
         user = _strip_user(inst.to_dict())
 
+    # Rotate: the presented refresh token can no longer be reused.
+    await blacklist_token(refresh_token)
+
     token_data = {
         "sub": str(user["id"]),
         "email": user["email"],
@@ -152,11 +162,14 @@ async def refresh_access_token(refresh_token: str) -> Optional[dict]:
         data=token_data,
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
+    new_refresh_token = create_refresh_token(data=token_data)
 
     return {
         "access_token": access_token,
+        "refresh_token": new_refresh_token,
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "refresh_expires_in": settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     }
 
 

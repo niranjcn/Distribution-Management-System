@@ -151,6 +151,80 @@ async def get_device_by_id(device_id: str) -> Optional[Dict[str, Any]]:
         return _augment_device_record(inst.to_dict()) if inst else None
 
 
+async def user_can_view_device(user: Dict[str, Any], device: Dict[str, Any]) -> bool:
+    """Whether ``user`` may view the given device (and its history) by ID.
+
+    Mirrors the scoped device list (a device currently held within the user's
+    scope, or a defective device reported within the user's scope) and also
+    allows devices that belong to a distribution to/from someone within the
+    user's scope, so a recipient can inspect a delivery's devices while they
+    still await receipt confirmation (held by the sender until then).
+    """
+    role = str(user.get("role") or "").lower()
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        return True
+
+    try:
+        uid = int(user.get("id") or user.get("_id") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not uid:
+        return False
+
+    try:
+        device_id = int(device.get("id") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not device_id:
+        return False
+
+    async with async_session_factory() as session:
+        mine_ids, chain_ids = await _build_scope_id_sets(session, str(uid), role)
+        scope_ids = list(dict.fromkeys([*mine_ids, *chain_ids]))
+        if not scope_ids:
+            return False
+
+        # 1. Device currently held by the user or someone in their scope.
+        holder = device.get("current_holder_id")
+        if holder is not None:
+            try:
+                if int(holder) in scope_ids:
+                    return True
+            except (TypeError, ValueError):
+                pass
+
+        # 2. Defective device reported within scope (matches the scoped list).
+        if str(device.get("status") or "").lower() == "defective":
+            ph = ",".join([f":dsp_{i}" for i in range(len(scope_ids))])
+            params = {f"dsp_{i}": sid for i, sid in enumerate(scope_ids)}
+            row = (await session.execute(
+                text(f"SELECT 1 FROM defects WHERE device_id = :did AND reported_by IN ({ph}) LIMIT 1"),
+                {**params, "did": device_id}
+            )).scalar_one_or_none()
+            if row:
+                return True
+
+        # 3. Device belongs to a distribution to/from someone in scope (covers
+        #    deliveries still awaiting receipt confirmation by the recipient).
+        ph1 = ",".join([f":df_{i}" for i in range(len(scope_ids))])
+        ph2 = ",".join([f":dt_{i}" for i in range(len(scope_ids))])
+        params = {}
+        for i, sid in enumerate(scope_ids):
+            params[f"df_{i}"] = sid
+            params[f"dt_{i}"] = sid
+        row = (await session.execute(
+            text(f"""
+                SELECT 1
+                FROM device_history dh
+                INNER JOIN distributions d ON d.distribution_id = dh.distribution_id
+                WHERE dh.device_id = :did
+                  AND (d.from_user_id IN ({ph1}) OR d.to_user_id IN ({ph2}))
+                LIMIT 1
+            """), {**params, "did": device_id}
+        )).scalar_one_or_none()
+        return row is not None
+
+
 async def get_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]:
     """Get device by serial number"""
     async with async_session_factory() as session:

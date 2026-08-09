@@ -525,23 +525,7 @@ const Users = () => {
           </button>
           {canEditUser(row) && (
             <button
-              onClick={async () => {
-                try {
-                  const res = await usersAPI.getUser(row._id || row.id);
-                  const full = res?.data || row;
-                  setDetailUser(full);
-                  setDetailForm({ ...full });
-                  const ids = (full.digital_ids || []).map(e => ({ ...e }));
-                  setDetailDigitalIds(ids);
-                  origDigitalIdIds.current = ids.map(e => e.id).filter(Boolean);
-                } catch {
-                  setDetailUser(row);
-                  setDetailForm({ ...row });
-                  setDetailDigitalIds([]);
-                  origDigitalIdIds.current = [];
-                }
-                setNewPassword(''); setConfirmResetPassword(''); setShowResetPassword(false); setShowConfirmResetPassword(false);
-              }}
+              onClick={() => openEditDetail(row)}
               className="p-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200"
               title="Edit Details"
             >
@@ -706,7 +690,28 @@ const Users = () => {
     if (isAdmin) return row.role !== 'super_admin' || String(row.id) === String(currentUser.id);
     if (isManager) return !['super_admin', 'md_director', 'manager'].includes(row.role);
     if (currentUser?.role === 'sub_distribution_employee') return ['cluster', 'operator'].includes(row.role);
+    if (currentUser?.role === 'sub_distribution_manager') return ['cluster', 'operator', 'sub_distribution_employee'].includes(row.role);
+    if (currentUser?.role === 'sub_distributor') return ['cluster', 'operator', 'sub_distribution_employee'].includes(row.role);
+    if (currentUser?.role === 'cluster') return row.role === 'operator' && String(row.parent_id) === String(currentUser.id);
     return false;
+  };
+
+  const openEditDetail = async (userRow) => {
+    try {
+      const res = await usersAPI.getUser(userRow._id || userRow.id);
+      const full = res?.data || userRow;
+      setDetailUser(full);
+      setDetailForm({ ...full });
+      const ids = (full.digital_ids || []).map(e => ({ ...e }));
+      setDetailDigitalIds(ids);
+      origDigitalIdIds.current = ids.map(e => e.id).filter(Boolean);
+    } catch {
+      setDetailUser(userRow);
+      setDetailForm({ ...userRow });
+      setDetailDigitalIds([]);
+      origDigitalIdIds.current = [];
+    }
+    setNewPassword(''); setConfirmResetPassword(''); setShowResetPassword(false); setShowConfirmResetPassword(false);
   };
 
   const canDeleteUser = (row) => {
@@ -996,6 +1001,15 @@ const Users = () => {
                           >
                             <Eye className="w-3.5 h-3.5 text-gray-500" />
                           </button>
+                          {canEditUser(emp) && (
+                            <button
+                              onClick={() => openEditDetail(emp)}
+                              className="p-1 hover:bg-blue-50 rounded"
+                              title="Edit employee"
+                            >
+                              <Edit className="w-3.5 h-3.5 text-blue-600" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1036,6 +1050,15 @@ const Users = () => {
                           >
                             <Eye className="w-3.5 h-3.5 text-gray-500" />
                           </button>
+                          {canEditUser(op) && (
+                            <button
+                              onClick={() => openEditDetail(op)}
+                              className="p-1 hover:bg-blue-50 rounded"
+                              title="Edit operator"
+                            >
+                              <Edit className="w-3.5 h-3.5 text-blue-600" />
+                            </button>
+                          )}
                           <button
                             onClick={() => { openReassignModal(op); }}
                             className="p-1 hover:bg-amber-50 rounded"
@@ -1083,6 +1106,15 @@ const Users = () => {
                         >
                           <Eye className="w-4 h-4 text-gray-500" />
                         </button>
+                        {canEditUser(cluster) && (
+                          <button
+                            onClick={e => { e.stopPropagation(); openEditDetail(cluster); }}
+                            className="p-1.5 hover:bg-blue-50 rounded"
+                            title="Edit cluster"
+                          >
+                            <Edit className="w-4 h-4 text-blue-600" />
+                          </button>
+                        )}
                         <button
                           onClick={e => { e.stopPropagation(); openReassignModal(cluster); }}
                           className="p-1.5 hover:bg-amber-50 rounded"
@@ -1125,6 +1157,15 @@ const Users = () => {
                               >
                                 <Eye className="w-3.5 h-3.5 text-gray-500" />
                               </button>
+                              {canEditUser(op) && (
+                                <button
+                                  onClick={() => openEditDetail(op)}
+                                  className="p-1 hover:bg-blue-50 rounded"
+                                  title="Edit operator"
+                                >
+                                  <Edit className="w-3.5 h-3.5 text-blue-600" />
+                                </button>
+                              )}
                               <button
                                 onClick={() => { openReassignModal(op); }}
                                 className="p-1 hover:bg-amber-50 rounded"

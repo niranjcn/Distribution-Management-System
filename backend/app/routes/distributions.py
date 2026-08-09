@@ -457,6 +457,12 @@ async def get_distribution(
                 detail="Distribution not found"
             )
 
+        if not await distribution_service.user_can_view_distribution(current_user, distribution):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions"
+            )
+
         return {
             "success": True,
             "message": "Distribution retrieved successfully",

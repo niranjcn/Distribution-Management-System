@@ -16,9 +16,32 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+async def _target_user_or_403(current_user: dict, target_user_id, *, write: bool) -> dict:
+    """Return the target user if ``current_user`` may access them, else 403.
+
+    Mirrors the ownership/scope model used by user management
+    (``users._can_access_user``): a user may always act on their own record,
+    management roles may act on users within their branch, and everyone else is
+    restricted to their own sub-distribution scope.
+    """
+    from app.routes.users import _can_access_user
+    from app.services.user_service import get_user_by_id
+
+    target = await get_user_by_id(str(target_user_id))
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not await _can_access_user(current_user, target, write=write):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+    return target
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create digital identity entry")
 async def create_digital_identity_endpoint(data: DigitalIdentityCreate, current_user: dict = Depends(get_current_user)):
     try:
+        await _target_user_or_403(current_user, data.user_id, write=True)
         entry = await create_digital_identity(data)
         if not entry:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -35,6 +58,7 @@ async def create_digital_identity_endpoint(data: DigitalIdentityCreate, current_
 @router.get("/user/{user_id}", summary="Get digital identities by user")
 async def get_digital_identities_endpoint(user_id: str, current_user: dict = Depends(get_current_user)):
     try:
+        await _target_user_or_403(current_user, user_id, write=False)
         entries = await get_digital_identities_by_user(int(user_id))
         return {"success": True, "message": "Digital identities retrieved", "data": entries}
     except HTTPException:
@@ -47,6 +71,7 @@ async def get_digital_identities_endpoint(user_id: str, current_user: dict = Dep
 @router.delete("/user/{user_id}", summary="Delete all digital identities for a user")
 async def delete_digital_identities_endpoint(user_id: str, current_user: dict = Depends(get_current_user)):
     try:
+        await _target_user_or_403(current_user, user_id, write=True)
         await delete_digital_identities_by_user(int(user_id))
         return {"success": True, "message": "Digital identities deleted"}
     except Exception as e:
@@ -72,6 +97,7 @@ async def update_digital_identity_endpoint(identity_id: str, data: DigitalIdenti
             entry = result.scalars().first()
             if not entry:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Digital identity not found")
+            await _target_user_or_403(current_user, entry.user_id, write=True)
             digital_id = _normalize(data.digital_id)
             broadband_id = _normalize(data.broadband_id)
             conflicts = await check_identity_conflicts(
@@ -107,6 +133,7 @@ async def delete_single_digital_identity_endpoint(identity_id: str, current_user
             entry = result.scalars().first()
             if not entry:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Digital identity not found")
+            await _target_user_or_403(current_user, entry.user_id, write=True)
             await session.execute(sa_delete(DigitalIdentity).where(DigitalIdentity.id == int(identity_id)))
             await bump_cache_version(session)
             await session.commit()

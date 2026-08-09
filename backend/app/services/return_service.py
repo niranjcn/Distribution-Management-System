@@ -12,6 +12,58 @@ from app.services.digital_id_search import build_identity_search_clause
 from app.utils.helpers import get_pagination, generate_return_id, is_set_top_box_device
 
 
+async def _get_return_branch_scope_user_ids(session, user: Dict[str, Any]) -> Optional[Set[str]]:
+    """Return the set of user ids whose returns the given user may view.
+
+    Mirrors the scope logic used by the returns list (returns are attributed to
+    the reporter of the linked defect): management/PDIC roles get ``None`` (no
+    scope restriction); everyone else is limited to their own branch.
+    """
+    role = str(user.get("role") or "")
+    user_id = str(user.get("id") or user.get("_id") or "")
+    parent_id = str(user.get("parent_id") or "")
+
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        return None
+
+    scope_root = parent_id if role in ("sub_distribution_manager", "sub_distribution_employee") and parent_id.isdigit() else user_id
+    scoped_ids: Set[str] = {scope_root}
+    if str(scope_root).isdigit():
+        desc_rows = (await session.execute(
+            text("""
+                WITH RECURSIVE descendants AS (
+                    SELECT id FROM users WHERE parent_id = :root
+                    UNION ALL
+                    SELECT u.id FROM users u
+                    INNER JOIN descendants d ON u.parent_id = d.id
+                )
+                SELECT id FROM descendants
+            """),
+            {"root": int(scope_root)}
+        )).scalars().all()
+        scoped_ids.update(str(did) for did in desc_rows if did)
+    return scoped_ids
+
+
+async def user_can_view_return(user: Dict[str, Any], return_req: Dict[str, Any]) -> bool:
+    """Whether ``user`` may view the given return request by ID.
+
+    Mirrors the scoped returns list: management/PDIC roles see all returns;
+    everyone else may only view returns requested by themselves or by users
+    within their sub-distribution scope.
+    """
+    role = str(user.get("role") or "")
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        return True
+
+    async with async_session_factory() as session:
+        scope_ids = await _get_return_branch_scope_user_ids(session, user)
+    if scope_ids is None:
+        return True
+
+    return str(return_req.get("requested_by")) in scope_ids
+
+
 async def get_returns(
     page: int = 1,
     page_size: int = 20,

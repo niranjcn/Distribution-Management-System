@@ -706,6 +706,12 @@ async def get_device(
                 detail="Device not found"
             )
 
+        if not await device_service.user_can_view_device(current_user, device):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions"
+            )
+
         return {
             "success": True,
             "message": "Device retrieved successfully",
@@ -734,6 +740,12 @@ async def get_device_history(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Device not found"
+            )
+
+        if not await device_service.user_can_view_device(current_user, device):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions"
             )
 
         history = await device_service.get_device_history(device_id)

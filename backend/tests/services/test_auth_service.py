@@ -1,12 +1,35 @@
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 import pytest
 from jose import JWTError
 
 from app.services.auth_service import (
     _parse_datetime,
     create_user_token,
+    refresh_access_token,
 )
+
+
+class _FakeInstance:
+    def __init__(self, user_dict):
+        self._dict = user_dict
+
+    def to_dict(self):
+        return dict(self._dict)
+
+
+class _FakeSession:
+    def __init__(self, user_dict):
+        self._user_dict = user_dict
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, model, pk):
+        return _FakeInstance(self._user_dict)
 
 
 class TestParseDatetime:
@@ -64,3 +87,66 @@ class TestCreateUserToken:
             result = await create_user_token(forced_user)
         assert result["user"]["force_email_change"] is True
         assert result["user"]["force_password_change"] is True
+
+
+class TestRefreshAccessToken:
+    async def test_success_rotates_token(self, sample_user):
+        with (
+            patch("app.services.auth_service.verify_token_type", return_value=True),
+            patch(
+                "app.services.auth_service.is_token_blacklisted",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("app.services.auth_service.jwt.decode", return_value={"sub": "1"}),
+            patch(
+                "app.services.auth_service.async_session_factory",
+                return_value=_FakeSession(sample_user),
+            ),
+            patch(
+                "app.services.auth_service.blacklist_token",
+                new_callable=AsyncMock,
+            ) as blacklist,
+            patch("app.services.auth_service.create_access_token", return_value="access-new"),
+            patch("app.services.auth_service.create_refresh_token", return_value="refresh-new"),
+        ):
+            result = await refresh_access_token("old-token")
+
+        assert result is not None
+        assert result["access_token"] == "access-new"
+        assert result["refresh_token"] == "refresh-new"
+        assert result["token_type"] == "bearer"
+        assert result["expires_in"] > 0
+        assert result["refresh_expires_in"] > 0
+        blacklist.assert_awaited_once_with("old-token")
+
+    async def test_reuse_of_rotated_token_rejected(self, sample_user):
+        with (
+            patch("app.services.auth_service.verify_token_type", return_value=True),
+            patch(
+                "app.services.auth_service.is_token_blacklisted",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "app.services.auth_service.blacklist_token",
+                new_callable=AsyncMock,
+            ) as blacklist,
+        ):
+            result = await refresh_access_token("already-used-token")
+
+        assert result is None
+        blacklist.assert_not_awaited()
+
+    async def test_wrong_token_type_rejected(self, sample_user):
+        with (
+            patch("app.services.auth_service.verify_token_type", return_value=False),
+            patch(
+                "app.services.auth_service.blacklist_token",
+                new_callable=AsyncMock,
+            ) as blacklist,
+        ):
+            result = await refresh_access_token("access-token")
+
+        assert result is None
+        blacklist.assert_not_awaited()

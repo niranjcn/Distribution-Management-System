@@ -371,6 +371,34 @@ async def _user_can_access_distribution(
     return (from_id is not None and from_id in scope_ids) or (to_id is not None and to_id in scope_ids)
 
 
+async def user_can_view_distribution(user: Dict[str, Any], distribution: Dict[str, Any]) -> bool:
+    """Whether ``user`` may view the given distribution by ID.
+
+    Mirrors the scoped distribution list: management/PDIC roles see all
+    distributions; everyone else may only view distributions where the sender
+    or recipient falls within their sub-distribution scope.
+    """
+    role = str(user.get("role") or "")
+    if role in ["super_admin", "md_director", "manager", "pdic_staff"]:
+        return True
+
+    async with async_session_factory() as session:
+        scope_ids = await _get_distribution_scope_user_ids(session, user)
+    if scope_ids is None:
+        return True
+
+    try:
+        from_id = int(distribution.get("from_user_id"))
+    except (TypeError, ValueError):
+        from_id = None
+    try:
+        to_id = int(distribution.get("to_user_id"))
+    except (TypeError, ValueError):
+        to_id = None
+
+    return (from_id is not None and from_id in scope_ids) or (to_id is not None and to_id in scope_ids)
+
+
 async def _branch_staff_ids(
     session, user_id: int, exclude: Optional[set] = None
 ) -> List[int]:

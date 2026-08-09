@@ -73,6 +73,12 @@ async def get_return(
                 detail="Return request not found"
             )
 
+        if not await return_service.user_can_view_return(current_user, return_req):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions"
+            )
+
         return {
             "success": True,
             "message": "Return request retrieved successfully",
