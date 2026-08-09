@@ -1,11 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import jsPDF from 'jspdf';
 import Card from '../components/ui/Card';
-import Button from '../components/ui/Button';
-import { reportsAPI, dashboardAPI } from '../services/api';
+import { reportsAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { 
-  BarChart3, Download,
+  BarChart3,
   Box, Package, AlertTriangle, RotateCcw, Loader2
 } from 'lucide-react';
 
@@ -73,14 +71,6 @@ const isSbDeviceType = (value) => {
 
 const toDeviceTypeLabel = (value) => (isSbDeviceType(value) ? 'SB' : (value || '-'));
 
-const buildDateParams = (range) => {
-  const start = buildRangeStart(range);
-  if (!start || range === 'all') return {};
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  return { start_date: start.toISOString(), end_date: end.toISOString() };
-};
-
 const Reports = () => {
   const { showToast } = useNotifications();
   const [dateRange, setDateRange] = useState('last30');
@@ -121,33 +111,6 @@ const Reports = () => {
     };
     fetchData();
   }, [dateRange]);
-
-  const handleDownloadReport = async () => {
-    try {
-      let params;
-      if (dateRange === 'custom' && customStart && customEnd) {
-        params = {
-          start_date: new Date(customStart).toISOString(),
-          end_date: new Date(customEnd + 'T23:59:59').toISOString(),
-        };
-      } else {
-        params = buildDateParams(dateRange);
-      }
-      const { blob, contentDisposition } = await dashboardAPI.downloadReport(params);
-      const filename = (contentDisposition.match(/filename=(.+)/) || [])[1] || 'report.xlsx';
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Failed to download report:', error);
-      showToast('Failed to download report. Please try again.', 'error');
-    }
-  };
 
   const monthlyActivity = useMemo(() => {
     const distByMonth = distributionSummary?.by_month || [];
@@ -245,96 +208,12 @@ const Reports = () => {
     { id: 'overview', label: 'Overview', icon: BarChart3 },
   ];
 
-  const handleExportPdf = () => {
-    try {
-      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-      const marginX = 40;
-      const pageHeight = doc.internal.pageSize.getHeight();
-      let y = 48;
-
-      const addLine = (text = '', opts = {}) => {
-        const { size = 11, bold = false, gap = 16 } = opts;
-        if (y > pageHeight - 48) {
-          doc.addPage();
-          y = 48;
-        }
-        doc.setFont('helvetica', bold ? 'bold' : 'normal');
-        doc.setFontSize(size);
-        doc.text(String(text), marginX, y);
-        y += gap;
-      };
-
-      const generatedAt = new Date().toLocaleString();
-      addLine('Distribution Management System', { size: 10, bold: false, gap: 14 });
-      addLine(`Report: ${reportType.replace(/_/g, ' ').toUpperCase()}`, { size: 16, bold: true, gap: 18 });
-      addLine(`Generated: ${generatedAt}`, { size: 10, gap: 18 });
-
-      addLine('Overview', { size: 13, bold: true, gap: 16 });
-      addLine(`Total Devices: ${stats.totalDevices}`);
-      addLine(`Active Devices: ${stats.activeDevices}`);
-      addLine(`Distributed Devices: ${stats.distributedDevices}`);
-      addLine(`Defective Devices: ${stats.defectiveDevices}`);
-      addLine(`Total Distributions: ${stats.totalDistributions}`);
-      addLine(`Total Defects: ${stats.totalDefects}`);
-      addLine(`Total Returns: ${stats.totalReturns}`, { gap: 20 });
-
-      if (reportType === 'devices' || reportType === 'overview') {
-        addLine('Devices By Location', { size: 13, bold: true, gap: 16 });
-        if (devicesByLocation.length === 0) {
-          addLine('No location data available');
-        } else {
-          devicesByLocation.forEach((row) => {
-            addLine(`${row.location}: ${row.count} (${row.percentage}%)`);
-          });
-        }
-        y += 8;
-      }
-
-      if (reportType === 'devices' || reportType === 'overview') {
-        addLine('Devices By Condition', { size: 13, bold: true, gap: 16 });
-        if (devicesByCondition.length === 0) {
-          addLine('No condition data available');
-        } else {
-          devicesByCondition.forEach((row) => {
-            addLine(`${row.condition}: ${row.count}`);
-          });
-        }
-        y += 8;
-      }
-
-      if (reportType === 'overview') {
-        addLine('Monthly Activity', { size: 13, bold: true, gap: 16 });
-        if (monthlyActivity.length === 0) {
-          addLine('No monthly activity available');
-        } else {
-          monthlyActivity.forEach((entry) => {
-            addLine(
-              `${entry.month}: Distributions ${entry.distributions}, Returns ${entry.returns}, Defects ${entry.defects}`
-            );
-          });
-        }
-      }
-
-      const fileDate = new Date().toISOString().slice(0, 10);
-      doc.save(`report-${reportType}-${fileDate}.pdf`);
-      showToast('PDF report exported successfully', 'success');
-    } catch (error) {
-      console.error('Failed to export PDF report', error);
-      showToast('Failed to export PDF report', 'error');
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Reports & Analytics</h1>
           <p className="text-gray-500 mt-1">View system statistics and generate reports</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" icon={Download} onClick={handleExportPdf}>
-            Export PDF
-          </Button>
         </div>
       </div>
 
@@ -376,7 +255,6 @@ const Reports = () => {
                 <option value="all">All Time</option>
                 <option value="custom">Custom</option>
               </select>
-              <Button variant="secondary" onClick={handleDownloadReport} icon={Download}>Download Report</Button>
             </div>
             {dateRange === 'custom' && (
               <div className="flex gap-2 mt-2">
