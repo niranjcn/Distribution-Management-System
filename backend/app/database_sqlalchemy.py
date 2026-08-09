@@ -19,6 +19,11 @@ from app.core.metrics import (
 )
 
 
+# Startup DB-connection retry: how many attempts and the delay between them
+# (total wait = _DB_STARTUP_RETRIES * _DB_STARTUP_RETRY_DELAY before failing).
+_DB_STARTUP_RETRIES = 10
+_DB_STARTUP_RETRY_DELAY = 3
+
 ASYNC_DB_URL = (
     f"mysql+aiomysql://{settings.DB_USER}:{settings.DB_PASSWORD}"
     f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
@@ -112,9 +117,15 @@ async def get_async_session():
 
 
 async def run_alembic_migrations():
-    """Run pending Alembic migrations synchronously in a thread pool."""
+    """Run pending Alembic migrations synchronously in a thread pool.
+
+    On first boot MySQL may still be initialising when the app starts; retry
+    transient connection failures (with backoff) before giving up, instead of
+    letting the app crash and relying on the Docker restart policy.
+    """
     from alembic.config import Config
     from alembic import command
+    from sqlalchemy.exc import OperationalError
 
     backend_dir = Path(__file__).resolve().parent.parent
     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
@@ -124,4 +135,14 @@ async def run_alembic_migrations():
         command.upgrade(alembic_cfg, "head")
 
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _upgrade)
+    last_error = None
+    for attempt in range(1, _DB_STARTUP_RETRIES + 1):
+        try:
+            await loop.run_in_executor(None, _upgrade)
+            return
+        except OperationalError as exc:
+            last_error = exc
+            if attempt == _DB_STARTUP_RETRIES:
+                break
+            await asyncio.sleep(_DB_STARTUP_RETRY_DELAY)
+    raise last_error

@@ -17,10 +17,21 @@ if str(_backend_dir) not in sys.path:
 from dotenv import load_dotenv
 load_dotenv(str(_backend_dir / ".env"))
 
-# Override sqlalchemy.url from .env settings (never use hardcoded credentials)
+# Override sqlalchemy.url from .env settings (never use hardcoded credentials).
+# Migrations run as a separate, privileged user (root by default) so the
+# runtime application user never needs schema-changing privileges. Falls back
+# to the runtime DB user for local development when the migration vars are not
+# set.
+MIGRATION_DB_USER = os.environ.get(
+    "MIGRATION_DB_USER", os.environ.get("DB_USER", "root")
+)
+MIGRATION_DB_PASSWORD = os.environ.get(
+    "MIGRATION_DB_PASSWORD", os.environ.get("DB_PASSWORD", "")
+)
+
 DB_URL = (
-    f"mysql+pymysql://{os.environ.get('DB_USER', 'dms_user')}"
-    f":{os.environ.get('DB_PASSWORD', '')}"
+    f"mysql+pymysql://{MIGRATION_DB_USER}"
+    f":{MIGRATION_DB_PASSWORD}"
     f"@{os.environ.get('DB_HOST', 'localhost')}:{os.environ.get('DB_PORT', '3306')}"
     f"/{os.environ.get('DB_NAME', 'distribution_management_system')}"
 )
