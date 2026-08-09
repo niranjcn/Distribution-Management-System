@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.models.inventory import ExternalBulkDistributionCreate
+from app.models.inventory import ExternalBulkDistributionCreate, ExternalDistributionCreate
 from app.services import inventory_service
 
 
@@ -94,6 +94,22 @@ class _BulkSession:
         if "FROM users WHERE id = :user_id" in sql:
             return _FakeResult([dict(self._users[int(params["user_id"])])] if int(params["user_id"]) in self._users else [])
 
+        if "FROM external_inventory_items WHERE id = :item_id" in sql:
+            iid = int(params["item_id"])
+            return _FakeResult([dict(self._items[iid])] if iid in self._items else [])
+
+        if "SET quantity = :quantity" in sql:
+            # Single-item absolute decrement issued by distribute_item.
+            iid = int(params["item_id"])
+            new_qty = int(params["quantity"])
+            item = self._items.get(iid)
+            if item:
+                previous = int(item["quantity"])
+                item["quantity"] = new_qty
+                self.updates.append({"item_id": iid, "qty": previous - new_qty})
+                return _FakeUpdateResult(1)
+            return _FakeUpdateResult(0)
+
         if "UPDATE external_inventory_items" in sql:
             # Batched CASE decrement: params are did_0/dqty_0/... plus updated_at.
             decrements = {}
@@ -129,6 +145,11 @@ class _RaceSession(_BulkSession):
     async def execute(self, statement, params=None):
         sql = str(statement)
         params = params or {}
+        if "FROM external_inventory_items WHERE id = :item_id" in sql:
+            iid = int(params["item_id"])
+            if iid == self._raced_item_id:
+                return _FakeResult([{**self._items[iid], "quantity": self._reduced_quantity}])
+            return _FakeResult([dict(self._items[iid])] if iid in self._items else [])
         if "FROM external_inventory_items WHERE id IN" in sql:
             ids = set(params.values())
             rows = [dict(i) for i in self._items.values() if i["id"] in ids]
@@ -344,3 +365,77 @@ class TestBulkDistributeFromFile:
 
         assert exc_info.value.status_code == 400
         assert "not active" in exc_info.value.detail
+
+
+class TestDistributeItem:
+    async def test_single_decrements_and_writes_history(self):
+        session = _BulkSession()
+        patchers = _patch_session(session)
+        try:
+            payload = ExternalDistributionCreate(item_id=1, to_user_id=12, quantity=2)
+            result = await inventory_service.distribute_item(payload=payload, user={"id": 99, "name": "Mgr"})
+            notify = inventory_service._notify_recipient
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert result["remaining_quantity"] == 8
+        assert session._items[1]["quantity"] == 8
+        assert session.updates == [{"item_id": 1, "qty": 2}]
+        assert len(session.history_rows) == 1
+        assert session.history_rows[0]["previous_quantity"] == 10
+        assert session.history_rows[0]["remaining_quantity"] == 8
+        assert notify.await_count == 1
+
+    async def test_quantity_over_available_rejected(self):
+        session = _BulkSession()
+        patcher = _patch_session(session)
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await inventory_service.distribute_item(
+                    payload=ExternalDistributionCreate(item_id=4, to_user_id=12, quantity=999),
+                    user={"id": 99, "name": "Mgr"},
+                )
+        finally:
+            for p in patcher:
+                p.stop()
+
+        assert exc_info.value.status_code == 400
+        assert "Cannot distribute more than the available quantity" in exc_info.value.detail
+        assert session.updates == []
+        assert session.history_rows == []
+
+    async def test_concurrent_stock_loss_rejected(self):
+        # The lock read sees the quantity already reduced by a concurrent
+        # distribution, so this request for 2 is rejected instead of overselling.
+        session = _RaceSession(raced_item_id=1, reduced_quantity=1)
+        patcher = _patch_session(session)
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await inventory_service.distribute_item(
+                    payload=ExternalDistributionCreate(item_id=1, to_user_id=12, quantity=2),
+                    user={"id": 99, "name": "Mgr"},
+                )
+        finally:
+            for p in patcher:
+                p.stop()
+
+        assert exc_info.value.status_code == 400
+        assert "Cannot distribute more than the available quantity (1)" in exc_info.value.detail
+        assert session.updates == []
+        assert session.history_rows == []
+
+    async def test_item_not_found(self):
+        patcher = _patch_session(_BulkSession())
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await inventory_service.distribute_item(
+                    payload=ExternalDistributionCreate(item_id=999, to_user_id=12, quantity=1),
+                    user={"id": 99, "name": "Mgr"},
+                )
+        finally:
+            for p in patcher:
+                p.stop()
+
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.detail == "External inventory item not found"

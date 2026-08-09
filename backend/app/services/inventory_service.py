@@ -437,8 +437,13 @@ async def distribute_item(payload: ExternalDistributionCreate, user: Dict[str, A
     actor = _resolve_actor(user)
 
     async with async_session_factory() as session:
+        # Load the item with a locking read and keep the lock until commit, so
+        # the quantity validated below is authoritative. With FOR UPDATE, two
+        # concurrent distributions of the same item serialize: the loser's read
+        # runs after the winner commits and sees the reduced quantity, so it is
+        # rejected instead of overselling the item into negative stock.
         item_result = await session.execute(
-            text("SELECT * FROM external_inventory_items WHERE id = :item_id"),
+            text("SELECT * FROM external_inventory_items WHERE id = :item_id FOR UPDATE"),
             {"item_id": int(payload.item_id)},
         )
         item_row = item_result.mappings().first()
