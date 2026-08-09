@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 import pytest
 
 
@@ -186,6 +186,39 @@ class TestMe:
 
         test_app.dependency_overrides.pop(get_current_user, None)
         resp = client.get(self.ME_URL)
+        assert resp.status_code == 401
+
+    def test_refresh_token_cookie_returns_401(self, client, test_app):
+        # A refresh token placed in the access_token cookie must NOT authenticate.
+        from app.middleware.auth_middleware import get_current_user
+        from app.utils.security import create_refresh_token
+
+        test_app.dependency_overrides.pop(get_current_user, None)
+        refresh = create_refresh_token({
+            "sub": "1",
+            "email": "admin@test.com",
+            "role": "super_admin",
+            "name": "Admin",
+        })
+        with patch("app.services.auth_service.is_token_blacklisted", new=AsyncMock(return_value=False)):
+            resp = client.get(self.ME_URL, cookies={"access_token": refresh})
+        assert resp.status_code == 401
+
+    def test_refresh_token_bearer_header_returns_401(self, client, test_app):
+        # The same protection applies when the refresh token is presented as
+        # an Authorization: Bearer credential.
+        from app.middleware.auth_middleware import get_current_user
+        from app.utils.security import create_refresh_token
+
+        test_app.dependency_overrides.pop(get_current_user, None)
+        refresh = create_refresh_token({
+            "sub": "1",
+            "email": "admin@test.com",
+            "role": "super_admin",
+            "name": "Admin",
+        })
+        with patch("app.services.auth_service.is_token_blacklisted", new=AsyncMock(return_value=False)):
+            resp = client.get(self.ME_URL, headers={"Authorization": f"Bearer {refresh}"})
         assert resp.status_code == 401
 
 

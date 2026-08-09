@@ -1,6 +1,6 @@
 # Production Risks — Full Inventory
 
-> **76 risks identified** across backend, frontend, infrastructure, and deployment.
+> **77 risks identified** across backend, frontend, infrastructure, and deployment.
 >
 > ✅ FIXED = Code-verified as resolved
 > ⚠️ PARTIAL = Partially addressed, residual risk remains
@@ -420,12 +420,17 @@
 **Why:** Runtime errors visible in browser devtools. Exposes internal logic.
 **Verified:** Still broken — 100+ `console.error()` calls in production code. Only `services/api/client.js` has a conditional guard (`isDev ? console.error : () => {}`).
 
+### 82. 🆕 Race condition double-allocates devices to two distributions ✅ FIXED
+**File:** `backend/app/services/distribution_service.py:1147,1277-1329,1369`
+**Why:** Both create paths read device state — including the active-distribution lock check — with plain (non-locking) consistent reads, then set `current_distribution_id` unconditionally. Two concurrent creates for the same device both passed validation and both committed, so two people were given the same device.
+**Verified:** Fixed — `create_distribution` and `create_distribution_from_identifiers` now lock the device rows first (`SELECT ... FOR UPDATE`), then re-run the active-distribution check as a locking read (`FOR UPDATE OF d`) that sees the latest committed state. A device claimed by a concurrent request is excluded with a row error instead of double-allocated. Regression tests added in `test_distribution_service.py`.
+
 ---
 
 ## Summary
 
 ```
-✅ FIXED:   25  (1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 16, 17, 18, 26, 30, 56, 58, 59, 67, 69, 70, 76, 77, 78, 79)
+✅ FIXED:   26  (1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 16, 17, 18, 26, 30, 56, 58, 59, 67, 69, 70, 76, 77, 78, 79, 82)
 ⚡ PARTIAL:  2  (28, 35)
 📋 BROKEN:  59  (all remaining)
 ```
@@ -433,10 +438,10 @@
 | Severity | Count | Impact |
 |----------|-------|--------|
 | 🚨 Critical | 15 | Will crash, corrupt data, or leak all secrets |
-| 🔴 High | 41 | Will degrade or break under load / realistic edge cases |
+| 🔴 High | 42 | Will degrade or break under load / realistic edge cases |
 | 🟡 Medium | 26 | Will cause errors, performance issues, or operational burden |
 
-**Fixed: 25 | Partial: 2 | Still broken: 59**
+**Fixed: 26 | Partial: 2 | Still broken: 49**
 
 ---
 

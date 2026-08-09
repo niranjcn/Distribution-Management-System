@@ -137,7 +137,11 @@ then check the number of affected rows — if zero, reject the request. (Or `SEL
 
 ---
 
-## 4. 🔴 Refresh tokens work as login tokens
+## 4. 🔴 Refresh tokens work as login tokens — **FIXED (2026-08-09)**
+
+**Fix (applied):** `decode_token` (in `backend/app/utils/security.py`) now requires the JWT `type` claim to be `"access"` and returns `None` for any refresh token. Because `decode_token` is the only decoder used by `get_current_user_from_token` (the auth gate behind `get_current_user`/`get_current_user_optional`), a refresh token presented in the `Authorization` header or the `access_token` cookie no longer authenticates. `refresh_access_token` is unaffected — it still decodes the refresh token directly via `jwt.decode`.
+
+**Tests added:** `TestTokenTypeSeparation` in `backend/tests/services/test_auth_service.py` (access token decodes; refresh token rejected; `get_current_user_from_token` rejects a refresh token before any DB lookup; access token accepted) and route tests in `backend/tests/routes/test_auth_routes.py` asserting a refresh token returns `401` on `GET /api/auth/me` when sent as the `access_token` cookie or as a `Bearer` credential.
 
 **What's wrong:** The function that decodes tokens for authentication never checks *what kind* of token it is:
 

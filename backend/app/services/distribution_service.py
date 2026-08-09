@@ -902,6 +902,7 @@ async def create_distribution_from_identifiers(
     errors: List[Dict[str, Any]] = []
     resolved_device_ids: List[str] = []
     resolved_devices: List[Dict[str, Any]] = []
+    resolved_row_info: Dict[str, Dict[str, Any]] = {}
     seen_device_ids = set()
 
     all_macs: List[str] = []
@@ -1119,6 +1120,109 @@ async def create_distribution_from_identifiers(
             seen_device_ids.add(resolved_id)
             resolved_device_ids.append(resolved_id)
             resolved_devices.append(resolved_device)
+            resolved_row_info[resolved_id] = {
+                "row": row_number,
+                "identifier": identifier_value,
+                "device_id": device_display_id,
+            }
+
+        if not resolved_device_ids:
+            data = build_bulk_result([], [], errors, total=len(identifier_rows))
+            data.update({
+                "created": False,
+                "distribution": None,
+                "created_count": 0,
+                "total_rows": len(identifier_rows),
+                "valid_count": 0,
+            })
+            return data
+
+        # Lock the resolved device rows and re-check distribution state while
+        # they are locked. The identifier lookups and validation above used
+        # consistent (non-locking) reads, so between resolution and insert a
+        # concurrent request could have claimed one of these devices. Locking
+        # reads serialize concurrent creates on the same devices and always see
+        # the latest committed state, so a device claimed in the meantime is
+        # excluded here instead of being allocated to two distributions.
+        locked_devices, locked_open_ids = await _lock_devices_and_recheck_open_locks(
+            session, resolved_device_ids
+        )
+
+        recheck_errors: List[Dict[str, Any]] = []
+        keep_devices: List[Dict[str, Any]] = []
+        keep_device_ids: List[str] = []
+        if from_role not in ["super_admin", "manager", "pdic_staff"]:
+            if from_role == "sub_distribution_employee":
+                emp_row = (await session.execute(
+                    text("SELECT parent_id FROM users WHERE id = :id"), {"id": from_user_id}
+                )).mappings().first()
+                branch_id = int((dict(emp_row) if emp_row else {}).get("parent_id") or from_user.get("parent_id") or 0)
+                allowed_holder_ids = {from_user_id, branch_id} if branch_id else {from_user_id}
+            else:
+                allowed_holder_ids = {from_user_id}
+
+        for resolved_id, resolved_device in zip(resolved_device_ids, resolved_devices):
+            row_info = resolved_row_info.get(resolved_id, {})
+            row_number = row_info.get("row", 0)
+            identifier_value = row_info.get("identifier", "")
+            device_display_id = row_info.get("device_id", "")
+            locked = locked_devices.get(resolved_id)
+            if not locked:
+                recheck_errors.append({
+                    "row": row_number,
+                    "identifier": identifier_value,
+                    "error": f"Device {device_display_id} was not found",
+                })
+                continue
+            if resolved_id in locked_open_ids:
+                recheck_errors.append({
+                    "row": row_number,
+                    "identifier": identifier_value,
+                    "error": f"Device {device_display_id} is already in an unconfirmed or disputed distribution",
+                })
+                continue
+            device_status = str(locked.get("status") or "")
+            if device_status == DeviceStatus.DEFECTIVE.value:
+                recheck_errors.append({
+                    "row": row_number,
+                    "identifier": identifier_value,
+                    "error": f"Device {device_display_id} is marked defective and cannot be transferred",
+                })
+                continue
+            if from_role in ["super_admin", "manager", "pdic_staff"]:
+                if device_status != DeviceStatus.AVAILABLE.value:
+                    recheck_errors.append({
+                        "row": row_number,
+                        "identifier": identifier_value,
+                        "error": f"Device {device_display_id} is not available",
+                    })
+                    continue
+            else:
+                if int(locked.get("current_holder_id") or 0) not in allowed_holder_ids:
+                    recheck_errors.append({
+                        "row": row_number,
+                        "identifier": identifier_value,
+                        "error": f"Device {device_display_id} is not in your possession",
+                    })
+                    continue
+                if resolved_id in pending_blocked:
+                    recheck_errors.append({
+                        "row": row_number,
+                        "identifier": identifier_value,
+                        "error": (
+                            f"Device {device_display_id} is awaiting your receipt confirmation. "
+                            "Confirm receipt before redistributing."
+                        ),
+                    })
+                    continue
+            keep_devices.append(locked)
+            keep_device_ids.append(resolved_id)
+
+        if recheck_errors:
+            errors.extend(recheck_errors)
+
+        resolved_device_ids = keep_device_ids
+        resolved_devices = keep_devices
 
         if not resolved_device_ids:
             data = build_bulk_result([], [], errors, total=len(identifier_rows))
@@ -1170,6 +1274,59 @@ async def create_distribution_from_identifiers(
     return data
 
 
+async def _lock_devices_and_recheck_open_locks(
+    session, device_ids: List[str]
+) -> tuple[Dict[str, Dict[str, Any]], Set[str]]:
+    """Lock the given device rows and re-check the active-distribution lock.
+
+    Both statements are locking reads, which serialize concurrent distribution
+    creates on the same devices and always see the latest committed state (unlike
+    the transaction's earlier consistent reads). The re-check uses ``FOR UPDATE
+    OF d`` so it locks only the device rows already held, introducing no new lock
+    ordering or deadlock vector.
+
+    Returns ``(device_rows_by_id, open_lock_device_ids)``; the second set holds
+    the device ids currently linked to an unconfirmed or disputed distribution.
+    """
+    device_rows: Dict[str, Dict[str, Any]] = {}
+    device_ids_int: List[int] = []
+    for dev_id in device_ids:
+        try:
+            device_ids_int.append(int(dev_id))
+        except (TypeError, ValueError):
+            continue
+    device_ids_int.sort()
+
+    for batch in chunks(device_ids_int, 1000):
+        dph = ",".join([f":d_{i}" for i in range(len(batch))])
+        dparams = {f"d_{i}": did for i, did in enumerate(batch)}
+        dev_rows = (await session.execute(
+            text(f"SELECT * FROM devices WHERE id IN ({dph}) FOR UPDATE"), dparams
+        )).mappings().all()
+        for r in dev_rows:
+            device_rows[str(r["id"])] = dict(r)
+
+    open_lock_device_ids: Set[str] = set()
+    for batch in chunks(device_ids_int, 1000):
+        lph = ",".join([f":l_{i}" for i in range(len(batch))])
+        lparams = {f"l_{i}": did for i, did in enumerate(batch)}
+        lparams["s1"] = DistributionStatus.PENDING_RECEIPT.value
+        lparams["s2"] = DistributionStatus.DISPUTED.value
+        lock_rows = (await session.execute(
+            text(f"""SELECT d.id AS device_id
+                FROM devices d
+                INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
+                WHERE dist.status IN (:s1, :s2)
+                  AND d.id IN ({lph})
+                FOR UPDATE OF d"""),
+            lparams
+        )).mappings().all()
+        for lr in lock_rows:
+            open_lock_device_ids.add(str(lr["device_id"]))
+
+    return device_rows, open_lock_device_ids
+
+
 async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str, Any]) -> Dict[str, Any]:
     async with async_session_factory() as session:
         to_user = await _load_and_validate_recipient(session, dist_data, from_user)
@@ -1191,7 +1348,6 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
             allowed_holder_ids = {from_user_id}
 
         validated_devices: List[Dict[str, Any]] = []
-        open_lock_device_ids: Set[str] = set()
         pending_blocked: set = set()
 
         if from_role not in ["super_admin", "manager", "pdic_staff"]:
@@ -1205,33 +1361,14 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
             for r in blocked_rows:
                 pending_blocked.add(str(r["device_id"]))
 
-        lock_ids_int = [int(x) for x in dist_data.device_ids]
-        for batch in chunks(lock_ids_int, 1000):
-            lph = ",".join([f":l_{i}" for i in range(len(batch))])
-            lparams = {f"l_{i}": did for i, did in enumerate(batch)}
-            lparams["s1"] = DistributionStatus.PENDING_RECEIPT.value
-            lparams["s2"] = DistributionStatus.DISPUTED.value
-            lock_rows = (await session.execute(
-                text(f"""SELECT d.id AS device_id
-                    FROM devices d
-                    INNER JOIN distributions dist ON d.current_distribution_id = dist.distribution_id
-                    WHERE dist.status IN (:s1, :s2)
-                      AND d.id IN ({lph})"""),
-                lparams
-            )).mappings().all()
-            for lr in lock_rows:
-                open_lock_device_ids.add(str(lr["device_id"]))
-
-        device_rows: Dict[str, Dict[str, Any]] = {}
-        device_ids_int = [int(x) for x in dist_data.device_ids]
-        for batch in chunks(device_ids_int, 1000):
-            dph = ",".join([f":d_{i}" for i in range(len(batch))])
-            dparams = {f"d_{i}": did for i, did in enumerate(batch)}
-            dev_rows = (await session.execute(
-                text(f"SELECT * FROM devices WHERE id IN ({dph})"), dparams
-            )).mappings().all()
-            for r in dev_rows:
-                device_rows[str(r["id"])] = dict(r)
+        # Lock the requested device rows and re-check the active-distribution
+        # lock while they are locked. Locking reads serialize concurrent creates
+        # on the same devices and always read the latest committed state (unlike
+        # the transaction's earlier consistent reads), so a device claimed by a
+        # concurrent request is detected here instead of double-allocated.
+        device_rows, open_lock_device_ids = await _lock_devices_and_recheck_open_locks(
+            session, dist_data.device_ids
+        )
 
         for dev_id in dist_data.device_ids:
             device = device_rows.get(str(dev_id))

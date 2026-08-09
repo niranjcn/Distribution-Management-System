@@ -34,9 +34,11 @@ def _device(**overrides):
     return base
 
 
-def _build_session(devices, open_lock_ids=None, pending_blocked_ids=None):
+def _build_session(devices, open_lock_ids=None, pending_blocked_ids=None, late_locked_ids=None):
     open_lock_ids = {str(i) for i in (open_lock_ids or [])}
     pending_blocked_ids = {str(i) for i in (pending_blocked_ids or [])}
+    late_locked_ids = {str(i) for i in (late_locked_ids or [])}
+    open_check_calls = [0]
 
     def execute(statement, params=None):
         sql = str(statement)
@@ -47,13 +49,18 @@ def _build_session(devices, open_lock_ids=None, pending_blocked_ids=None):
         if ":nuid_" in sql:
             return _FakeResult([d for d in devices if d.get("nuid")])
         if "current_distribution_id" in sql and "status IN" in sql:
+            open_check_calls[0] += 1
+            requested = late_locked_ids if open_check_calls[0] >= 2 else open_lock_ids
             return _FakeResult([
-                {"device_id": str(d["id"])} for d in devices if str(d["id"]) in open_lock_ids
+                {"device_id": str(d["id"])} for d in devices if str(d["id"]) in requested
             ])
         if "to_user_id" in sql:
             return _FakeResult([
                 {"device_id": str(d["id"])} for d in devices if str(d["id"]) in pending_blocked_ids
             ])
+        if ":d_" in sql:
+            requested = [v for k, v in (params or {}).items() if k.startswith("d_")]
+            return _FakeResult([d for d in devices if d.get("id") in requested])
         return _FakeResult([])
 
     session = MagicMock()
@@ -63,13 +70,15 @@ def _build_session(devices, open_lock_ids=None, pending_blocked_ids=None):
 
 
 async def _run(identifier_rows, from_user, devices, open_lock_ids=None,
-               pending_blocked_ids=None, expected_distribution=None):
+               pending_blocked_ids=None, expected_distribution=None,
+               late_locked_ids=None):
     """Run create_distribution_from_identifiers against a mocked session.
 
     Returns (result, insert_mock).
     """
     session = _build_session(
-        devices, open_lock_ids=open_lock_ids, pending_blocked_ids=pending_blocked_ids
+        devices, open_lock_ids=open_lock_ids, pending_blocked_ids=pending_blocked_ids,
+        late_locked_ids=late_locked_ids,
     )
     session.commit = AsyncMock()
 
@@ -197,6 +206,54 @@ class TestOperatorUploaderPossessionAndReceipt:
         assert any("not in your possession" in m for m in error_msgs)
         assert any("awaiting your receipt confirmation" in m for m in error_msgs)
         create_mock.assert_not_awaited()
+
+
+class TestDoubleAllocationGuard:
+    async def test_device_locked_after_resolution_is_excluded(self):
+        """A device claimed by a concurrent request between validation and insert
+        must be excluded with a row error instead of double-allocated to two
+        distributions."""
+
+        device = _device(id=9, device_id="DEV-9", serial_number="SN-9")
+        rows = [{"row": 2, "serial_number": "SN-9"}]
+        manager = {"id": 100, "role": "manager"}
+
+        result, create_mock = await _run(
+            rows, manager, [device], late_locked_ids=[9]
+        )
+
+        assert result["created"] is False
+        assert result["distribution"] is None
+        assert result["created_count"] == 0
+        assert result["error_count"] == 1
+        assert "already in an unconfirmed or disputed distribution" in result["errors"][0]["error"]
+        create_mock.assert_not_awaited()
+
+    async def test_conflict_only_excluded_mixed_batch_keeps_rest(self):
+        """When only some devices are newly locked, the distribution is still
+        created for the devices that remain valid."""
+
+        free = _device(id=10, device_id="DEV-10", serial_number="SN-10")
+        raced = _device(id=11, device_id="DEV-11", serial_number="SN-11")
+        rows = [
+            {"row": 2, "serial_number": "SN-10"},
+            {"row": 3, "serial_number": "SN-11"},
+        ]
+        manager = {"id": 100, "role": "manager"}
+        fake_dist = {"distribution_id": "DIST-2026-0003", "to_user_name": "Operator A"}
+
+        result, create_mock = await _run(
+            rows, manager, [free, raced], late_locked_ids=[11],
+            expected_distribution=fake_dist,
+        )
+
+        assert result["created"] is True
+        assert result["created_count"] == 1
+        assert result["error_count"] == 1
+        assert "already in an unconfirmed or disputed distribution" in result["errors"][0]["error"]
+        create_mock.assert_awaited_once()
+        device_ids = create_mock.await_args.args[1].device_ids
+        assert device_ids == [str(free["id"])]
 
 
 class _ScalarResult:
