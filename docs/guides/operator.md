@@ -206,7 +206,7 @@ cannot add, edit, or distribute them — that's management's job.
 **Purpose:** distributions are how devices move down the chain —
 **PDIC → Sub Distributor → Cluster → Operator**. As an operator you are mostly a
 **receiver**: devices come to you after your cluster confirms them. Rarely (between
-operators in the same cluster) you can also **send** a device onward.
+operators under the same sub distributor) you can also **send** a device onward.
 
 ### 6.1 How devices arrive to you
 
@@ -227,8 +227,9 @@ operators in the same cluster) you can also **send** a device onward.
 
 - **As receiver:** confirm every delivery that arrives to you promptly — this unlocks
   the devices for your use.
-- **As sender (rare):** if you *do* transfer devices onward, distribute to one of the
-  **operators in your own cluster**; they then confirm receipt, and the device is theirs.
+- **As sender (rare):** if you *do* transfer devices onward, distribute to any
+  **operator under the same sub distributor** (this includes operators in your own
+  cluster); they then confirm receipt, and the device is theirs.
 - **Disputed returns are resolved by management** — when a delivery to you is disputed
   and devices are still with the sender, management coordinates the outcome; confirm
   receipt promptly so disputes are rare.
