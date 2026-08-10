@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import StatusBadge from '../components/ui/StatusBadge';
-import DeviceIdentity from '../components/ui/DeviceIdentity';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
-import { distributionsAPI, devicesAPI } from '../services/api';
+import { distributionsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import {
@@ -18,7 +17,9 @@ import {
   AlertTriangle,
   Clock,
   Eye,
-  Download
+  Download,
+  Layers3,
+  Factory
 } from 'lucide-react';
 
 const getSenderDisplayName = (dist) => {
@@ -37,8 +38,9 @@ const DeliveryConfirmations = () => {
   const [selectedDist, setSelectedDist] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [receiptSubmitting, setReceiptSubmitting] = useState(false);
-  const [distributionDevices, setDistributionDevices] = useState([]);
-  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [deviceSummary, setDeviceSummary] = useState(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const summaryRequestIdRef = useRef(0);
   const [downloadingManifestId, setDownloadingManifestId] = useState(null);
 
   const handleDownloadManifest = async (dist) => {
@@ -87,27 +89,29 @@ const DeliveryConfirmations = () => {
     }
   };
 
-const fetchDistributionDevices = async (distributionId) => {
-    if (!distributionId) {
-      setDistributionDevices([]);
-      return;
-    }
+  const fetchDistributionSummary = async (requestId) => {
+    const distributionId = selectedDist?._id || selectedDist?.id;
+    if (!distributionId) return;
+
     try {
-      setLoadingDevices(true);
-      const detail = await distributionsAPI.getDistribution(distributionId);
-      const deviceIds = Array.isArray(detail?.data?.device_ids) ? detail.data.device_ids : [];
-      if (deviceIds.length === 0) {
-        setDistributionDevices([]);
-        return;
-      }
-      const devicePromises = deviceIds.map(id => devicesAPI.getDevice(id));
-      const responses = await Promise.all(devicePromises);
-      setDistributionDevices(responses.map(res => res.data).filter(Boolean));
+      setLoadingSummary(true);
+      const response = await distributionsAPI.getDistributionDeviceSummary(distributionId);
+      if (requestId !== summaryRequestIdRef.current) return;
+
+      const data = response?.data || {};
+      setDeviceSummary({
+        device_types: Array.isArray(data.device_types) ? data.device_types : [],
+        manufacturers: Array.isArray(data.manufacturers) ? data.manufacturers : [],
+      });
     } catch (error) {
-      console.error('Failed to fetch devices:', error);
-      setDistributionDevices([]);
+      console.error('Failed to fetch distribution device summary:', error);
+      if (requestId === summaryRequestIdRef.current) {
+        showToast(error.message || 'Failed to load device summary', 'error');
+      }
     } finally {
-      setLoadingDevices(false);
+      if (requestId === summaryRequestIdRef.current) {
+        setLoadingSummary(false);
+      }
     }
   };
 
@@ -117,7 +121,9 @@ const fetchDistributionDevices = async (distributionId) => {
 
   useEffect(() => {
     if (showDetailModal && selectedDist) {
-      fetchDistributionDevices(selectedDist._id || selectedDist.id);
+      const requestId = ++summaryRequestIdRef.current;
+      setDeviceSummary(null);
+      fetchDistributionSummary(requestId);
     }
   }, [showDetailModal, selectedDist]);
 
@@ -136,7 +142,7 @@ const fetchDistributionDevices = async (distributionId) => {
       showToast(msg, received ? 'success' : 'warning');
       setShowDetailModal(false);
       setSelectedDist(null);
-      setDistributionDevices([]);
+      setDeviceSummary(null);
       fetchDistributions();
     } catch (error) {
       showToast(error.message || 'Failed to submit confirmation', 'error');
@@ -149,6 +155,36 @@ const fetchDistributionDevices = async (distributionId) => {
     setSelectedDist(dist);
     setShowDetailModal(true);
   };
+
+  const toDisplayLabel = (val) => {
+    if (!val) return 'Unknown';
+    return String(val).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  };
+
+  const distributionInsights = useMemo(() => {
+    const typeCounts = {};
+    const manufacturerCounts = {};
+    let totalDevices = 0;
+
+    (deviceSummary?.device_types || []).forEach(([type, count]) => {
+      const typeLabel = toDisplayLabel(type);
+      const numericCount = Number(count) || 0;
+      typeCounts[typeLabel] = (typeCounts[typeLabel] || 0) + numericCount;
+      totalDevices += numericCount;
+    });
+
+    (deviceSummary?.manufacturers || []).forEach(([manufacturer, count]) => {
+      const manufacturerLabel = toDisplayLabel(manufacturer);
+      manufacturerCounts[manufacturerLabel] = (manufacturerCounts[manufacturerLabel] || 0) + (Number(count) || 0);
+    });
+
+    return {
+      totalSent: selectedDist?.device_count || 0,
+      loadedDetailsCount: totalDevices,
+      types: Object.entries(typeCounts).sort((a, b) => b[1] - a[1]),
+      manufacturers: Object.entries(manufacturerCounts).sort((a, b) => b[1] - a[1]),
+    };
+  }, [deviceSummary, selectedDist]);
 
   return (
     <div className="space-y-6">
@@ -264,7 +300,7 @@ const fetchDistributionDevices = async (distributionId) => {
                     </div>
                     <div className="flex items-center gap-2 text-gray-600">
                       <Clock className="w-4 h-4 text-gray-400" />
-                      <span>{dist.created_at ? new Date(dist.created_at).toLocaleDateString() : 'N/A'}</span>
+                      <span>{dist.date_of_distribution ? new Date(dist.date_of_distribution).toLocaleDateString() : dist.created_at ? new Date(dist.created_at).toLocaleDateString() : 'N/A'}</span>
                     </div>
                   </div>
 
@@ -319,7 +355,7 @@ const fetchDistributionDevices = async (distributionId) => {
         onClose={() => {
           setShowDetailModal(false);
           setSelectedDist(null);
-          setDistributionDevices([]);
+          setDeviceSummary(null);
         }}
         title="Distribution Details"
         size="lg"
@@ -359,9 +395,13 @@ const fetchDistributionDevices = async (distributionId) => {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs text-gray-500 uppercase tracking-wider">Sent Date</label>
+                <label className="text-xs text-gray-500 uppercase tracking-wider">Transfer Date</label>
                 <p className="font-medium text-gray-800">
-                  {selectedDist.created_at ? new Date(selectedDist.created_at).toLocaleDateString() : 'N/A'}
+                  {selectedDist.date_of_distribution
+                    ? new Date(selectedDist.date_of_distribution).toLocaleDateString()
+                    : selectedDist.created_at
+                      ? new Date(selectedDist.created_at).toLocaleDateString()
+                      : 'N/A'}
                 </p>
               </div>
               <div>
@@ -405,28 +445,55 @@ const fetchDistributionDevices = async (distributionId) => {
               </div>
             </div>
 
-            {/* Devices */}
-            <div>
-              <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Devices in this Delivery</label>
-              {loadingDevices ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                  <span className="ml-2 text-gray-500">Loading devices...</span>
+            {/* Device Summary by Type & Vendor */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-lg border border-gray-200 p-4 bg-white">
+                <div className="flex items-center gap-2 mb-3">
+                  <Layers3 className="w-4 h-4 text-indigo-600" />
+                  <h4 className="text-sm font-semibold text-gray-800">By Device Type</h4>
                 </div>
-              ) : distributionDevices.length > 0 ? (
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {distributionDevices.map((device, index) => (
-                    <div key={device._id || device.id || index} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <DeviceIdentity device={device} className="flex-1" />
-                        <StatusBadge status={device.status} size="sm" />
+                {loadingSummary && !deviceSummary ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                    Loading device summary...
+                  </div>
+                ) : distributionInsights.types.length > 0 ? (
+                  <div className="space-y-2">
+                    {distributionInsights.types.map(([type, count]) => (
+                      <div key={type} className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2">
+                        <span className="text-sm text-gray-700">{type}</span>
+                        <span className="text-sm font-semibold text-gray-900">{count}</span>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No device type data available.</p>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-gray-200 p-4 bg-white">
+                <div className="flex items-center gap-2 mb-3">
+                  <Factory className="w-4 h-4 text-rose-600" />
+                  <h4 className="text-sm font-semibold text-gray-800">By Vendor</h4>
                 </div>
-              ) : (
-                <p className="text-gray-500 text-sm py-2">No device details available</p>
-              )}
+                {loadingSummary && !deviceSummary ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                    Loading device summary...
+                  </div>
+                ) : distributionInsights.manufacturers.length > 0 ? (
+                  <div className="space-y-2">
+                    {distributionInsights.manufacturers.map(([manufacturer, count]) => (
+                      <div key={manufacturer} className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2">
+                        <span className="text-sm text-gray-700">{manufacturer}</span>
+                        <span className="text-sm font-semibold text-gray-900">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No vendor data available.</p>
+                )}
+              </div>
             </div>
 
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
