@@ -47,3 +47,4 @@ class ExternalDeviceHistory(Base):
     distributed_at = Column(DateTime, nullable=False)
     notes = Column(String(500))
     status = Column(String(32), default="completed")
+    action = Column(String(64))

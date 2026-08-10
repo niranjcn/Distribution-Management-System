@@ -75,13 +75,18 @@ def _compute_warranty_status(warranty_start_date, warranty_duration) -> str:
         return "none"
     return "expired" if expiry < date.today() else "active"
 
+# Shared INSERT for bulk distributions (both the JSON payload and the file
+# upload flow). Every history row is tagged ``bulk_distributed`` so the
+# ``trg_activities_inventory`` AFTER INSERT trigger skips it and the admin feed
+# records one aggregate activity entry per bulk operation (logged by the route)
+# instead of one entry per distributed item.
 _EXTERNAL_HISTORY_INSERT_SQL = """INSERT INTO external_device_history (
      history_id, item_id, item_name, identifier_type, identifier, device_type, price,
      quantity, recipient_user_id, recipient_name, previous_quantity, remaining_quantity,
-     distributed_by, distributed_by_name, distributed_at, notes, status
+     distributed_by, distributed_by_name, distributed_at, notes, status, action
  ) VALUES (:history_id, :item_id, :item_name, :identifier_type, :identifier, :device_type, :price,
      :quantity, :recipient_user_id, :recipient_name, :previous_quantity, :remaining_quantity,
-     :distributed_by, :distributed_by_name, :distributed_at, :notes, 'completed')"""
+     :distributed_by, :distributed_by_name, :distributed_at, :notes, 'completed', 'bulk_distributed')"""
 
 
 def _resolve_actor(user: Dict[str, Any]) -> Dict[str, str]:

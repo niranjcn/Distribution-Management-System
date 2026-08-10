@@ -17,7 +17,12 @@ from app.models.inventory import (
     InventoryItemUpdate,
 )
 from app.services import inventory_service
-from app.services.bulk_upload_service import build_bulk_result, chunked_executemany, chunks
+from app.services.bulk_upload_service import (
+    BULK_UPLOAD_CHUNKED_COMMIT_THRESHOLD,
+    build_bulk_result,
+    chunked_executemany,
+    chunks,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -235,7 +240,11 @@ async def bulk_upload_external_inventory_items(
                 continue
 
             if identifier_type_value and identifier_value:
-                identifier_pair = (identifier_type_value, identifier_value)
+                # Normalize to lowercase so the file-level dedupe matches the
+                # case-insensitive unique index (uq_external_inventory_items_identifier)
+                # instead of letting case-colliding rows slip through to the
+                # per-row binary-split fallback on the INSERT.
+                identifier_pair = (identifier_type_value.lower(), identifier_value.lower())
                 if identifier_pair in seen_identifiers:
                     errors.append({
                         "row": row_idx,
@@ -326,7 +335,7 @@ async def bulk_upload_external_inventory_items(
                 existing_pairs = await _fetch_existing_identifier_pairs(
                     session,
                     [
-                        (item["identifier_type"], item["identifier"])
+                        (item["identifier_type"].lower(), item["identifier"].lower())
                         for item in prepared_rows
                         if item["identifier_type"] and item["identifier"]
                     ],
@@ -335,7 +344,7 @@ async def bulk_upload_external_inventory_items(
                 insertable_rows = []
                 for item in prepared_rows:
                     if item["identifier_type"] and item["identifier"]:
-                        pair = (item["identifier_type"], item["identifier"])
+                        pair = (item["identifier_type"].lower(), item["identifier"].lower())
                         if pair in existing_pairs:
                             errors.append({
                                 "row": item["row"],
@@ -365,6 +374,12 @@ async def bulk_upload_external_inventory_items(
                         "updated_at": now,
                     })
 
+                # Large uploads commit per batch (mirroring the device bulk
+                # upload) so one huge transaction does not accumulate a giant
+                # undo log / binlog entry; small uploads keep a single atomic
+                # transaction.
+                use_chunked_commits = len(payload_rows) > BULK_UPLOAD_CHUNKED_COMMIT_THRESHOLD
+
                 async def _item_batch_success(session, batch):
                     created.extend(item["name"] for item in batch)
 
@@ -375,17 +390,35 @@ async def bulk_upload_external_inventory_items(
                         "error": str(err),
                     })
 
-                await chunked_executemany(
+                async def _item_batch_complete(ok, can_commit):
+                    if use_chunked_commits and can_commit:
+                        await bump_cache_version(session)
+                        await session.commit()
+
+                should_commit = await chunked_executemany(
                     session,
                     insert_sql,
                     payload_rows,
                     on_batch_success=_item_batch_success,
                     on_row_error=_item_row_error,
+                    on_batch_complete=_item_batch_complete,
                     abort_on_error=False,
                 )
 
-                await bump_cache_version(session)
-                await session.commit()
+                if use_chunked_commits:
+                    # Prior batches are already committed; a hard error here
+                    # only rolls back the in-flight batch.
+                    if not should_commit:
+                        await session.rollback()
+                elif should_commit:
+                    await bump_cache_version(session)
+                    await session.commit()
+                else:
+                    await session.rollback()
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Bulk upload was rolled back due to an unexpected insert error. Please retry."
+                    )
 
         actor_name = current_user.get("name") or current_user.get("email") or "User"
         await log_business_activity(
@@ -678,23 +711,40 @@ async def bulk_distribute_external_inventory_from_file(
 
 
 async def _fetch_existing_identifier_pairs(session, pairs: list[tuple[str, str]]) -> set:
+    """Return the identifier pairs already present in the catalog.
+
+    Runs one row-value ``IN`` query per batch (``(a, b) IN ((...), ...)``) so
+    MySQL can use the composite unique index
+    ``uq_external_inventory_items_identifier`` directly, instead of a slow
+    multi-hundred-way ``OR`` that degrades as the table grows. Both sides are
+    normalized to lowercase so case collisions with the case-insensitive
+    collation are caught here rather than triggering the per-row binary-split
+    fallback on the INSERT.
+    """
     if not pairs:
         return set()
 
     existing = set()
-    for batch in chunks(pairs, 500):
-        conditions = []
+    for batch in chunks(pairs, 1000):
+        row_constructors = ", ".join(f"(:t_{i}, :i_{i})" for i in range(len(batch)))
         params = {}
         for i, (identifier_type, identifier) in enumerate(batch):
-            conditions.append(f"(identifier_type = :t_{i} AND identifier = :i_{i})")
             params[f"t_{i}"] = identifier_type
             params[f"i_{i}"] = identifier
         result = await session.execute(
-            text(f"SELECT identifier_type, identifier FROM external_inventory_items WHERE {' OR '.join(conditions)}"),
+            text(
+                "SELECT identifier_type, identifier FROM external_inventory_items "
+                f"WHERE (identifier_type, identifier) IN ({row_constructors})"
+            ),
             params,
         )
         for row in result.mappings().all():
-            existing.add((row.get("identifier_type"), row.get("identifier")))
+            existing.add(
+                (
+                    str(row.get("identifier_type") or "").strip().lower(),
+                    str(row.get("identifier") or "").strip().lower(),
+                )
+            )
     return existing
 
 
