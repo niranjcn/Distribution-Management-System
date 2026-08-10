@@ -694,7 +694,7 @@ async def confirm_disputed_distribution_return(
             description=(
                 f"{actor_name} confirmed disputed return of distribution "
                 f"{distribution.get('distribution_id')} "
-                f"({distribution.get('device_count', 0)} device(s) returned to sender)"
+                f"({distribution.get('device_count', 0)} device(s) dispatched back to sender)"
             ),
         )
         return {
