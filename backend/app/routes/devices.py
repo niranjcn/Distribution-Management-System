@@ -116,15 +116,26 @@ def _parse_csv_ids(raw_ids: Optional[str]) -> List[str]:
     return [item.strip() for item in str(raw_ids).split(",") if item and item.strip()]
 
 
-async def _get_cluster_ids_for_sub_distributor(sub_distributor_id: str) -> List[str]:
-    normalized_id = str(sub_distributor_id or "").strip()
+async def _get_hierarchy_holder_ids(root_id: str) -> List[str]:
+    """Return ids of the root user plus holder-tier users (sub_distributor,
+    cluster, operator) under it, recursively."""
+    normalized_id = str(root_id or "").strip()
     if not normalized_id or not normalized_id.isdigit():
         return []
 
     async with async_session_factory() as session:
         result = await session.execute(
-            text("SELECT id FROM users WHERE parent_id = :parent_id AND role = 'cluster'"),
-            {"parent_id": int(normalized_id)},
+            text("""
+                WITH RECURSIVE descendants AS (
+                    SELECT id, role FROM users WHERE id = :root
+                    UNION ALL
+                    SELECT u.id, u.role FROM users u
+                    INNER JOIN descendants d ON u.parent_id = d.id
+                )
+                SELECT id FROM descendants
+                WHERE role IN ('sub_distributor', 'cluster', 'operator')
+            """),
+            {"root": int(normalized_id)},
         )
         rows = result.mappings().all()
         return [str(row.get("id")) for row in rows if row.get("id") is not None]
@@ -133,27 +144,32 @@ async def _get_cluster_ids_for_sub_distributor(sub_distributor_id: str) -> List[
 async def _resolve_management_holder_scope(
     sub_distributor_id: Optional[str],
     cluster_id: Optional[str],
+    operator_id: Optional[str] = None,
 ) -> Optional[List[str]]:
     sub_scope = None
     cluster_scope = None
+    operator_scope = None
 
     normalized_sub_id = str(sub_distributor_id or "").strip()
     if normalized_sub_id:
-        sub_scope = {normalized_sub_id}
-        sub_scope.update(await _get_cluster_ids_for_sub_distributor(normalized_sub_id))
+        sub_scope = set(await _get_hierarchy_holder_ids(normalized_sub_id))
 
     normalized_cluster_id = str(cluster_id or "").strip()
     if normalized_cluster_id:
-        cluster_scope = {normalized_cluster_id}
+        cluster_scope = set(await _get_hierarchy_holder_ids(normalized_cluster_id))
 
-    if sub_scope is not None and cluster_scope is not None:
-        resolved = sorted(sub_scope.intersection(cluster_scope))
-        return resolved
-    if sub_scope is not None:
-        return sorted(sub_scope)
-    if cluster_scope is not None:
-        return sorted(cluster_scope)
-    return None
+    normalized_operator_id = str(operator_id or "").strip()
+    if normalized_operator_id and normalized_operator_id.isdigit():
+        operator_scope = {normalized_operator_id}
+
+    scopes = [s for s in (sub_scope, cluster_scope, operator_scope) if s is not None]
+    if not scopes:
+        return None
+
+    resolved = set(scopes[0])
+    for scope in scopes[1:]:
+        resolved = resolved.intersection(scope)
+    return sorted(resolved)
 
 
 @router.get("", summary="Get all devices with pagination and filters")
@@ -325,6 +341,7 @@ async def get_my_device_overview(
     manufacturer: Optional[str] = None,
     sub_distributor_id: Optional[str] = None,
     cluster_id: Optional[str] = None,
+    operator_id: Optional[str] = None,
     search_by: Optional[str] = None,
     search: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -340,7 +357,7 @@ async def get_my_device_overview(
         role = current_user["role"]
         if role in MANAGEMENT_ROLES:
             effective_page_size = 1_000_000 if show_all else min(page_size, 1000)
-            holder_scope = await _resolve_management_holder_scope(sub_distributor_id, cluster_id)
+            holder_scope = await _resolve_management_holder_scope(sub_distributor_id, cluster_id, operator_id)
             result = await device_service.get_devices(
                 page=page,
                 page_size=effective_page_size,
@@ -393,6 +410,9 @@ async def get_my_device_overview(
             # MySQL) so only one page of rows is loaded per request. This avoids
             # loading the entire chain into memory for every page / "load more".
             if paginate:
+                holder_scope = await _resolve_management_holder_scope(
+                    sub_distributor_id, cluster_id, operator_id
+                )
                 result = await device_service.get_user_device_page(
                     user_id=current_user["id"],
                     user_role=role,
@@ -407,8 +427,7 @@ async def get_my_device_overview(
                     search=search,
                     start_date=start_date,
                     end_date=end_date,
-                    sub_distributor_id=sub_distributor_id,
-                    cluster_id=cluster_id,
+                    holder_ids=holder_scope,
                 )
                 page_devices = result["page_devices"]
                 total_count = int(result["total_count"])
@@ -439,6 +458,7 @@ async def get_my_device_overview(
                             "has_next": has_next,
                         },
                         "stats": result["stats"],
+                        "insights": result.get("insights", {"by_type": [], "by_vendor": []}),
                     },
                 }
 

@@ -5,7 +5,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Card from '../components/ui/Card';
-import { devicesAPI, defectsAPI, changeRequestsAPI } from '../services/api';
+import { devicesAPI, defectsAPI, changeRequestsAPI, dashboardAPI } from '../services/api';
 import DateRangeFilter, { buildDateParams } from '../components/ui/DateRangeFilter';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -61,7 +61,7 @@ const Devices = () => {
   const [bulkDeleteReason, setBulkDeleteReason] = useState('');
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [overview, setOverview] = useState(null);
-  const [holderInsights, setHolderInsights] = useState({ sub_distributors: [], clusters: [] });
+  const [holderInsights, setHolderInsights] = useState({ sub_distributors: [], clusters: [], operators: [] });
   const [tableRows, setTableRows] = useState([]);
   const [tableTotalCount, setTableTotalCount] = useState(0);
   const [tablePage, setTablePage] = useState(1);
@@ -82,6 +82,7 @@ const Devices = () => {
     status: '',
     sub_distributor_id: '',
     cluster_id: '',
+    operator_id: '',
   });
   const loadedWindowRef = useRef(0);
   const loadingWindowsRef = useRef(new Set());
@@ -111,13 +112,18 @@ const Devices = () => {
   const hasHierarchy = ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee', 'cluster', 'operator'].includes(user?.role);
   const hasSubordinates = ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee', 'cluster'].includes(user?.role);
   const isAllDevicesView = isManagement && activeTab === 'all';
+  const isClusterRole = user?.role === 'cluster';
+  const isSubDistributorLevel = ['sub_distribution_manager', 'sub_distributor', 'sub_distribution_employee'].includes(user?.role);
+  const canFilterCluster = isAllDevicesView || isSubDistributorLevel;
+  const canFilterOperator = isAllDevicesView || isSubDistributorLevel || isClusterRole;
+  const canFilterStatus = isAllDevicesView;
   const canRegister = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const isStaff = user?.role === 'pdic_staff';
   const isAdminOrManager = ['super_admin', 'manager'].includes(user?.role);
   const canDeleteDevice = ['super_admin', 'manager'].includes(user?.role);
 
   const queryFingerprint = useMemo(() => {
-    const filterPayload = isAllDevicesView
+    const filterPayload = isAllDevicesView || hasHierarchy
       ? tableFilters
       : {
           device_type: '',
@@ -125,6 +131,7 @@ const Devices = () => {
           status: '',
           sub_distributor_id: '',
           cluster_id: '',
+          operator_id: '',
         };
     return JSON.stringify({
       scope: hasHierarchy ? activeTab : 'all',
@@ -155,12 +162,26 @@ const Devices = () => {
   };
 
   const loadHolderInsights = async () => {
-    if (!isManagement) {
-      setHolderInsights({ sub_distributors: [], clusters: [] });
+    if (isManagement) {
+      const response = await devicesAPI.getManagementHolderInsights();
+      setHolderInsights(response?.data || { sub_distributors: [], clusters: [], operators: [] });
       return;
     }
-    const response = await devicesAPI.getManagementHolderInsights();
-    setHolderInsights(response?.data || { sub_distributors: [], clusters: [] });
+    if (hasHierarchy) {
+      try {
+        const response = await dashboardAPI.getScopeUsers();
+        const data = response?.data || {};
+        setHolderInsights({
+          sub_distributors: [],
+          clusters: Array.isArray(data.clusters) ? data.clusters : [],
+          operators: Array.isArray(data.operators) ? data.operators : [],
+        });
+      } catch (error) {
+        setHolderInsights({ sub_distributors: [], clusters: [], operators: [] });
+      }
+      return;
+    }
+    setHolderInsights({ sub_distributors: [], clusters: [], operators: [] });
   };
 
   const buildTableQueryParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
@@ -172,12 +193,13 @@ const Devices = () => {
       ...buildDateParams(dateRange),
     };
 
-    if (isAllDevicesView) {
+    if (isAllDevicesView || hasHierarchy) {
       if (tableFilters.device_type) params.device_type = tableFilters.device_type;
       if (tableFilters.manufacturer) params.manufacturer = tableFilters.manufacturer;
       if (tableFilters.status) params.status = tableFilters.status;
       if (tableFilters.sub_distributor_id) params.sub_distributor_id = tableFilters.sub_distributor_id;
       if (tableFilters.cluster_id) params.cluster_id = tableFilters.cluster_id;
+      if (tableFilters.operator_id) params.operator_id = tableFilters.operator_id;
     }
 
     if (appliedSearch.query) {
@@ -365,6 +387,10 @@ const Devices = () => {
     return Array.isArray(holderInsights?.clusters) ? holderInsights.clusters : [];
   }, [holderInsights?.clusters]);
 
+  const operatorSummary = useMemo(() => {
+    return Array.isArray(holderInsights?.operators) ? holderInsights.operators : [];
+  }, [holderInsights?.operators]);
+
   const manufacturerSummary = useMemo(() => {
     const aggregated = overview?.insights?.by_vendor;
     if (Array.isArray(aggregated) && aggregated.length > 0) {
@@ -396,9 +422,10 @@ const Devices = () => {
     const manufacturers = [...new Set(byVendor.map((entry) => entry?.manufacturer).filter(Boolean))].sort();
     const subDistributors = subDistributorSummary.map((item) => ({ id: item.id, name: holderOptionLabel(item) }));
     const clusters = clusterSummary.map((item) => ({ id: item.id, name: holderOptionLabel(item) }));
+    const operators = operatorSummary.map((item) => ({ id: item.id, name: holderOptionLabel(item) }));
 
-    return { deviceTypes, manufacturers, subDistributors, clusters };
-  }, [clusterSummary, overview?.insights?.by_type, overview?.insights?.by_vendor, subDistributorSummary]);
+    return { deviceTypes, manufacturers, subDistributors, clusters, operators };
+  }, [clusterSummary, operatorSummary, overview?.insights?.by_type, overview?.insights?.by_vendor, subDistributorSummary]);
 
   const tableData = displayedDevices;
 
@@ -807,8 +834,10 @@ const Devices = () => {
         </div>
       )}
 
-      {!loading && overview && isAllDevicesView && (
+      {!loading && overview && (isAllDevicesView || hasHierarchy) && (
         <>
+          {isAllDevicesView && (
+          <>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <Card className="!p-4">
               <div className="flex items-center gap-2 mb-3">
@@ -918,6 +947,8 @@ const Devices = () => {
               )}
             </Card>
           </div>
+          </>
+          )}
 
           <Card className="!p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
@@ -938,7 +969,7 @@ const Devices = () => {
             </div>
 
             {showAdvancedFilters && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
                 <select
                   value={tableFilters.device_type}
                   onChange={(e) => setTableFilters((prev) => ({ ...prev, device_type: e.target.value }))}
@@ -961,6 +992,7 @@ const Devices = () => {
                   ))}
                 </select>
 
+                {isAllDevicesView && (
                 <select
                   value={tableFilters.sub_distributor_id}
                   onChange={(e) => setTableFilters((prev) => ({ ...prev, sub_distributor_id: e.target.value }))}
@@ -971,7 +1003,9 @@ const Devices = () => {
                     <option key={entity.id} value={entity.id}>{entity.name}</option>
                   ))}
                 </select>
+                )}
 
+                {canFilterCluster && (
                 <select
                   value={tableFilters.cluster_id}
                   onChange={(e) => setTableFilters((prev) => ({ ...prev, cluster_id: e.target.value }))}
@@ -982,8 +1016,23 @@ const Devices = () => {
                     <option key={entity.id} value={entity.id}>{entity.name}</option>
                   ))}
                 </select>
+                )}
+
+                {canFilterOperator && (
+                <select
+                  value={tableFilters.operator_id}
+                  onChange={(e) => setTableFilters((prev) => ({ ...prev, operator_id: e.target.value }))}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="">All Operators</option>
+                  {filterOptions.operators.map((entity) => (
+                    <option key={entity.id} value={entity.id}>{entity.name}</option>
+                  ))}
+                </select>
+                )}
 
                 <div className="flex gap-2">
+                  {canFilterStatus && (
                   <select
                     value={tableFilters.status}
                     onChange={(e) => setTableFilters((prev) => ({ ...prev, status: e.target.value }))}
@@ -998,6 +1047,7 @@ const Devices = () => {
                     <option value="returned">returned</option>
                     <option value="maintenance">maintenance</option>
                   </select>
+                  )}
                   <Button
                     variant="secondary"
                     onClick={() => setTableFilters({
@@ -1006,6 +1056,7 @@ const Devices = () => {
                       status: '',
                       sub_distributor_id: '',
                       cluster_id: '',
+                      operator_id: '',
                     })}
                     className="whitespace-nowrap"
                   >

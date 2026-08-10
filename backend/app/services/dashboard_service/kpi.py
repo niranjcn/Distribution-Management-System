@@ -20,6 +20,8 @@ async def get_scope_users(user: Dict[str, Any]) -> Dict[str, list]:
     role = user.get("role")
     user_id = str(user.get("_id", user.get("id", "")))
     scope_root_id = _resolve_scope_root_for_sub_distribution_manager(user, user_id)
+    if role == "sub_distribution_employee" and user.get("parent_id"):
+        scope_root_id = str(user["parent_id"])
 
     async with async_session_factory() as session:
         if role == "super_admin":
@@ -48,7 +50,7 @@ async def get_scope_users(user: Dict[str, Any]) -> Dict[str, list]:
                 text("SELECT id, email, name, role, COALESCE(parent_id, '') AS parent_id FROM users WHERE role = 'operator' AND parent_id = :parent_id ORDER BY name"),
                 {"parent_id": int(user_id)}
             )).mappings().all()
-        elif role == "sub_distribution_manager":
+        elif role in ("sub_distribution_manager", "sub_distribution_employee"):
             scope_ids = sorted({scope_root_id} | await _get_descendant_user_ids(session, scope_root_id))
             if scope_ids:
                 params = {f"id{i}": sid for i, sid in enumerate(scope_ids)}

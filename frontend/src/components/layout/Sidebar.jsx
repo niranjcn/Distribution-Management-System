@@ -310,10 +310,8 @@ const Sidebar = ({ isOpen, onClose }) => {
         externalInventoryFieldMenu,
         { path: '/distributions', icon: Truck, label: 'Scoped Distributions' },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        ...(canShowReplacementOptions ? [
-          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        ] : []),
+        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
       ],
       [ROLES.SUB_DISTRIBUTOR]: [
@@ -345,10 +343,8 @@ const Sidebar = ({ isOpen, onClose }) => {
           ]
         },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        ...(canShowReplacementOptions ? [
-          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        ] : []),
+        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
       ],
@@ -380,10 +376,8 @@ const Sidebar = ({ isOpen, onClose }) => {
           ]
         },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        ...(canShowReplacementOptions ? [
-          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        ] : []),
+        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
       ],
@@ -405,10 +399,8 @@ const Sidebar = ({ isOpen, onClose }) => {
         },
         { path: '/defects/create', icon: AlertTriangle, label: 'Report Defect' },
         { path: '/defects', icon: ClipboardList, label: 'My Defect Reports' },
-        ...(canShowReplacementOptions ? [
-          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        ] : []),
+        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'My Returns' },
       ],
@@ -440,10 +432,8 @@ const Sidebar = ({ isOpen, onClose }) => {
           ]
         },
         { path: '/defects', icon: AlertTriangle, label: 'Defect Reports' },
-        ...(canShowReplacementOptions ? [
-          { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
-          { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
-        ] : []),
+        { path: '/replacements', icon: ArrowLeftRight, label: 'Replacements' },
+        { path: '/replacements/pending', icon: AlertTriangle, label: 'Pending Replacements' },
         { path: '/pending-dues', icon: DollarSign, label: 'Pending Payments' },
         { path: '/returns', icon: RotateCcw, label: 'Return Requests' },
       ],
