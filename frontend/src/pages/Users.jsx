@@ -1480,6 +1480,15 @@ const Users = () => {
                   <p className="font-medium text-gray-800">{selectedUser.pincode || 'Not provided'}</p>
                 </div>
               </div>
+              {selectedUser.role === 'operator' && (
+                <div className="flex items-center gap-3">
+                  <Network className="w-5 h-5 text-gray-400" />
+                  <div>
+                    <p className="text-sm text-gray-500">Network Name</p>
+                    <p className="font-medium text-gray-800">{selectedUser.network_name || 'Not provided'}</p>
+                  </div>
+                </div>
+              )}
 
               {/* ── Account ── */}
               <div className="flex items-center gap-3">
