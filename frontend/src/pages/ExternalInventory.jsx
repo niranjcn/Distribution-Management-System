@@ -591,7 +591,7 @@ const ExternalInventory = ({ tab }) => {
       label: 'Actions',
       sortable: false,
       render: (_, row) => (
-        <div className="flex gap-2">
+        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="outline" onClick={() => openEditItem(row)}>
             Edit
           </Button>

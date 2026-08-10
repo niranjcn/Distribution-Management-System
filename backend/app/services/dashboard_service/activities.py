@@ -119,6 +119,7 @@ async def get_admin_activities(
     # Defense in depth: the triggers already exclude these rows, but keep the
     # filters here too so rows missed by a backfill can never surface.
     conditions.append("NOT (category = 'device' AND action IN ('bulk_registered', 'bulk_distributed'))")
+    conditions.append("NOT (category = 'inventory' AND action IN ('bulk_distributed'))")
     conditions.append("NOT (category = 'api' AND description LIKE '% returned %')")
 
     if actor:
