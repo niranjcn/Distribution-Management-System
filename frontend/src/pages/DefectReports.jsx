@@ -1163,7 +1163,7 @@ const DefectReports = () => {
           setReviewComment('');
         }}
         title="Review Defect Report"
-        size="md"
+        size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setShowReviewModal(false)}>Cancel</Button>
@@ -1181,6 +1181,36 @@ const DefectReports = () => {
             <p className="font-medium text-gray-800">{selectedDefect?.device_name || selectedDefect?.device_type || 'Unknown'}</p>
             <p className="text-sm text-gray-500">{selectedDefect?.defect_type} - {selectedDefect?.severity}</p>
           </div>
+
+          {selectedDefect?.description && (
+            <div>
+              <label className="text-xs text-gray-500 uppercase tracking-wider">Notes</label>
+              <p className="text-gray-800 mt-1 p-3 bg-gray-50 rounded-lg">{selectedDefect.description}</p>
+            </div>
+          )}
+
+          {selectedDefect?.images && selectedDefect.images.length > 0 && (
+            <div>
+              <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Photos</label>
+              <div className="grid grid-cols-3 gap-2">
+                {selectedDefect.images.map((photoUrl, index) => (
+                  <a
+                    key={index}
+                    href={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="aspect-square bg-gray-100 rounded-lg overflow-hidden border border-gray-200 block hover:opacity-90 transition-opacity"
+                  >
+                    <img
+                      src={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                      alt={`Defect photo ${index + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
             <p className="text-sm text-yellow-800">

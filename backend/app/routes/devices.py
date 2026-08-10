@@ -668,7 +668,11 @@ async def track_device_by_serial(
 ):
     """Track device by serial number, NUID, or MAC with full history"""
     try:
-        device = await device_service.track_device_by_serial(serial_number)
+        device = await device_service.track_device_by_serial(
+            serial_number,
+            user_id=str(current_user.get("id", current_user.get("_id", ""))),
+            user_role=str(current_user.get("role", "")).lower(),
+        )
 
         if not device:
             raise HTTPException(

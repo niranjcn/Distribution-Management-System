@@ -10,7 +10,7 @@ from sqlalchemy import text
 from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
 from app.models.distribution import DistributionCreate, DistributionStatus
-from app.models.device import DeviceStatus
+from app.models.device import DeviceStatus, HolderType
 from app.services import device_service, notification_service
 from app.services.bulk_upload_service import build_bulk_result, chunks
 from app.services.digital_id_search import build_identity_search_clause
@@ -950,7 +950,7 @@ async def create_distribution_from_identifiers(
             ph = ",".join([f":mac_{i}" for i in range(len(batch))])
             params = {f"mac_{i}": m for i, m in enumerate(batch)}
             rows = (await session.execute(
-                text(f"SELECT * FROM devices WHERE lower(trim(mac_address)) IN ({ph})"),
+                text(f"SELECT * FROM devices WHERE mac_address IN ({ph})"),
                 params
             )).mappings().all()
             for dev in rows:
@@ -960,7 +960,7 @@ async def create_distribution_from_identifiers(
             ph = ",".join([f":ser_{i}" for i in range(len(batch))])
             params = {f"ser_{i}": s for i, s in enumerate(batch)}
             rows = (await session.execute(
-                text(f"SELECT * FROM devices WHERE lower(trim(serial_number)) IN ({ph})"),
+                text(f"SELECT * FROM devices WHERE serial_number IN ({ph})"),
                 params
             )).mappings().all()
             for dev in rows:
@@ -970,7 +970,7 @@ async def create_distribution_from_identifiers(
             ph = ",".join([f":nuid_{i}" for i in range(len(batch))])
             params = {f"nuid_{i}": n for i, n in enumerate(batch)}
             rows = (await session.execute(
-                text(f"SELECT * FROM devices WHERE lower(trim(nuid)) IN ({ph})"),
+                text(f"SELECT * FROM devices WHERE nuid IN ({ph})"),
                 params
             )).mappings().all()
             for dev in rows:
@@ -1571,9 +1571,6 @@ async def confirm_receipt(
                    WHERE id = :id"""),
                 {"notes": notes, "now": now, "id": int(distribution_id)}
             )
-            admin_rows = (await session.execute(
-                text("SELECT id FROM users WHERE role IN ('super_admin', 'manager', 'pdic_staff') AND status = 'active'")
-            )).mappings().all()
             await bump_cache_version(session)
             await session.commit()
 
@@ -1585,27 +1582,23 @@ async def confirm_receipt(
             f"DISPUTE: {user['name']} reported NOT receiving {dist['device_count']} device(s) "
             f"sent by {sender_label}. Distribution: {dist['distribution_id']}."
         )
-        await notification_service.bulk_create_notifications([
-            {
-                "user_id": r["id"],
-                "title": "Device Not Received — Dispute",
-                "message": dispute_msg,
-                "notification_type": "error",
-                "category": "distribution",
-                "link": f"/distributions?distributionId={distribution_id}"
-            }
-            for r in admin_rows
-        ] + [
-            {
-                "user_id": dist["from_user_id"],
-                "title": "Receipt Disputed",
-                "message": f"{user['name']} reported NOT receiving your device(s) in distribution "
-                           f"{dist['distribution_id']}. Admin, manager, and PDIC staff have been notified.",
-                "notification_type": "error",
-                "category": "distribution",
-                "link": f"/distributions?distributionId={distribution_id}"
-            }
-        ])
+        await notification_service.create_notification(
+            user_id=str(dist["from_user_id"]),
+            title="Device Not Received — Dispute",
+            message=dispute_msg,
+            notification_type="error",
+            category="distribution",
+            link=f"/distributions?distributionId={distribution_id}"
+        )
+        await notification_service.create_notification(
+            user_id=str(dist["from_user_id"]),
+            title="Receipt Disputed",
+            message=f"{user['name']} reported NOT receiving your device(s) in distribution "
+                   f"{dist['distribution_id']}. Please confirm the devices are physically back before reassigning.",
+            notification_type="error",
+            category="distribution",
+            link=f"/distributions?distributionId={distribution_id}"
+        )
 
     dist["status"] = DistributionStatus.APPROVED.value if received else DistributionStatus.DISPUTED.value
     dist["notes"] = notes if notes is not None else dist.get("notes")
@@ -1622,7 +1615,7 @@ async def confirm_disputed_return(
     user: Dict[str, Any],
     notes: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """PDIC management confirms disputed devices are back with sender and unlocks redistribution."""
+    """Sender or PDIC management confirms disputed devices are back with sender and unlocks redistribution."""
     dist = await get_distribution_by_id(distribution_id)
     if not dist:
         raise ValueError("Distribution not found")
@@ -1631,8 +1624,14 @@ async def confirm_disputed_return(
         raise ValueError("Only disputed distributions can be marked as returned")
 
     role = str(user.get("role", "")).lower()
-    if role not in {"super_admin", "manager", "pdic_staff"}:
-        raise ValueError("Only PDIC management can confirm disputed return receipt")
+    user_id = int(user.get("id", user.get("_id", 0)))
+    sender_id = int(dist["from_user_id"])
+
+    # Allow the original sender OR PDIC management to confirm
+    is_sender = user_id == sender_id
+    is_pdic = role in {"super_admin", "manager", "pdic_staff"}
+    if not is_sender and not is_pdic:
+        raise ValueError("Only the distribution sender or PDIC management can confirm disputed return receipt")
 
     role_to_type = {
         "super_admin": "noc", "manager": "noc", "pdic_staff": "pdic_staff",
@@ -1641,16 +1640,62 @@ async def confirm_disputed_return(
         "cluster": "cluster", "operator": "operator"
     }
 
+    # from_user_type maps sub_distribution_employee → "sub_distributor", so we
+    # must query the actual role to resolve the correct return target.
+    sender_row = None
+    async with async_session_factory() as session:
+        sender_row = (await session.execute(
+            text("SELECT role, parent_id FROM users WHERE id = :id"), {"id": sender_id}
+        )).mappings().first()
+
+    actual_sender_role = str((dict(sender_row) if sender_row else {}).get("role") or dist.get("from_user_type") or "")
+    sender_parent_id = (dict(sender_row) if sender_row else {}).get("parent_id")
+
     sender_role = str(dist.get("from_user_type") or "")
     if sender_role == "noc":
         sender_role = "manager"
 
-    sender_status = DeviceStatus.AVAILABLE.value if sender_role in {"manager", "super_admin", "pdic_staff"} else (
-        DeviceStatus.IN_USE.value if sender_role == "operator" else DeviceStatus.DISTRIBUTED.value
-    )
+    is_pdic_sender = sender_role in {"manager", "super_admin", "pdic_staff"}
 
-    sender_holder_type = role_to_type.get(sender_role, "pdic_staff")
     now = datetime.now().replace(tzinfo=None)
+
+    # PDIC-sent devices return to PDIC entity.  Sub-distribution-employee
+    # devices return to their parent sub-distributor.  Everything else returns
+    # to the original sender.
+    if is_pdic_sender:
+        return_holder_id = None
+        return_holder_name = "PDIC (Distribution)"
+        return_holder_type = HolderType.NOC.value
+        return_location = "PDIC"
+        sender_status = DeviceStatus.AVAILABLE.value
+    elif actual_sender_role == "sub_distribution_employee" and sender_parent_id:
+        # Resolve parent sub-distributor
+        parent_row = None
+        async with async_session_factory() as session:
+            parent_row = (await session.execute(
+                text("SELECT id, name, role FROM users WHERE id = :id"),
+                {"id": int(sender_parent_id)}
+            )).mappings().first()
+        parent = dict(parent_row) if parent_row else None
+        if parent and parent.get("role") == "sub_distributor":
+            return_holder_id = parent["id"]
+            return_holder_name = parent["name"]
+            return_holder_type = "sub_distributor"
+            return_location = parent["name"]
+        else:
+            # Fallback: return to employee if parent resolution fails
+            return_holder_id = dist["from_user_id"]
+            return_holder_name = dist["from_user_name"]
+            return_holder_type = "sub_distributor"
+            return_location = dist["from_user_name"]
+        sender_status = DeviceStatus.DISTRIBUTED.value
+    else:
+        return_holder_id = dist["from_user_id"]
+        return_holder_name = dist["from_user_name"]
+        sender_holder_type = role_to_type.get(sender_role, "pdic_staff")
+        return_holder_type = sender_holder_type
+        return_location = dist["from_user_name"]
+        sender_status = DeviceStatus.IN_USE.value if sender_role == "operator" else DeviceStatus.DISTRIBUTED.value
 
     async with async_session_factory() as session:
         await session.execute(
@@ -1666,10 +1711,10 @@ async def confirm_disputed_return(
         if device_ids:
             await _bulk_update_device_holders(
                 device_ids=device_ids,
-                holder_id=dist["from_user_id"],
-                holder_name=dist["from_user_name"],
-                holder_type=sender_holder_type,
-                location=dist["from_user_name"],
+                holder_id=return_holder_id,
+                holder_name=return_holder_name,
+                holder_type=return_holder_type,
+                location=return_location,
                 status=sender_status,
                 performed_by=int(user.get("id", user.get("_id", 0))),
                 performed_by_name=str(user.get("name") or "PDIC"),

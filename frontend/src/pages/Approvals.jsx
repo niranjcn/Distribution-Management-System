@@ -458,6 +458,34 @@ const Approvals = () => {
                     <p className="text-sm text-gray-500">Severity</p>
                     <StatusBadge status={selectedItem.severity} />
                   </div>
+                  {selectedItem.description && (
+                    <div className="col-span-2">
+                      <p className="text-sm text-gray-500">Notes</p>
+                      <p className="text-gray-800 mt-1 p-3 bg-gray-50 rounded-lg">{selectedItem.description}</p>
+                    </div>
+                  )}
+                  {selectedItem.images && selectedItem.images.length > 0 && (
+                    <div className="col-span-2">
+                      <p className="text-sm text-gray-500 mb-2">Photos</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {selectedItem.images.map((photoUrl, index) => (
+                          <a
+                            key={index}
+                            href={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="aspect-square bg-gray-100 rounded-lg overflow-hidden border border-gray-200 block hover:opacity-90 transition-opacity"
+                          >
+                            <img
+                              src={/^https?:\/\//i.test(photoUrl) ? photoUrl : `${import.meta.env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8080'}${photoUrl}`}
+                              alt={`Defect photo ${index + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

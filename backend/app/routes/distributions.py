@@ -658,13 +658,13 @@ async def confirm_distribution_receipt(
         )
 
 
-@router.post("/{distribution_id}/confirm-return", summary="PDIC confirms disputed devices are physically back with sender and unlocks redistribution.")
+@router.post("/{distribution_id}/confirm-return", summary="Sender or PDIC confirms disputed devices are physically back with sender and unlocks redistribution.")
 async def confirm_disputed_distribution_return(
     distribution_id: str,
     body: ReturnConfirmation,
-    current_user: dict = Depends(require_management)
+    current_user: dict = Depends(get_current_user)
 ):
-    """PDIC confirms disputed devices are physically back with sender and unlocks redistribution."""
+    """Sender or PDIC confirms disputed devices are physically back with sender and unlocks redistribution."""
     _ensure_not_md_director(current_user)
 
     try:

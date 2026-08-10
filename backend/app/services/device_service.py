@@ -896,7 +896,7 @@ async def _get_hierarchy_stats(session, user_id: str, user_role: str) -> Dict[st
     if user_role == "sub_distributor":
         ct_q = text("""
             SELECT COUNT(*) FROM devices d
-            JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
+            JOIN users u ON d.current_holder_id = u.id
             WHERE (u.parent_id = :uid AND u.role = 'cluster')
                OR (u.role = 'operator' AND u.parent_id IN (
                    SELECT id FROM users WHERE parent_id = :uid2 AND role = 'cluster'
@@ -927,14 +927,14 @@ async def _get_hierarchy_stats(session, user_id: str, user_role: str) -> Dict[st
         in_hand_list = sorted(in_hand_ids)
         if len(in_hand_list) == 1:
             held_count = (await session.execute(
-                text("SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS CHAR) = :h0"),
+                text("SELECT COUNT(*) FROM devices WHERE current_holder_id = :h0"),
                 {"h0": in_hand_list[0]}
             )).scalar() or 0
         else:
             ih_ph = ",".join([f":ih_{i}" for i in range(len(in_hand_list))])
             ih_params = {f"ih_{i}": hid for i, hid in enumerate(in_hand_list)}
             held_count = (await session.execute(
-                text(f"SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS CHAR) IN ({ih_ph})"),
+                text(f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({ih_ph})"),
                 ih_params
             )).scalar() or 0
         # Downstream (subordinate) holders are the scope descendants (clusters /
@@ -948,12 +948,12 @@ async def _get_hierarchy_stats(session, user_id: str, user_role: str) -> Dict[st
         if scoped_list2:
             ph2 = ",".join([f":sd_{i}" for i in range(len(scoped_list2))])
             params2 = {f"sd_{i}": sid for i, sid in enumerate(scoped_list2)}
-            ct_q2 = text(f"SELECT COUNT(*) FROM devices WHERE CAST(current_holder_id AS CHAR) IN ({ph2})")
+            ct_q2 = text(f"SELECT COUNT(*) FROM devices WHERE current_holder_id IN ({ph2})")
             subordinate_count = (await session.execute(ct_q2, params2)).scalar()
     elif user_role == "cluster":
         ct_q3 = text("""
             SELECT COUNT(*) FROM devices d
-            JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
+            JOIN users u ON d.current_holder_id = u.id
             WHERE u.parent_id = :uid AND u.role = 'operator'
         """)
         subordinate_count = (await session.execute(ct_q3, {"uid": uid})).scalar()
@@ -992,11 +992,11 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
         # Defective devices reported by this user
         defective_q = text("""
             SELECT d.* FROM devices d
-            JOIN defects def ON CAST(def.device_id AS CHAR) = CAST(d.id AS CHAR)
-            WHERE (CAST(def.reported_by AS CHAR) = :uid OR CAST(d.current_holder_id AS CHAR) = :uid2)
+            JOIN defects def ON def.device_id = CAST(d.id AS CHAR)
+            WHERE (def.reported_by = :uid OR d.current_holder_id = :uid2)
             AND d.status = 'defective'
         """)
-        def_rows = (await session.execute(defective_q, {"uid": user_id, "uid2": user_id})).mappings().all()
+        def_rows = (await session.execute(defective_q, {"uid": uid, "uid2": uid})).mappings().all()
         for row in def_rows:
             row_dict = dict(row)
             if str(row_dict.get("id")) not in held_device_ids:
@@ -1008,7 +1008,7 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
         if user_role == "sub_distributor":
             cluster_q = text("""
                 SELECT d.* FROM devices d
-                JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
+                JOIN users u ON d.current_holder_id = u.id
                 WHERE u.parent_id = :uid AND u.role = 'cluster'
                 ORDER BY d.updated_at DESC LIMIT :lim
             """)
@@ -1018,7 +1018,7 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
 
             operator_q = text("""
                 SELECT d.* FROM devices d
-                JOIN users op ON CAST(d.current_holder_id AS CHAR) = CAST(op.id AS CHAR)
+                JOIN users op ON d.current_holder_id = op.id
                 JOIN users cl ON op.parent_id = cl.id
                 WHERE cl.parent_id = :uid AND op.role = 'operator'
                 ORDER BY d.updated_at DESC LIMIT :lim
@@ -1029,8 +1029,8 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
 
             defective_sub_q = text("""
                 SELECT DISTINCT d.* FROM devices d
-                JOIN defects def ON CAST(def.device_id AS CHAR) = CAST(d.id AS CHAR)
-                JOIN users op ON CAST(def.reported_by AS CHAR) = CAST(op.id AS CHAR)
+                JOIN defects def ON def.device_id = CAST(d.id AS CHAR)
+                JOIN users op ON def.reported_by = op.id
                 LEFT JOIN users cl ON op.parent_id = cl.id
                 WHERE ((op.role = 'operator' AND cl.parent_id = :uid)
                   OR (op.role = 'cluster' AND op.parent_id = :uid2))
@@ -1076,7 +1076,7 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
                 params["lim"] = limit
                 sub_q = text(f"""
                     SELECT * FROM devices
-                    WHERE CAST(current_holder_id AS CHAR) IN ({ph})
+                    WHERE current_holder_id IN ({ph})
                     ORDER BY updated_at DESC
                     LIMIT :lim
                 """)
@@ -1085,8 +1085,8 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
 
                 defective_sub_q = text(f"""
                     SELECT DISTINCT d.* FROM devices d
-                    JOIN defects def ON CAST(def.device_id AS CHAR) = CAST(d.id AS CHAR)
-                    WHERE CAST(def.reported_by AS CHAR) IN ({ph})
+                    JOIN defects def ON def.device_id = CAST(d.id AS CHAR)
+                    WHERE def.reported_by IN ({ph})
                     AND d.status = 'defective'
                     LIMIT :lim
                 """)
@@ -1106,7 +1106,7 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
         elif user_role == "cluster":
             sub_q = text("""
                 SELECT d.* FROM devices d
-                JOIN users u ON CAST(d.current_holder_id AS CHAR) = CAST(u.id AS CHAR)
+                JOIN users u ON d.current_holder_id = u.id
                 WHERE u.parent_id = :uid AND u.role = 'operator'
                 ORDER BY d.updated_at DESC LIMIT :lim
             """)
@@ -1116,8 +1116,8 @@ async def get_user_device_overview(user_id: str, user_role: str, limit: int = 10
 
             defective_sub_q = text("""
                 SELECT DISTINCT d.* FROM devices d
-                JOIN defects def ON CAST(def.device_id AS CHAR) = CAST(d.id AS CHAR)
-                JOIN users op ON CAST(def.reported_by AS CHAR) = CAST(op.id AS CHAR)
+                JOIN defects def ON def.device_id = CAST(d.id AS CHAR)
+                JOIN users op ON def.reported_by = op.id
                 WHERE op.parent_id = :uid AND op.role = 'operator'
                 AND d.status = 'defective'
                 LIMIT :lim
@@ -1443,8 +1443,17 @@ async def repair_device_holder_from_history(device_id: str) -> Optional[Dict[str
     return await get_device_by_id(device_id)
 
 
-async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]:
-    """Track device by serial number, NUID, or MAC with full history."""
+async def track_device_by_serial(
+    serial_number: str,
+    user_id: Optional[str] = None,
+    user_role: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Track device by serial number, NUID, or MAC with full history.
+
+    When *user_role* is a hierarchy role the returned device is restricted to
+    devices held by the user or any of their descendants.  PDIC / management
+    roles can track any device.
+    """
     async with async_session_factory() as session:
         lookup = str(serial_number or "").strip()
         q = select(Device).where(or_(
@@ -1455,6 +1464,40 @@ async def track_device_by_serial(serial_number: str) -> Optional[Dict[str, Any]]
             return None
 
         device = inst.to_dict()
+
+        # --- scope check ------------------------------------------------
+        # PDIC / management roles may track any device.
+        if user_role not in (None, "", "super_admin", "manager", "pdic_staff"):
+            holder_id = device.get("current_holder_id")
+            # Build the set of user-ids that the requesting user may inspect:
+            # themselves + all descendants in their hierarchy.
+            uid = int(user_id) if user_id else 0
+            if user_role == "sub_distribution_employee":
+                emp_row = (await session.execute(
+                    text("SELECT parent_id FROM users WHERE id = :uid"), {"uid": uid}
+                )).mappings().first()
+                if emp_row and emp_row.get("parent_id") is not None:
+                    uid = int(emp_row["parent_id"])
+
+            scope_ids = {uid}
+            desc_rows = (await session.execute(text("""
+                WITH RECURSIVE descendants AS (
+                    SELECT id FROM users WHERE parent_id = :root
+                    UNION ALL
+                    SELECT u.id FROM users u
+                    INNER JOIN descendants d ON u.parent_id = d.id
+                )
+                SELECT id FROM descendants
+            """), {"root": uid})).mappings().all()
+            for row in desc_rows:
+                scope_ids.add(int(row["id"]))
+
+            if holder_id is None:
+                # Device held by PDIC entity — only PDIC roles may track it.
+                return None
+            if int(holder_id) not in scope_ids:
+                return None
+        # ----------------------------------------------------------------
 
         hq = (select(DeviceHistory).where(DeviceHistory.device_id == int(device["id"]))
               .order_by(DeviceHistory.timestamp.desc()))

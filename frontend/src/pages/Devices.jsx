@@ -1150,7 +1150,7 @@ const Devices = () => {
                 Edit Device
               </Button>
             )}
-            <Link to={`/track-device?q=${encodeURIComponent(selectedDevice?.serial_number || selectedDevice?.nuid || selectedDevice?.mac_address || '')}`}>
+            <Link to={`/devices/track?q=${encodeURIComponent(selectedDevice?.serial_number || selectedDevice?.nuid || selectedDevice?.mac_address || '')}`}>
               <Button>Track Device</Button>
             </Link>
           </>
