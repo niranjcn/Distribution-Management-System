@@ -638,6 +638,20 @@ async def confirm_distribution_receipt(
             notes=body.notes
         )
         action = "confirmed" if body.received else "disputed"
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+
+        if not body.received:
+            await log_business_activity(
+                user=current_user,
+                path="/activity/distributions/dispute",
+                description=(
+                    f"{actor_name} disputed receipt of distribution "
+                    f"{distribution.get('distribution_id')} "
+                    f"({distribution.get('device_count', 0)} device(s) from "
+                    f"{distribution.get('from_user_name') or 'PDIC'})"
+                ),
+            )
+
         return {
             "success": True,
             "message": f"Receipt {action} successfully",
@@ -672,6 +686,16 @@ async def confirm_disputed_distribution_return(
             distribution_id=distribution_id,
             user=current_user,
             notes=body.notes,
+        )
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/distributions/confirm-return",
+            description=(
+                f"{actor_name} confirmed disputed return of distribution "
+                f"{distribution.get('distribution_id')} "
+                f"({distribution.get('device_count', 0)} device(s) returned to sender)"
+            ),
         )
         return {
             "success": True,
