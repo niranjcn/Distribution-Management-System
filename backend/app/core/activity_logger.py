@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 import json
 import re
@@ -5,6 +6,8 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 from app.database_sqlalchemy import async_session_factory
 from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
 
 
 MEANINGFUL_ACTIVITY_RULES = [
@@ -15,7 +18,7 @@ MEANINGFUL_ACTIVITY_RULES = [
     ("PATCH", re.compile(r"^/api/defects/[^/]+/resolve$"), "Defect resolved", "defect resolution"),
     ("POST", re.compile(r"^/api/defects/[^/]+/forward-to-management$"), "Defect forwarded to management", "defect forwarding"),
     ("POST", re.compile(r"^/api/returns$"), "Return requested", "return request"),
-    ("POST", re.compile(r"^/api/distributions/[^/]+/receipt$"), "Distribution receipt confirmed", "distribution receipt confirmation"),
+    ("POST", re.compile(r"^/api/distributions/[^/]+/confirm-return$"), "Disputed return confirmed", "disputed return confirmation"),
     ("PATCH", re.compile(r"^/api/users/[^/]+/credentials$"), "User credentials updated", "user credential update"),
     ("GET", re.compile(r"^/api/distributions/[^/]+/manifest$"), "Distribution manifest downloaded", "distribution manifest download"),
     ("GET", re.compile(r"^/api/distributions/[^/]+/export-mac-nuid$"), "MAC/NUID export downloaded", "MAC/NUID export download"),
@@ -165,6 +168,5 @@ async def log_api_activity(
                 },
             )
             await session.commit()
-    except Exception:
-        # Logging must never block API responses.
-        return
+    except Exception as exc:
+        logger.exception("Failed to log activity: %s %s — %s", method, path, exc)
