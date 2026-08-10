@@ -786,15 +786,14 @@ async def bulk_distribute_from_file(
         # are authoritative and the batched decrement below cannot oversell.
         # The (identifier_type, identifier) pair uniquely identifies an item.
         locked_by_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        for batch in chunks([(e["identifier_type"], e["identifier"]) for e in entries], 500):
-            conditions = []
+        for batch in chunks([(e["identifier_type"], e["identifier"]) for e in entries], 1000):
+            row_constructors = ", ".join(f"(:t_{i}, :i_{i})" for i in range(len(batch)))
             params: Dict[str, Any] = {}
             for i, (idt, idf) in enumerate(batch):
-                conditions.append(f"(identifier_type = :t_{i} AND identifier = :i_{i})")
                 params[f"t_{i}"] = idt
                 params[f"i_{i}"] = idf
             rows = (await session.execute(
-                text(f"SELECT * FROM external_inventory_items WHERE {' OR '.join(conditions)} FOR UPDATE"),
+                text(f"SELECT * FROM external_inventory_items WHERE (identifier_type, identifier) IN ({row_constructors}) FOR UPDATE"),
                 params,
             )).mappings().all()
             for row in rows:

@@ -399,6 +399,7 @@ async def bulk_upload_external_inventory_items(
                     session,
                     insert_sql,
                     payload_rows,
+                    chunk_size=2000,
                     on_batch_success=_item_batch_success,
                     on_row_error=_item_row_error,
                     on_batch_complete=_item_batch_complete,

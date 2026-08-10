@@ -36,8 +36,6 @@ const DeliveryConfirmations = () => {
   const [loading, setLoading] = useState(true);
   const [selectedDist, setSelectedDist] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showReceiptModal, setShowReceiptModal] = useState(false);
-  const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptSubmitting, setReceiptSubmitting] = useState(false);
   const [distributionDevices, setDistributionDevices] = useState([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
@@ -123,22 +121,20 @@ const fetchDistributionDevices = async (distributionId) => {
     }
   }, [showDetailModal, selectedDist]);
 
-  const handleReceiptConfirm = async (received) => {
-    if (!selectedDist) return;
+  const handleReceiptConfirm = async (dist, received) => {
+    if (!dist) return;
     setReceiptSubmitting(true);
     try {
       await distributionsAPI.confirmReceipt(
-        selectedDist._id || selectedDist.id,
+        dist._id || dist.id,
         received,
-        receiptNotes
+        ''
       );
       const msg = received
         ? 'Receipt confirmed — you can now redistribute the device(s)'
         : 'Dispute reported. Admin and manager have been notified.';
       showToast(msg, received ? 'success' : 'warning');
-      setShowReceiptModal(false);
       setShowDetailModal(false);
-      setReceiptNotes('');
       setSelectedDist(null);
       setDistributionDevices([]);
       fetchDistributions();
@@ -147,12 +143,6 @@ const fetchDistributionDevices = async (distributionId) => {
     } finally {
       setReceiptSubmitting(false);
     }
-  };
-
-  const openConfirmModal = (dist) => {
-    setSelectedDist(dist);
-    setReceiptNotes('');
-    setShowReceiptModal(true);
   };
 
   const openDetailModal = (dist) => {
@@ -299,24 +289,22 @@ const fetchDistributionDevices = async (distributionId) => {
                   </Button>
                   <Button
                     icon={CheckCircle}
-                    onClick={() => openConfirmModal(dist)}
+                    onClick={() => handleReceiptConfirm(dist, true)}
                     className="bg-green-600 hover:bg-green-700 text-white w-full"
                     size="sm"
+                    disabled={receiptSubmitting}
                   >
-                    Confirm Received
+                    {receiptSubmitting ? 'Confirming...' : 'Confirm Received'}
                   </Button>
                   <Button
                     icon={XCircle}
                     variant="danger"
-                    onClick={() => {
-                      setSelectedDist(dist);
-                      setReceiptNotes('');
-                      setShowReceiptModal(true);
-                    }}
+                    onClick={() => handleReceiptConfirm(dist, false)}
                     size="sm"
                     className="w-full"
+                    disabled={receiptSubmitting}
                   >
-                    Not Received
+                    {receiptSubmitting ? 'Submitting...' : 'Not Received'}
                   </Button>
                 </div>
               </div>
@@ -341,11 +329,12 @@ const fetchDistributionDevices = async (distributionId) => {
               icon={CheckCircle}
               onClick={() => {
                 setShowDetailModal(false);
-                openConfirmModal(selectedDist);
+                handleReceiptConfirm(selectedDist, true);
               }}
               className="bg-green-600 hover:bg-green-700 text-white"
+              disabled={receiptSubmitting}
             >
-              Confirm Received
+              {receiptSubmitting ? 'Confirming...' : 'Confirm Received'}
             </Button>
             <Button variant="secondary" onClick={() => setShowDetailModal(false)}>
               Close
@@ -445,74 +434,6 @@ const fetchDistributionDevices = async (distributionId) => {
             </div>
           </div>
         )}
-      </Modal>
-
-      {/* Receipt Confirmation Modal */}
-      <Modal
-        isOpen={showReceiptModal}
-        onClose={() => {
-          setShowReceiptModal(false);
-          setReceiptNotes('');
-        }}
-        title="Confirm Device Receipt"
-        size="md"
-        footer={null}
-      >
-        <div className="space-y-4">
-          <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
-            <p className="font-medium text-orange-900">
-              Distribution: <span className="font-mono">{selectedDist?.distribution_id}</span>
-            </p>
-            <p className="text-sm text-orange-800 mt-1">
-              Sent by <strong>{getSenderDisplayName(selectedDist)}</strong> — {selectedDist?.device_count || 0} device(s)
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-            <textarea
-              value={receiptNotes}
-              onChange={e => setReceiptNotes(e.target.value)}
-              rows={3}
-              placeholder="Add any notes about the receipt condition..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
-            <strong>Note:</strong> You cannot redistribute these devices until you confirm receipt.
-            If you select "Not Received", admin and manager will be alerted immediately.
-          </div>
-
-          <div className="flex gap-3 justify-end pt-2">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowReceiptModal(false);
-                setReceiptNotes('');
-              }}
-              disabled={receiptSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              icon={XCircle}
-              onClick={() => handleReceiptConfirm(false)}
-              disabled={receiptSubmitting}
-            >
-              {receiptSubmitting ? 'Submitting...' : 'Not Received'}
-            </Button>
-            <Button
-              icon={CheckCircle}
-              onClick={() => handleReceiptConfirm(true)}
-              disabled={receiptSubmitting}
-              className="bg-green-600 hover:bg-green-700 text-white"
-            >
-              {receiptSubmitting ? 'Confirming...' : 'Confirm Received'}
-            </Button>
-          </div>
-        </div>
       </Modal>
     </div>
   );

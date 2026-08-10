@@ -63,6 +63,9 @@ const Distributions = () => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptSubmitting, setReceiptSubmitting] = useState(false);
+  const [showDisputeReturnModal, setShowDisputeReturnModal] = useState(false);
+  const [disputeReturnTarget, setDisputeReturnTarget] = useState(null);
+  const [disputeReturnSubmitting, setDisputeReturnSubmitting] = useState(false);
   const [dateRange, setDateRange] = useState({ range: 'all', startDate: null, endDate: null });
   const [searchBy, setSearchBy] = useState('all');
   const [searchInput, setSearchInput] = useState('');
@@ -263,7 +266,6 @@ const Distributions = () => {
 
   const canCreate = ['super_admin', 'manager', 'pdic_staff', 'sub_distributor', 'cluster', 'operator'].includes(user?.role);
   const isSubDistributionManager = user?.role === 'sub_distribution_manager';
-  const canConfirmDisputedReturn = ['super_admin', 'manager', 'pdic_staff'].includes(user?.role);
   const canRecipientIdentifierDownload =
     (
       ['super_admin', 'manager', 'pdic_staff'].includes(user?.role) ||
@@ -308,7 +310,7 @@ const Distributions = () => {
     try {
       await distributionsAPI.confirmDisputedReturn(
         dist._id || dist.id,
-        'PDIC confirmed devices are physically back with sender'
+        'Confirmed devices are physically back with sender'
       );
       showToast('Disputed return confirmed and devices unlocked for redistribution', 'success');
       // Data refetch is handled automatically by appDataMutation event
@@ -397,11 +399,12 @@ const Distributions = () => {
               <PackageCheck className="w-4 h-4" />
             </button>
           )}
-          {row.status === 'disputed' && canConfirmDisputedReturn && (
+          {row.status === 'disputed' && String(row.from_user_id) === String(user?.id) && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                handleConfirmDisputedReturn(row);
+                setDisputeReturnTarget(row);
+                setShowDisputeReturnModal(true);
               }}
               className="p-1 text-red-700 hover:bg-red-50 rounded"
               title="Confirm devices are back"
@@ -781,6 +784,76 @@ const Distributions = () => {
               className="bg-green-600 hover:bg-green-700 text-white"
             >
               {receiptSubmitting ? 'Confirming...' : 'Received'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Confirm Disputed Return Modal */}
+      <Modal
+        isOpen={showDisputeReturnModal}
+        onClose={() => { setShowDisputeReturnModal(false); setDisputeReturnTarget(null); }}
+        title="Confirm Disputed Return"
+        size="md"
+        footer={null}
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-red-900">
+                Confirm that devices have been physically returned to sender
+              </p>
+              <p className="text-sm text-red-800 mt-1">
+                You are about to confirm the return of devices from a disputed distribution.
+                This will unlock the devices so they can be redistributed to another recipient.
+              </p>
+            </div>
+          </div>
+
+          {disputeReturnTarget && (
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm">
+              <p><span className="font-medium text-gray-700">Distribution:</span> <span className="font-mono">{disputeReturnTarget.distribution_id}</span></p>
+              <p className="mt-1"><span className="font-medium text-gray-700">Devices:</span> {disputeReturnTarget.device_count || 0} device(s)</p>
+              <p className="mt-1"><span className="font-medium text-gray-700">Sent to:</span> {disputeReturnTarget.to_user_name}</p>
+            </div>
+          )}
+
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+            <strong>Warning:</strong> Only confirm this if the devices have been physically received back. Once confirmed, the devices will be available for redistribution.
+          </div>
+
+          <div className="flex gap-3 justify-end pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => { setShowDisputeReturnModal(false); setDisputeReturnTarget(null); }}
+              disabled={disputeReturnSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              icon={CheckCircle}
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={async () => {
+                if (!disputeReturnTarget) return;
+                setDisputeReturnSubmitting(true);
+                try {
+                  await distributionsAPI.confirmDisputedReturn(
+                    disputeReturnTarget._id || disputeReturnTarget.id,
+                    'Confirmed devices are physically back with sender'
+                  );
+                  showToast('Disputed return confirmed and devices unlocked for redistribution', 'success');
+                  setShowDisputeReturnModal(false);
+                  setDisputeReturnTarget(null);
+                } catch (error) {
+                  showToast(error.message || 'Failed to confirm disputed return', 'error');
+                } finally {
+                  setDisputeReturnSubmitting(false);
+                }
+              }}
+              disabled={disputeReturnSubmitting}
+            >
+              {disputeReturnSubmitting ? 'Confirming...' : 'Confirm Return'}
             </Button>
           </div>
         </div>
