@@ -641,11 +641,24 @@ async def confirm_distribution_receipt(
         actor_name = current_user.get("name") or current_user.get("email") or "User"
 
         if not body.received:
+            desc = (
+                f"{actor_name} disputed receipt of distribution "
+                f"{distribution.get('distribution_id')} "
+                f"({distribution.get('device_count', 0)} device(s) from "
+                f"{distribution.get('from_user_name') or 'PDIC'})"
+            )
+            logger.info("Logging dispute activity: %s", desc)
             await log_business_activity(
                 user=current_user,
                 path="/activity/distributions/dispute",
+                description=desc,
+            )
+        else:
+            await log_business_activity(
+                user=current_user,
+                path="/activity/distributions/confirm-receipt",
                 description=(
-                    f"{actor_name} disputed receipt of distribution "
+                    f"{actor_name} confirmed receipt of distribution "
                     f"{distribution.get('distribution_id')} "
                     f"({distribution.get('device_count', 0)} device(s) from "
                     f"{distribution.get('from_user_name') or 'PDIC'})"
