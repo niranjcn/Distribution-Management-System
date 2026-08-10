@@ -1218,8 +1218,7 @@ async def get_user_device_page(
     search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    sub_distributor_id: Optional[str] = None,
-    cluster_id: Optional[str] = None,
+    holder_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """SQL-paginated view of a hierarchy user's scoped devices.
 
@@ -1272,12 +1271,6 @@ async def get_user_device_page(
         if end_date:
             conditions.append("d.created_at <= :end_date")
             params["end_date"] = end_date
-        if sub_distributor_id:
-            conditions.append("CAST(d.current_holder_id AS CHAR) = :sub_distributor_id")
-            params["sub_distributor_id"] = str(sub_distributor_id).strip()
-        if cluster_id:
-            conditions.append("CAST(d.current_holder_id AS CHAR) = :cluster_id")
-            params["cluster_id"] = str(cluster_id).strip()
         if search:
             pattern = f"%{str(search).strip()}%"
             field_alias = {
@@ -1302,15 +1295,24 @@ async def get_user_device_page(
 
         extra_sql = " AND ".join(conditions) if conditions else "1 = 1"
 
-        ids_ph = ", ".join([f":ids_{i}" for i in range(len(scope_ids))])
-        for i, sid in enumerate(scope_ids):
-            params[f"ids_{i}"] = sid
+        holder_window = scope_ids
+        if holder_ids:
+            valid_holder_ids = sorted(
+                {int(h) for h in holder_ids if str(h or "").strip().isdigit()}
+            )
+            if valid_holder_ids:
+                valid_holder_ids = sorted(set(valid_holder_ids) & set(scope_ids))
+            holder_window = valid_holder_ids if valid_holder_ids else [-1]
 
-        holder_where = f"(d.current_holder_id IN ({ids_ph})) AND {extra_sql}"
+        holder_ph = ", ".join([f":hid_{i}" for i in range(len(holder_window))])
+        for i, hid in enumerate(holder_window):
+            params[f"hid_{i}"] = hid
+
+        holder_where = f"(d.current_holder_id IN ({holder_ph})) AND {extra_sql}"
         defect_where = (
             "(d.status = 'defective' AND d.id IN ("
             "   SELECT CAST(device_id AS UNSIGNED) FROM defects"
-            f"   WHERE reported_by IN ({ids_ph}))) AND {extra_sql}"
+            f"   WHERE reported_by IN ({holder_ph}))) AND {extra_sql}"
         )
 
         count_q = text(
@@ -1351,11 +1353,58 @@ async def get_user_device_page(
         page_devices = [dict(r) for r in page_rows]
         stats = await _cached_hierarchy_stats(cache_version_manager.get_version(), user_id, user_role)
 
+        insights = {
+            "by_type": [],
+            "by_vendor": [],
+        }
+        insight_params = {k: v for k, v in params.items() if k.startswith("hid_")}
+        if insight_params:
+            insight_q = text(
+                "SELECT "
+                "  COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown') AS device_type,"
+                "  COALESCE(NULLIF(TRIM(d.manufacturer), ''), 'Unknown') AS manufacturer,"
+                "  COUNT(*) AS total "
+                f"FROM devices d WHERE d.current_holder_id IN ({holder_ph}) "
+                "GROUP BY COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown'),"
+                "         COALESCE(NULLIF(TRIM(d.manufacturer), ''), 'Unknown')"
+            )
+            insight_rows = (await session.execute(insight_q, insight_params)).mappings().all()
+            by_type_map: Dict[str, int] = {}
+            vendor_map: Dict[str, Dict[str, Any]] = {}
+            for row in insight_rows:
+                device_type = str(row["device_type"] or "Unknown")
+                manufacturer = str(row["manufacturer"] or "Unknown")
+                count = int(row["total"] or 0)
+                by_type_map[device_type] = by_type_map.get(device_type, 0) + count
+                if manufacturer not in vendor_map:
+                    vendor_map[manufacturer] = {"manufacturer": manufacturer, "total": 0, "byType": {}}
+                vendor_map[manufacturer]["total"] += count
+                vendor_map[manufacturer]["byType"][device_type] = (
+                    vendor_map[manufacturer]["byType"].get(device_type, 0) + count
+                )
+            insights["by_type"] = [
+                {"type": dtype, "total": total}
+                for dtype, total in sorted(by_type_map.items(), key=lambda item: item[1], reverse=True)
+            ]
+            insights["by_vendor"] = [
+                {
+                    "manufacturer": vendor,
+                    "total": payload["total"],
+                    "distinctTypes": len(payload["byType"]),
+                    "typeBreakdown": [
+                        {"type": t, "count": c}
+                        for t, c in sorted(payload["byType"].items(), key=lambda item: item[1], reverse=True)
+                    ],
+                }
+                for vendor, payload in sorted(vendor_map.items(), key=lambda item: item[1]["total"], reverse=True)
+            ]
+
         return {
             "page_devices": page_devices,
             "total_count": total,
             "page_size_used": effective_page_size,
             "stats": stats,
+            "insights": insights,
         }
 
 
@@ -1629,13 +1678,16 @@ async def _cached_management_holder_insights(cache_version: int) -> Dict[str, An
             WITH RECURSIVE hierarchy AS (
                 SELECT id, role, name,
                        id AS sub_id,
-                       CAST(NULL AS CHAR(50)) AS cluster_id
+                       CAST(NULL AS CHAR(50)) AS cluster_id,
+                       CAST(NULL AS CHAR(50)) AS operator_id
                 FROM users WHERE role = 'sub_distributor'
                 UNION ALL
                 SELECT u.id, u.role, u.name,
                        h.sub_id,
                        CASE WHEN u.role = 'cluster' THEN CAST(u.id AS CHAR(50))
-                            ELSE h.cluster_id END
+                            ELSE h.cluster_id END,
+                       CASE WHEN u.role = 'operator' THEN CAST(u.id AS CHAR(50))
+                            ELSE NULL END
                 FROM users u
                 INNER JOIN hierarchy h ON u.parent_id = h.id
                 WHERE u.role IN ('cluster', 'operator')
@@ -1645,26 +1697,32 @@ async def _cached_management_holder_insights(cache_version: int) -> Dict[str, An
                 sd.name AS sub_name,
                 h.cluster_id,
                 c.name AS cluster_name,
+                h.operator_id,
+                op.name AS operator_name,
                 COALESCE(NULLIF(TRIM(d.device_type), ''), 'Unknown') AS device_type,
                 COUNT(*) AS total
             FROM hierarchy h
             LEFT JOIN users sd ON h.sub_id = sd.id
             LEFT JOIN users c ON h.cluster_id = c.id
+            LEFT JOIN users op ON h.operator_id = op.id
             JOIN devices d ON CAST(d.current_holder_id AS CHAR) = CAST(h.id AS CHAR)
             WHERE d.current_holder_id IS NOT NULL
             AND TRIM(CAST(d.current_holder_id AS CHAR)) != ''
-            GROUP BY h.sub_id, sd.name, h.cluster_id, c.name, device_type
+            GROUP BY h.sub_id, sd.name, h.cluster_id, c.name, h.operator_id, op.name, device_type
         """))
         rows = result.mappings().all()
 
         sub_map: Dict[str, Dict[str, Any]] = {}
         cluster_map: Dict[str, Dict[str, Any]] = {}
+        operator_map: Dict[str, Dict[str, Any]] = {}
 
         for row in rows:
             sub_id = str(row["sub_id"])
             sub_name = str(row["sub_name"] or "Unknown Sub Distribution")
             cluster_id = str(row["cluster_id"]) if row.get("cluster_id") else None
             cluster_name = str(row["cluster_name"] or "Unknown Cluster") if cluster_id else None
+            operator_id = str(row["operator_id"]) if row.get("operator_id") else None
+            operator_name = str(row["operator_name"] or "Unknown Operator") if operator_id else None
             device_type = str(row["device_type"] or "Unknown")
             total = int(row["total"])
 
@@ -1681,7 +1739,18 @@ async def _cached_management_holder_insights(cache_version: int) -> Dict[str, An
                 cluster_map[cluster_id]["byType"][device_type] = cluster_map[cluster_id]["byType"].get(device_type, 0) + total
                 cluster_map[cluster_id]["name"] = cluster_name
 
-        entry_ids = sorted({int(sid) for sid in sub_map} | {int(cid) for cid in cluster_map})
+            if operator_id:
+                if operator_id not in operator_map:
+                    operator_map[operator_id] = {"total": 0, "byType": {}}
+                operator_map[operator_id]["total"] += total
+                operator_map[operator_id]["byType"][device_type] = operator_map[operator_id]["byType"].get(device_type, 0) + total
+                operator_map[operator_id]["name"] = operator_name
+
+        entry_ids = sorted(
+            {int(sid) for sid in sub_map}
+            | {int(cid) for cid in cluster_map}
+            | {int(oid) for oid in operator_map}
+        )
         digital_map = {}
         if entry_ids:
             ph = ",".join([f":di_{i}" for i in range(len(entry_ids))])
@@ -1715,5 +1784,13 @@ async def _cached_management_holder_insights(cache_version: int) -> Dict[str, An
             [to_entry(cid, data) for cid, data in cluster_map.items() if data["total"] > 0],
             key=lambda item: item["total"], reverse=True,
         )
+        operator_summary = sorted(
+            [to_entry(oid, data) for oid, data in operator_map.items() if data["total"] > 0],
+            key=lambda item: item["total"], reverse=True,
+        )
 
-        return {"sub_distributors": sub_summary, "clusters": cluster_summary}
+        return {
+            "sub_distributors": sub_summary,
+            "clusters": cluster_summary,
+            "operators": operator_summary,
+        }
