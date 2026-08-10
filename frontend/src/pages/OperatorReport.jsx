@@ -91,6 +91,7 @@ const OperatorReport = () => {
     name: (row) => row?.operator_name,
     email: (row) => row?.email,
     phone: (row) => row?.phone,
+    network_name: (row) => row?.network_name,
     digital_id: (row) => Array.isArray(row?.digital_ids)
       ? row.digital_ids.map(di => di?.digital_id || '').join(' ')
       : row?.digital_id,
@@ -155,6 +156,7 @@ const OperatorReport = () => {
         columns = [
           { header: 'Sl No', render: (_, i) => i + 1 },
           { header: 'Operator', render: (r) => r.operator_name },
+          { header: 'Network Name', render: (r) => r.network_name || '—' },
           { header: 'Digital ID', render: (r) => formatIds(r, 'digital_id') },
           { header: 'Broadband ID', render: (r) => formatIds(r, 'broadband_id') },
           { header: 'Sub Distribution', render: (r) => r.sub_name || '—' },
@@ -217,6 +219,7 @@ const OperatorReport = () => {
               <tr className="border-b border-gray-200">
                 <th className={thClass}>Sl No</th>
                 <th className={thClass}>Operator</th>
+                <th className={thClass}>Network Name</th>
                 <th className={thClass}>Digital ID</th>
                 <th className={thClass}>Broadband ID</th>
                 <th className={thClass}>Sub Distribution</th>
@@ -232,6 +235,7 @@ const OperatorReport = () => {
                 <tr key={r.operator_id} className="hover:bg-gray-50">
                   <td className={tdClass}>{(page - 1) * PAGE_SIZE + idx + 1}</td>
                   <td className={`${tdClass} font-medium text-gray-800`}>{r.operator_name}</td>
+                  <td className={tdClass}>{r.network_name || '—'}</td>
                   <td className={tdClass}>{formatIds(r, 'digital_id')}</td>
                   <td className={tdClass}>{formatIds(r, 'broadband_id')}</td>
                   <td className={tdClass}>{r.sub_name || '—'}</td>

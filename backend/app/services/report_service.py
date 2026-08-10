@@ -1172,7 +1172,7 @@ async def get_operator_report(scope: Optional[dict] = None, start_date: Optional
     """
     async with async_session_factory() as session:
         operator_result = await session.execute(text("""
-            SELECT o.id, o.name, o.email, o.phone,
+            SELECT o.id, o.name, o.email, o.phone, o.network_name,
                    p.id AS parent_id, p.name AS parent_name, p.role AS parent_role,
                    g.id AS sub_id, g.name AS sub_name
             FROM users o
@@ -1290,6 +1290,7 @@ async def get_operator_report(scope: Optional[dict] = None, start_date: Optional
                 "operator_name": str(operator_row["name"] or ""),
                 "email": str(operator_row["email"] or ""),
                 "phone": str(operator_row["phone"] or ""),
+                "network_name": str(operator_row["network_name"] or ""),
                 "sub_id": int(operator_row["sub_id"]) if operator_row["sub_id"] else None,
                 "sub_name": str(operator_row["sub_name"] or ""),
                 "cluster_id": cluster_id,
