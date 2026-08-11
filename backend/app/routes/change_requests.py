@@ -8,7 +8,7 @@ from sqlalchemy import text
 from app.models.device import DeviceUpdate
 from app.middleware.auth_middleware import get_current_user, require_admin, require_admin_or_manager
 from app.utils.security import get_password_hash
-from app.utils.helpers import get_pagination
+from app.utils.helpers import get_pagination, get_client_ip
 from app.services import device_service, notification_service, defect_service
 from app.core.audit import audit_logger
 from app.core.cache_version import bump_cache_version
@@ -520,7 +520,7 @@ async def review_change_request(
                                 current_user.get("role"),
                                 req.get("requested_by"),
                                 request_id,
-                                request.client.host if request.client else "unknown",
+                                get_client_ip(request),
                             )
                 elif req["request_type"] == "replacement_transfer_fix":
                     defect_id = req.get("device_id")
@@ -695,7 +695,7 @@ async def review_change_request(
                 req.get("requested_by_role"),
                 request_id,
                 review.action,
-                request.client.host if request.client else "unknown",
+                get_client_ip(request),
             )
 
         return {"success": True, "message": f"Request {review.action}d successfully"}

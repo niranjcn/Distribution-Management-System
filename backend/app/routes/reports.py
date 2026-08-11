@@ -377,6 +377,37 @@ async def download_returns_defects_backup(
         )
 
 
+# ===== TEST HELPER: trigger monthly backup (remove when done) =====
+@router.post("/monthly-backup/trigger", summary="Trigger a monthly backup immediately (test helper)")
+async def trigger_monthly_backup(
+    current_user: dict = Depends(require_admin_or_manager_or_md_or_staff)
+):
+    """Generate and upload the current month's device + returns/defects backup to rclone now."""
+    try:
+        from app.services.backup_scheduler import generate_monthly_backups
+        result = await generate_monthly_backups()
+        actor_name = current_user.get("name") or current_user.get("email") or "User"
+        await log_business_activity(
+            user=current_user,
+            path="/activity/reports/monthly-backup-trigger",
+            description=f"{actor_name} triggered a monthly backup ({result.get('month')})",
+        )
+        return {
+            "success": True,
+            "message": "Monthly backup generated successfully",
+            "data": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unhandled route exception")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred. Please try again later."
+        )
+# ===== END TEST HELPER =====
+
+
 @router.get("/db-backup-schedule", summary="Get current MySQL backup schedule settings")
 async def fetch_db_backup_schedule(
     current_user: dict = Depends(require_admin_or_manager_or_md)

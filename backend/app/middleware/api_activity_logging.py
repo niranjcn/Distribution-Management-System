@@ -4,6 +4,7 @@ from starlette.requests import Request
 from app.config import settings
 from app.core.activity_logger import build_meaningful_activity_description, log_api_activity
 from app.services.auth_service import get_current_user_from_token
+from app.utils.helpers import get_client_ip
 
 
 class ApiActivityLoggingMiddleware(BaseHTTPMiddleware):
@@ -37,7 +38,7 @@ class ApiActivityLoggingMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
 
-        ip_address = request.client.host if request.client else None
+        ip_address = get_client_ip(request)
 
         try:
             response = await call_next(request)

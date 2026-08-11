@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone, date
 from typing import Optional, List, Dict, Any, Set
 import io
@@ -17,6 +18,9 @@ from app.services.digital_id_search import build_identity_search_clause
 from app.utils.helpers import get_pagination, generate_distribution_id
 
 
+logger = logging.getLogger(__name__)
+
+
 # Device-facing bulk operations (holder updates, history writes, clearing the
 # pending_receipt lock) are executed in bounded batches. Single `IN` statements
 # over the entire device list would exceed MySQL prepared-statement / packet
@@ -32,14 +36,14 @@ def _distribution_manifest_dir() -> Path:
     return manifests_dir
 
 
-def _build_distribution_manifest(
+async def _build_distribution_manifest(
     distribution_id: str,
     devices: List[Dict[str, Any]],
     from_user_name: str,
     to_user_name: str,
     created_at_iso: str,
 ) -> str:
-    """Create an Excel manifest listing all devices in the distribution."""
+    """Create an Excel manifest listing all devices in the distribution and store it on the rclone remote."""
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Device Manifest"
@@ -74,8 +78,13 @@ def _build_distribution_manifest(
         ])
 
     file_name = f"{distribution_id}-devices.xlsx"
-    file_path = _distribution_manifest_dir() / file_name
-    workbook.save(file_path)
+
+    payload = io.BytesIO()
+    workbook.save(payload)
+    content = payload.getvalue()
+
+    from app.services.rclone_storage import upload_file_to_rclone
+    await upload_file_to_rclone("distribution_manifests", file_name, content)
     return file_name
 
 
@@ -820,7 +829,7 @@ async def _insert_distribution_record(
 
     manifest_file: Optional[str] = None
     try:
-        manifest_file = _build_distribution_manifest(
+        manifest_file = await _build_distribution_manifest(
             distribution_id=dist_id,
             devices=validated_devices,
             from_user_name=from_user.get("name", "Unknown"),
@@ -837,10 +846,15 @@ async def _insert_distribution_record(
     return dist_id, new_id, manifest_file
 
 
-def _remove_manifest_file(manifest_file: Optional[str]) -> None:
+async def _remove_manifest_file(manifest_file: Optional[str]) -> None:
     """Delete a manifest written during a distribution transaction that rolled back."""
     if not manifest_file:
         return
+    try:
+        from app.services.rclone_storage import delete_file_from_rclone
+        await delete_file_from_rclone("distribution_manifests", str(manifest_file))
+    except Exception:
+        logger.exception("Failed to clean up orphan manifest file %s", manifest_file)
     try:
         (_distribution_manifest_dir() / str(manifest_file)).unlink(missing_ok=True)
     except Exception:
@@ -1254,7 +1268,7 @@ async def create_distribution_from_identifiers(
             await session.commit()
         except Exception:
             await session.rollback()
-            _remove_manifest_file(manifest_file)
+            await _remove_manifest_file(manifest_file)
             raise
 
     await _notify_recipient(dist_id, to_user, from_user, len(resolved_device_ids))
@@ -1400,7 +1414,7 @@ async def create_distribution(dist_data: DistributionCreate, from_user: Dict[str
             await session.commit()
         except Exception:
             await session.rollback()
-            _remove_manifest_file(manifest_file)
+            await _remove_manifest_file(manifest_file)
             raise
 
     await _notify_recipient(dist_id, to_user, from_user, len(dist_data.device_ids))
@@ -1794,8 +1808,12 @@ async def cancel_distribution(distribution_id: str, user: dict) -> bool:
     return True
 
 
-async def get_distribution_manifest_file(distribution_id: str, user: Dict[str, Any]) -> Optional[Dict[str, str]]:
-    """Get manifest file metadata if requester is permitted to access distribution."""
+async def get_distribution_manifest_file(distribution_id: str, user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Get manifest content if requester is permitted to access distribution.
+
+    Manifests are stored on the rclone remote; manifests created before remote
+    storage existed are served from the legacy local directory as a fallback.
+    """
     dist = await get_distribution_by_id(distribution_id)
     if not dist:
         return None
@@ -1807,12 +1825,24 @@ async def get_distribution_manifest_file(distribution_id: str, user: Dict[str, A
     if not manifest_file:
         return None
 
+    # Prefer the manifest stored on the rclone remote.
+    try:
+        from app.services.rclone_storage import get_rclone_file_content
+        content = await get_rclone_file_content("distribution_manifests", str(manifest_file))
+        return {
+            "content": content,
+            "filename": str(manifest_file),
+        }
+    except Exception:
+        pass
+
+    # Fall back to the legacy local copy for manifests created before remote storage.
     file_path = _distribution_manifest_dir() / str(manifest_file)
     if not file_path.exists():
         return None
 
     return {
-        "path": str(file_path),
+        "content": file_path.read_bytes(),
         "filename": str(manifest_file),
     }
 

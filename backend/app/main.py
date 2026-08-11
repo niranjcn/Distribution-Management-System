@@ -31,6 +31,7 @@ from app.middleware.conditional_cache import ConditionalCacheMiddleware
 from app.core.rate_limiter import limiter
 from app.core.audit import audit_logger
 from app.core.metrics import MetricsMiddleware, metrics_endpoint
+from app.utils.helpers import get_client_ip
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -248,7 +249,8 @@ async def serve_upload(file_path: str, current_user: dict = Depends(get_current_
     if safe_path.is_file():
         return FileResponse(path=str(safe_path))
 
-    if file_path.startswith("defect_payments/") or file_path.startswith("defect_photos/"):
+    if (file_path.startswith("defect_payments/") or file_path.startswith("defect_photos/")
+            or file_path.startswith("distribution_manifests/") or file_path.startswith("monthly_backups/")):
         from app.services.rclone_storage import get_rclone_file_content
         import mimetypes
         from fastapi.responses import Response
@@ -277,7 +279,7 @@ async def reset_and_seed_endpoint(request: Request, current_user: dict = Depends
         "DB_RESET | user_id=%s | email=%s | ip=%s",
         current_user.get("id"),
         current_user.get("email"),
-        request.client.host if request.client else "unknown",
+        get_client_ip(request),
     )
 
     from app.services.seed_service import reset_and_seed

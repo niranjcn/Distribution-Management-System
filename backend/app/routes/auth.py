@@ -10,6 +10,7 @@ from app.core.rate_limiter import limiter
 from app.core.audit import audit_logger
 from app.core.activity_logger import log_api_activity
 from app.config import settings
+from app.utils.helpers import get_client_ip
 
 router = APIRouter()
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def login(request: Request, response: Response, credentials: LoginRequest):
     """User login endpoint"""
     try:
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = get_client_ip(request)
         user = await auth_service.authenticate_user(credentials.email, credentials.password)
 
         if not user:
@@ -154,7 +155,7 @@ async def logout(
             "LOGOUT_SUCCESS | user_id=%s | email=%s | ip=%s",
             current_user.get("id"),
             current_user.get("email"),
-            request.client.host if request.client else "unknown",
+            get_client_ip(request),
         )
 
         return {
@@ -195,7 +196,7 @@ async def refresh_token(
         if not token_data:
             audit_logger.warning(
                 "TOKEN_REFRESH_FAILED | ip=%s",
-                request.client.host if request.client else "unknown",
+                get_client_ip(request),
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -204,7 +205,7 @@ async def refresh_token(
 
         audit_logger.info(
             "TOKEN_REFRESH_SUCCESS | ip=%s",
-            request.client.host if request.client else "unknown",
+            get_client_ip(request),
         )
 
         is_secure_cookie = settings.CSRF_COOKIE_SECURE
@@ -299,7 +300,7 @@ async def change_password(
             audit_logger.warning(
                 "PASSWORD_CHANGE_FAILED | user_id=%s | ip=%s",
                 current_user.get("id"),
-                request.client.host if request.client else "unknown",
+                get_client_ip(request),
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -309,7 +310,7 @@ async def change_password(
         audit_logger.info(
             "PASSWORD_CHANGE_SUCCESS | user_id=%s | ip=%s",
             current_user.get("id"),
-            request.client.host if request.client else "unknown",
+            get_client_ip(request),
         )
 
         return {
@@ -380,7 +381,7 @@ async def complete_forced_update(
         audit_logger.info(
             "FORCED_CREDENTIAL_ROTATION_COMPLETE | user_id=%s | ip=%s",
             current_user.get("id"),
-            request.client.host if request.client else "unknown",
+            get_client_ip(request),
         )
         await log_api_activity(
             method="POST",
@@ -390,7 +391,7 @@ async def complete_forced_update(
             actor_name=str(current_user.get("name") or current_user.get("email") or "Unknown"),
             actor_role=str(current_user.get("role") or ""),
             description="Completed forced first-login credential rotation",
-            ip_address=request.client.host if request.client else "unknown",
+            ip_address=get_client_ip(request),
         )
 
         # Tokens are delivered exclusively via httpOnly cookies; the response

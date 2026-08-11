@@ -37,26 +37,29 @@ def _set_last_completed_month(month_key: str) -> None:
 
 
 async def generate_monthly_backups(month_key: Optional[str] = None) -> dict:
-    """Generate monthly XLSX backups for devices and returns/defects."""
+    """Generate monthly XLSX backups for devices and returns/defects.
+
+    The generated files are uploaded to the rclone remote under
+    ``monthly_backups/{YYYY-MM}/`` and are not written to the host filesystem.
+    """
     key = month_key or _month_key()
-    target_dir = _monthly_backup_root() / key
-    target_dir.mkdir(parents=True, exist_ok=True)
 
     device_export = await report_service.get_device_backup_export(file_format="xlsx")
     tracking_export = await report_service.get_returns_defects_backup_export(file_format="xlsx")
 
-    device_path = target_dir / f"device-backup-{key}.xlsx"
-    tracking_path = target_dir / f"returns-defects-backup-{key}.xlsx"
+    device_name = f"device-backup-{key}.xlsx"
+    tracking_name = f"returns-defects-backup-{key}.xlsx"
 
-    device_path.write_bytes(device_export["content"])
-    tracking_path.write_bytes(tracking_export["content"])
+    from app.services.rclone_storage import upload_file_to_rclone
+    await upload_file_to_rclone(f"monthly_backups/{key}", device_name, device_export["content"])
+    await upload_file_to_rclone(f"monthly_backups/{key}", tracking_name, tracking_export["content"])
 
     _set_last_completed_month(key)
 
     return {
         "month": key,
-        "device_backup": str(device_path),
-        "returns_defects_backup": str(tracking_path),
+        "device_backup": f"monthly_backups/{key}/{device_name}",
+        "returns_defects_backup": f"monthly_backups/{key}/{tracking_name}",
     }
 
 
