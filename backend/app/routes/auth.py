@@ -248,12 +248,23 @@ async def refresh_token(
         )
 
 
+# Fields the authenticated client needs to render the UI. Server-only account
+# metadata (status, timestamps, login counters, lockout state, creator id) and
+# password_hash are deliberately excluded so they are never stored in the
+# browser's sessionStorage.
+_ME_USER_FIELDS = {
+    "id", "email", "name", "role",
+    "phone", "designation", "address", "pincode", "parent_id",
+    "force_email_change", "force_password_change",
+}
+
+
 @router.get("/me", summary="Get current user information")
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     """Get current user information"""
     try:
-        # Remove sensitive fields
-        user_data = {k: v for k, v in current_user.items() if k != "password_hash"}
+        # Return only the fields the frontend actually needs
+        user_data = {k: v for k, v in current_user.items() if k in _ME_USER_FIELDS}
 
         return {
             "success": True,

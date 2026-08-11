@@ -38,6 +38,7 @@ def _parse_datetime(value: str) -> Optional[datetime]:
 
 
 def _strip_user(user_dict: dict) -> dict:
+    user_dict.pop("password_hash", None)
     user_dict["role"] = normalize_role(user_dict.get("role"))
     return user_dict
 
@@ -65,7 +66,7 @@ async def authenticate_user(login: str, password: str) -> Optional[dict]:
                     detail="Account temporarily locked. Try again later."
                 )
 
-        if not verify_password(password, user["password_hash"]):
+        if not verify_password(password, inst.password_hash):
             attempts = int(user.get("failed_login_attempts") or 0) + 1
             lock_time = None
             if attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
@@ -258,7 +259,6 @@ async def get_current_user_from_token(token: str) -> Optional[dict]:
         if token_data.role and user.get("role") != token_data.role:
             return None
 
-        user.pop("password_hash", None)
         return user
 
 
@@ -276,7 +276,7 @@ async def complete_forced_credential_update(
             return None
 
         user = inst.to_dict()
-        if not verify_password(current_password, user["password_hash"]):
+        if not verify_password(current_password, inst.password_hash):
             return None
 
         normalized_email = new_email.lower().strip()
@@ -301,7 +301,7 @@ async def complete_forced_credential_update(
                 detail="Phone already in use",
             )
 
-        if verify_password(new_password, user["password_hash"]):
+        if verify_password(new_password, inst.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="New password must be different from current password",
@@ -324,7 +324,6 @@ async def complete_forced_credential_update(
         if not inst:
             return None
         updated_user = _strip_user(inst.to_dict())
-        updated_user.pop("password_hash", None)
         return updated_user
 
 
@@ -336,7 +335,7 @@ async def change_user_password(user_id: str, current_password: str, new_password
             return False
 
         user = inst.to_dict()
-        if not verify_password(current_password, user["password_hash"]):
+        if not verify_password(current_password, inst.password_hash):
             return False
 
         inst.password_hash = get_password_hash(new_password)

@@ -1,6 +1,16 @@
 const AUTH_USER_KEY = 'dms_user';
 const LAST_PATH_KEY = 'dms-last-path';
 
+// Only these fields are ever persisted client-side. Everything else a backend
+// user object may carry (status, timestamps, login counters, lockout state,
+// creator id, tokens) is dropped before it reaches sessionStorage.
+const STORED_USER_FIELDS = new Set([
+  'id', 'name', 'email', 'role',
+  'phone', 'designation', 'address', 'pincode', 'parent_id',
+  'force_email_change', 'force_password_change',
+  'avatar',
+]);
+
 const hasWindow = () => typeof window !== 'undefined';
 
 const parseUser = (raw) => {
@@ -16,7 +26,9 @@ const parseUser = (raw) => {
 const stripToken = (user) => {
   if (!user || typeof user !== 'object') return user;
   const { token, access_token, ...safeUser } = user;
-  return safeUser;
+  return Object.fromEntries(
+    Object.entries(safeUser).filter(([key]) => STORED_USER_FIELDS.has(key))
+  );
 };
 
 export const getStoredUser = () => {
