@@ -346,7 +346,7 @@ async def complete_forced_update(
 
         token_data = await auth_service.create_user_token(updated_user)
 
-        is_secure_cookie = settings.ENVIRONMENT == "production"
+        is_secure_cookie = settings.CSRF_COOKIE_SECURE
         response.set_cookie(
             key="access_token",
             value=token_data["access_token"],
