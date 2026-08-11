@@ -826,10 +826,16 @@ async def bulk_upload_devices(
 
         contents = await file.read()
 
-        from app.services.bulk_upload_service import check_bulk_upload_file, check_bulk_upload_row_count, MAX_BULK_ROWS
+        from app.services.bulk_upload_service import (
+            check_bulk_upload_file,
+            check_bulk_upload_file_row_count,
+            check_bulk_upload_row_count,
+            MAX_BULK_ROWS,
+        )
         check_bulk_upload_file(contents, filename_lower)
 
         _validate_upload_signature(filename_lower, contents)
+        check_bulk_upload_file_row_count(contents, filename_lower)
 
         if filename_lower.endswith('.csv'):
             import csv

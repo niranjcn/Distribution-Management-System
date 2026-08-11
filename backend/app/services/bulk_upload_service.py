@@ -18,7 +18,7 @@ from app.utils.roles import normalize_role
 logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-MAX_BULK_ROWS = 300000
+MAX_BULK_ROWS = 15001
 _MAX_XLSX_UNCOMPRESSED_SIZE = 500 * 1024 * 1024  # 500 MB
 
 # Uploads at or below this row count keep a single atomic transaction. Larger
@@ -270,12 +270,49 @@ def validate_upload_signature(filename_lower: str, content: bytes) -> None:
             )
 
 
+def _too_many_rows_exc() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Too many rows. Maximum is {MAX_BULK_ROWS}",
+    )
+
+
 def check_bulk_upload_row_count(rows: list) -> None:
     if len(rows) > MAX_BULK_ROWS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Too many rows. Maximum is {MAX_BULK_ROWS}",
-        )
+        raise _too_many_rows_exc()
+
+
+def check_bulk_upload_file_row_count(contents: bytes, filename_lower: str) -> None:
+    """Reject files with more than ``MAX_BULK_ROWS`` data rows before parsing.
+
+    Counts rows directly from the file bytes without building any row structures,
+    so oversized uploads fail fast and are never parsed.
+    """
+    if filename_lower.endswith(".csv"):
+        reader = csv.reader(io.StringIO(contents.decode("utf-8-sig")))
+        row_count = 0
+        for row_idx, _ in enumerate(reader):
+            if row_idx == 0:
+                continue  # header row
+            row_count += 1
+            if row_count > MAX_BULK_ROWS:
+                raise _too_many_rows_exc()
+    elif filename_lower.endswith(".xlsx"):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            for row_idx, _ in enumerate(ws.iter_rows(min_row=2, values_only=True)):
+                if row_idx >= MAX_BULK_ROWS:
+                    raise _too_many_rows_exc()
+        finally:
+            wb.close()
+    elif filename_lower.endswith(".xls"):
+        import xlrd
+        wb = xlrd.open_workbook(file_contents=contents)
+        ws = wb.sheet_by_index(0)
+        if ws.nrows - 1 > MAX_BULK_ROWS:
+            raise _too_many_rows_exc()
 
 
 def _is_likely_text(content: bytes) -> bool:

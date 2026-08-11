@@ -468,7 +468,7 @@ const BulkUploadUsers = () => {
               <p className="text-sm text-gray-600 font-medium">
                 {file ? file.name : 'Drop your file here or click to browse'}
               </p>
-              <p className="text-xs text-gray-400 mt-1">Supports .csv, .xlsx, .xls</p>
+              <p className="text-xs text-gray-400 mt-1">Supports .csv, .xlsx, .xls · max 15,001 rows</p>
             </div>
 
             {file && (

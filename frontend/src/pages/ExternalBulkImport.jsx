@@ -49,7 +49,7 @@ const FIELD_DESCRIPTIONS = [
 const TEMPLATE_HEADERS = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS.filter((c) => c !== 'name')];
 
 const MAX_FILE_SIZE_MB = 10;
-const MAX_ROWS = 300000;
+const MAX_ROWS = 15001;
 
 const ExternalBulkImport = () => {
   const navigate = useNavigate();

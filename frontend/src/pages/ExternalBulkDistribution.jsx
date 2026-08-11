@@ -292,7 +292,7 @@ const ExternalBulkDistribution = () => {
           ) : (
             <div>
               <p className="font-medium text-gray-700">Drop your upload file here, or click to browse</p>
-              <p className="text-sm text-gray-400 mt-1">Supports .xlsx, .xls, and .csv</p>
+              <p className="text-sm text-gray-400 mt-1">Supports .xlsx, .xls, and .csv · max 15,001 rows</p>
             </div>
           )}
           <input
