@@ -3,7 +3,7 @@ import csv
 import io
 
 from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File, Form
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from typing import Optional
 from pydantic import BaseModel
 from datetime import date
@@ -388,10 +388,12 @@ async def download_distribution_manifest(
                 detail="Distribution manifest not found"
             )
 
-        return FileResponse(
-            path=manifest["path"],
-            filename=manifest["filename"],
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        return Response(
+            content=manifest["content"],
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{manifest["filename"]}"'
+            },
         )
     except HTTPException:
         raise

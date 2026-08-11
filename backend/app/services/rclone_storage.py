@@ -81,3 +81,13 @@ async def get_rclone_file_content(folder: str, file_name: str) -> bytes:
     if returncode != 0:
         raise RuntimeError("File not found on Google Drive")
     return stdout
+
+async def delete_file_from_rclone(folder: str, file_name: str) -> None:
+    """Deletes a file from the configured rclone remote."""
+    remote = settings.RCLONE_REMOTE
+    remote_path = f"{remote}:{folder}/{file_name}"
+
+    stdout, stderr, returncode = await _run_rclone(["deletefile", remote_path])
+    if returncode != 0:
+        message = stderr.decode().strip() or stdout.decode().strip() or "File delete failed"
+        raise RuntimeError(message)

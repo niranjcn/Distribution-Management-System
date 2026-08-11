@@ -108,6 +108,15 @@ export const reportsAPI = {
     return response;
   },
 
+  // ===== TEST HELPER: trigger monthly backup (remove when done) =====
+  triggerMonthlyBackup: async () => {
+    const response = await apiRequest('/reports/monthly-backup/trigger', {
+      method: 'POST',
+    });
+    return response;
+  },
+  // ===== END TEST HELPER =====
+
   updateDbBackupSchedule: async (payload) => {
     const response = await apiRequest('/reports/db-backup-schedule', {
       method: 'PUT',

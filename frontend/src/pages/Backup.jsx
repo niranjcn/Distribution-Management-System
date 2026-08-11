@@ -23,6 +23,9 @@ const Backup = () => {
   });
   const [loadingDbSchedule, setLoadingDbSchedule] = useState(false);
   const [savingDbSchedule, setSavingDbSchedule] = useState(false);
+  // ===== TEST HELPER: trigger monthly backup (remove when done) =====
+  const [triggeringBackup, setTriggeringBackup] = useState(false);
+  // ===== END TEST HELPER =====
 
   const weekDays = [
     { value: 0, label: 'Monday' },
@@ -178,6 +181,21 @@ const Backup = () => {
     }
   };
 
+  // ===== TEST HELPER: trigger monthly backup (remove when done) =====
+  const handleTriggerMonthlyBackup = async () => {
+    setTriggeringBackup(true);
+    try {
+      const response = await reportsAPI.triggerMonthlyBackup();
+      const month = response?.data?.month || '';
+      showToast(`Monthly backup generated${month ? ` (${month})` : ''} successfully`, 'success');
+    } catch (error) {
+      showToast(error.message || 'Failed to trigger monthly backup', 'error');
+    } finally {
+      setTriggeringBackup(false);
+    }
+  };
+  // ===== END TEST HELPER =====
+
   useEffect(() => {
     loadDocuments();
     loadDbSchedule();
@@ -191,6 +209,28 @@ const Backup = () => {
           Download a full backup of all devices including journey path from source to current location.
         </p>
       </div>
+
+      {/* ===== TEST HELPER: Trigger Monthly Backup (remove when done) ===== */}
+      <Card>
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 text-gray-700">
+            <Database className="w-5 h-5 mt-0.5 text-violet-600" />
+            <div>
+              <p className="font-medium">Trigger Monthly Backup</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Generate and upload this month&apos;s device + returns/defects backup to Google Drive now.
+                Testing only — the scheduler normally runs this on the 1st of each month.
+              </p>
+            </div>
+          </div>
+          <div className="pt-1">
+            <Button icon={RefreshCw} loading={triggeringBackup} onClick={handleTriggerMonthlyBackup}>
+              {triggeringBackup ? 'Generating Monthly Backup...' : 'Trigger Monthly Backup'}
+            </Button>
+          </div>
+        </div>
+      </Card>
+      {/* ===== END TEST HELPER ===== */}
 
       <Card>
         <div className="space-y-5">

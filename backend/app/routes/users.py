@@ -24,6 +24,7 @@ from app.utils.roles import (
     can_manage_user,
     can_mutate_super_admin,
 )
+from app.utils.helpers import get_client_ip
 
 router = APIRouter()
 
@@ -879,7 +880,7 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
                     current_user.get("id"),
                     current_user.get("email"),
                     user_id,
-                    request.client.host if request.client else "unknown",
+                    get_client_ip(request),
                 )
                 if actor_role == MANAGER:
                     await _notify_super_admins(
@@ -946,7 +947,7 @@ async def delete_user(request: Request, user_id: str, current_user: dict = Depen
             current_user.get("id"),
             current_user.get("email"),
             user_id,
-            request.client.host if request.client else "unknown",
+            get_client_ip(request),
         )
 
         if actor_role == MANAGER:
@@ -1032,7 +1033,7 @@ async def admin_update_credentials(
             current_user.get("id"),
             current_user.get("email"),
             user_id,
-            request.client.host if request.client else "unknown",
+            get_client_ip(request),
         )
 
         return {"success": True, "message": "Credentials updated", "data": updated}
