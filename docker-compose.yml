@@ -14,6 +14,8 @@ services:
       MYSQL_USER: dms_user
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       TZ: Asia/Kolkata
+    security_opt:
+      - no-new-privileges:true
     command:
       - "--default-time-zone=+05:30"
       - "--innodb_buffer_pool_size=512M"
@@ -59,6 +61,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       mysql:
         condition: service_healthy
@@ -127,6 +131,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend:
         condition: service_healthy
@@ -136,9 +142,11 @@ services:
       - "80"
     read_only: true
     tmpfs:
-      - /var/cache/nginx
-      - /var/run
-      - /var/log/nginx
+      # Owned by the unprivileged nginx user (uid/gid 101 in nginx:1.27-alpine)
+      # so it can write the pid, cache, and log files without running as root.
+      - /var/cache/nginx:uid=101,gid=101,mode=0700
+      - /var/run:uid=101,gid=101,mode=0755
+      - /var/log/nginx:uid=101,gid=101,mode=0755
     networks:
       dms_net:
         ipv4_address: 172.20.0.4
@@ -157,6 +165,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend:
         condition: service_healthy
@@ -188,6 +198,8 @@ services:
         max-size: "10m"
         max-file: "3"
     user: "nobody"
+    security_opt:
+      - no-new-privileges:true
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -219,6 +231,8 @@ services:
         max-size: "10m"
         max-file: "3"
     user: "472"
+    security_opt:
+      - no-new-privileges:true
     environment:
       GF_INSTALL_PLUGINS: ""
       GF_SECURITY_ADMIN_USER: admin
