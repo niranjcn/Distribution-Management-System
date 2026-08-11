@@ -899,10 +899,15 @@ when a return is **received** at PDIC, has a **return amount above zero**, and t
 2. Summary cards: **Users (count), Total Due, Total Items** — the full outstanding
    picture across everyone.
 3. The table groups dues **per user**: each row shows the **user name, role, parent,
-   digital/broadband IDs, number of due items, and total due** (highest first).
-4. **Search** by **user name, user role, parent name, digital ID, broadband ID, or
-   total due**.
-5. Click a user row to open a **details drawer**: the list of that user's defects with
+   sub distributor, digital/broadband IDs, number of due items, and total due**
+   (highest first). The **Sub Distributor** column shows the branch sub distributor
+   the user falls under (for clusters it equals their parent; for operators it is
+   the sub distributor above their cluster).
+4. **Filter by Sub Distributor**: managers can narrow the table (and summary cards)
+   to dues from users under one sub distributor, or leave it on **All Sub Distributors**.
+5. **Search** by **user name, user role, parent name, sub distributor name, digital
+   ID, broadband ID, or total due**.
+6. Click a user row to open a **details drawer**: the list of that user's defects with
    report ID, device, return ID, return status, amount, and received date.
 
 **How a due gets cleared:**

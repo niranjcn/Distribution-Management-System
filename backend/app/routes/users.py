@@ -1119,6 +1119,7 @@ async def bulk_upload_users(
     try:
         contents = await file.read()
         bulk_upload_service.check_bulk_upload_file(contents, f".{ext}")
+        bulk_upload_service.check_bulk_upload_file_row_count(contents, f".{ext}")
         rows = bulk_upload_service.parse_file(contents, ext)
         bulk_upload_service.check_bulk_upload_row_count(rows)
     except HTTPException:

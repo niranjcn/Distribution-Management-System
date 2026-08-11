@@ -181,6 +181,7 @@ async def bulk_upload_external_inventory_items(
 
         from app.services.bulk_upload_service import (
             check_bulk_upload_file,
+            check_bulk_upload_file_row_count,
             check_bulk_upload_row_count,
             validate_upload_signature,
         )
@@ -188,6 +189,7 @@ async def bulk_upload_external_inventory_items(
         # and rejects mis-typed files via magic-byte signature checks.
         check_bulk_upload_file(contents, filename_lower)
         validate_upload_signature(filename_lower, contents)
+        check_bulk_upload_file_row_count(contents, filename_lower)
 
         if filename_lower.endswith(".csv"):
             decoded = contents.decode("utf-8-sig")
@@ -627,6 +629,7 @@ async def bulk_distribute_external_inventory_from_file(
 
         from app.services.bulk_upload_service import (
             check_bulk_upload_file,
+            check_bulk_upload_file_row_count,
             check_bulk_upload_row_count,
             validate_upload_signature,
         )
@@ -635,6 +638,7 @@ async def bulk_distribute_external_inventory_from_file(
         # and rejects mis-typed files via magic-byte signature checks.
         check_bulk_upload_file(contents, filename_lower)
         validate_upload_signature(filename_lower, contents)
+        check_bulk_upload_file_row_count(contents, filename_lower)
 
         if filename_lower.endswith(".csv"):
             decoded = contents.decode("utf-8-sig")
