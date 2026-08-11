@@ -219,7 +219,6 @@ const Backup = () => {
               <p className="font-medium">Trigger Monthly Backup</p>
               <p className="text-sm text-gray-500 mt-1">
                 Generate and upload this month&apos;s device + returns/defects backup to Google Drive now.
-                Testing only — the scheduler normally runs this on the 1st of each month.
               </p>
             </div>
           </div>
