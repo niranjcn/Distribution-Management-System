@@ -1,6 +1,0 @@
-email,password,name,digital_id,broadband_id,phone
-user1@example.com,Pass@123,John Doe,SD001|DIG002|DIG003,BB001,+8801234567890
-user2@example.com,Pass@123,Jane Smith,SD004,BB002,+8809876543210
-user3@example.com,Pass@123,Md. Rahman,SD005|DIG006,BB003,+8801712345678
-user4@example.com,Pass@123,Fatema Begum,SD007,BB004,+8801555555555
-user5@example.com,Pass@123,Ahmed Hossain,SD008,BB005,

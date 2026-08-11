@@ -18,20 +18,61 @@ JOB_ID = "activity_log_cleanup"
 SCHEDULER: AsyncIOScheduler = None
 
 
+AUTH_LOGIN_PATH_PATTERN = "/api/auth/login%"
+AUTH_REFRESH_PATTERN = "%refresh%"
+
+
 async def purge_old_activity_logs() -> None:
-    """Delete api_activity_logs rows older than ACTIVITY_LOG_RETENTION_DAYS."""
+    """Prune auth-noise activity rows older than ACTIVITY_LOG_RETENTION_DAYS.
+
+    Only login attempts and token-refresh warnings are removed, from both the
+    ``api_activity_logs`` source table and the denormalised ``activities`` feed.
+    Meaningful business activity rows (device, inventory, defect, distribution,
+    etc.) are preserved.
+    """
     retention = max(settings.ACTIVITY_LOG_RETENTION_DAYS, 1)
     cutoff = datetime.now().replace(tzinfo=None) - timedelta(days=retention)
 
     try:
         async with async_session_factory() as session:
             result = await session.execute(
-                text("DELETE FROM api_activity_logs WHERE created_at < :cutoff"), {"cutoff": cutoff}
+                text(
+                    "DELETE FROM api_activity_logs "
+                    "WHERE created_at < :cutoff "
+                    "AND (path LIKE :login_pattern OR description LIKE :refresh_pattern)"
+                ),
+                {
+                    "cutoff": cutoff,
+                    "login_pattern": AUTH_LOGIN_PATH_PATTERN,
+                    "refresh_pattern": AUTH_REFRESH_PATTERN,
+                },
             )
-            deleted = result.rowcount
+            deleted = result.rowcount or 0
+
+            feed_result = await session.execute(
+                text(
+                    "DELETE FROM activities "
+                    "WHERE category = 'api' "
+                    "AND activity_date < :cutoff "
+                    "AND (path LIKE :login_pattern OR description LIKE :refresh_pattern)"
+                ),
+                {
+                    "cutoff": cutoff,
+                    "login_pattern": AUTH_LOGIN_PATH_PATTERN,
+                    "refresh_pattern": AUTH_REFRESH_PATTERN,
+                },
+            )
+            feed_deleted = feed_result.rowcount or 0
             await session.commit()
-        if deleted:
-            logger.info("Purged %d activity log rows older than %d days", deleted, retention)
+        total = deleted + feed_deleted
+        if total:
+            logger.info(
+                "Purged %d auth-noise activity rows (%d api_activity_logs, %d activities) older than %d days",
+                total,
+                deleted,
+                feed_deleted,
+                retention,
+            )
     except Exception:
         logger.exception("Failed to purge old activity logs")
 

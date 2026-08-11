@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
-from sqlalchemy import select, func, and_, insert
+from sqlalchemy import select, delete, func, and_, insert
 
 from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
@@ -200,12 +200,10 @@ async def delete_old_notifications(days: int = 30) -> int:
     """Delete notifications older than specified days"""
     cutoff = (datetime.now().replace(tzinfo=None) - timedelta(days=days)).isoformat()
     async with async_session_factory() as session:
-        q = select(Notification).where(Notification.created_at < cutoff)
-        rows = (await session.execute(q)).scalars().all()
-        count = len(rows)
-        for n in rows:
-            await session.delete(n)
-        await bump_cache_version(session)
+        result = await session.execute(delete(Notification).where(Notification.created_at < cutoff))
+        count = result.rowcount or 0
+        if count:
+            await bump_cache_version(session)
         await session.commit()
         return count
 
