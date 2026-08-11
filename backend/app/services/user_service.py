@@ -235,7 +235,7 @@ async def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
         inst = (await session.execute(q)).scalar_one_or_none()
         if not inst:
             return None
-        return inst.to_dict()
+        return _strip_user(inst.to_dict())
 
 
 async def create_user(user_data: UserCreate, creator_id: Optional[int] = None) -> Dict[str, Any]:
