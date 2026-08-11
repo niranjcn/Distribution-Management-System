@@ -75,8 +75,11 @@ services:
       DB_PORT: 3306
       DB_USER: dms_user
       DB_PASSWORD: ${MYSQL_PASSWORD}
-      # Migrations run on startup as root (not the runtime dms_user), so the
-      # runtime user never needs schema-changing privileges.
+      # Migrations are applied once at container start by the entrypoint as
+      # root (never as the runtime dms_user), so the runtime user needs no
+      # schema-changing privileges. The entrypoint uses these credentials for
+      # `alembic upgrade head` on boot, then removes them from the process
+      # environment before uvicorn launches.
       MIGRATION_DB_USER: root
       MIGRATION_DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       DB_NAME: distribution_management_system

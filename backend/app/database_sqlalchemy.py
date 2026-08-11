@@ -122,7 +122,20 @@ async def run_alembic_migrations():
     On first boot MySQL may still be initialising when the app starts; retry
     transient connection failures (with backoff) before giving up, instead of
     letting the app crash and relying on the Docker restart policy.
+
+    In the Docker image this is normally a no-op: the container entrypoint runs
+    `alembic upgrade head` at startup with the privileged migration credentials
+    and then removes them from the environment, so the long-running app process
+    never holds the MySQL root password. We only run migrations here when the
+    migration credentials are still present (local development, or a container
+    started without the entrypoint).
     """
+    # No migration credentials -- schema work was already performed by the
+    # entrypoint at container start. Do NOT fall back to the runtime user:
+    # dms_user has DML-only privileges and cannot run Alembic DDL.
+    if not os.environ.get("MIGRATION_DB_PASSWORD"):
+        return
+
     from alembic.config import Config
     from alembic import command
     from sqlalchemy.exc import OperationalError
