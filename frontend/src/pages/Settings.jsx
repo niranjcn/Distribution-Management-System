@@ -4,402 +4,159 @@ import Button from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import api from '../services/api';
-import { 
-  Settings as SettingsIcon, Bell, Moon, Sun, Globe, 
-  Lock, Mail, Save, ToggleLeft, ToggleRight 
-} from 'lucide-react';
+import { updateStoredUser } from '../utils/authStorage';
+import { User, Phone, Building, MapPin, Save } from 'lucide-react';
+
+const fieldInputClass = 'w-full px-3.5 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-800 placeholder:text-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors';
+
+const FieldLabel = ({ label, icon: Icon }) => (
+  <label className="flex items-center gap-1.5 text-sm font-medium text-gray-600 mb-1.5">
+    {Icon && <Icon className="w-4 h-4 text-gray-400" />}
+    {label}
+  </label>
+);
 
 const Settings = () => {
-  const { user, hasRole, setUser } = useAuth();
-  const { addNotification } = useNotifications();
+  const { user, setUser } = useAuth();
+  const { showToast } = useNotifications();
   const [loading, setLoading] = useState(false);
 
+  // Supported settings are the user fields that actually exist in the database.
+  // They load from the authenticated user object, which is validated against
+  // the backend (/auth/me) whenever the app loads.
   const [settings, setSettings] = useState({
-    // Notifications
-    emailNotifications: user?.email_notifications ?? true,
-    pushNotifications: user?.push_notifications ?? true,
-    distributionAlerts: true,
-    defectAlerts: true,
-    returnAlerts: true,
-    systemUpdates: false,
-    
-    // Appearance
-    theme: user?.theme ?? 'light',
-    compactMode: user?.compact_mode ?? false,
-    animationsEnabled: true,
-    
-    // Privacy
-    showOnlineStatus: true,
-    shareActivityData: false,
-    
-    // System (Admin only)
-    maintenanceMode: false,
-    debugMode: false,
-    autoBackup: true,
-    backupFrequency: 'daily'
+    name: user?.name ?? '',
+    phone: user?.phone ?? '',
+    designation: user?.designation ?? '',
+    address: user?.address ?? '',
+    pincode: user?.pincode ?? ''
   });
 
-  // Load user settings on mount
+  // Load supported settings from the database-backed user on mount / sign-in.
   useEffect(() => {
     if (user) {
-      setSettings(prev => ({
-        ...prev,
-        emailNotifications: user.email_notifications ?? true,
-        pushNotifications: user.push_notifications ?? true,
-        theme: user.theme ?? 'light',
-        compactMode: user.compact_mode ?? false
-      }));
-      
-      // Apply theme to document
-      if (user.theme === 'dark') {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
-      
-      // Apply compact mode to document
-      if (user.compact_mode) {
-        document.documentElement.classList.add('compact');
-      } else {
-        document.documentElement.classList.remove('compact');
-      }
+      setSettings({
+        name: user.name ?? '',
+        phone: user.phone ?? '',
+        designation: user.designation ?? '',
+        address: user.address ?? '',
+        pincode: user.pincode ?? ''
+      });
     }
   }, [user]);
 
-  const handleToggle = (key) => {
-    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const handleThemeChange = (newTheme) => {
-    setSettings(prev => ({ ...prev, theme: newTheme }));
-    
-    // Apply theme immediately for preview
-    if (newTheme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else if (newTheme === 'light') {
-      document.documentElement.classList.remove('dark');
-    }
-  };
-
-  const handleCompactModeChange = () => {
-    const newCompactMode = !settings.compactMode;
-    setSettings(prev => ({ ...prev, compactMode: newCompactMode }));
-    
-    // Apply compact mode immediately for preview
-    if (newCompactMode) {
-      document.documentElement.classList.add('compact');
-    } else {
-      document.documentElement.classList.remove('compact');
-    }
+  const handleChange = (key) => (e) => {
+    setSettings(prev => ({ ...prev, [key]: e.target.value }));
   };
 
   const handleSave = async () => {
     setLoading(true);
     try {
-      // Prepare update data
+      // Only persist settings that map to real columns on the users table.
       const updateData = {
-        theme: settings.theme,
-        compact_mode: settings.compactMode,
-        email_notifications: settings.emailNotifications,
-        push_notifications: settings.pushNotifications
+        name: settings.name,
+        phone: settings.phone,
+        designation: settings.designation,
+        address: settings.address,
+        pincode: settings.pincode
       };
 
-      // Call API to update user settings
-      const response = await api.put(`/users/${user.id}`, updateData);
-      
-      if (response.data.success) {
-        // Update user in context
-        setUser({ ...user, ...updateData });
-        
-        addNotification({
-          type: 'success',
-          title: 'Settings Saved',
-          message: 'Your settings have been updated successfully.'
-        });
+      const response = await api.users.updateUser(user.id, updateData);
+
+      if (response.success) {
+        const updatedUser = { ...user, ...response.data };
+        setUser(updatedUser);
+        updateStoredUser(updatedUser);
+
+        showToast('Settings saved successfully', 'success');
       }
     } catch (error) {
       console.error('Failed to save settings:', error);
-      addNotification({
-        type: 'error',
-        title: 'Save Failed',
-        message: 'Failed to save settings. Please try again.'
-      });
+      showToast(error.message || 'Failed to save settings. Please try again.', 'error');
     } finally {
       setLoading(false);
     }
   };
-
-  const Toggle = ({ enabled, onChange }) => (
-    <button
-      onClick={onChange}
-      className={`relative w-12 h-6 rounded-full transition-colors ${
-        enabled ? 'bg-blue-600' : 'bg-gray-300'
-      }`}
-    >
-      <span
-        className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
-          enabled ? 'translate-x-7' : 'translate-x-1'
-        }`}
-      />
-    </button>
-  );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Settings</h1>
-          <p className="text-gray-500 mt-1">Configure your application preferences</p>
+          <p className="text-gray-500 mt-1">Configure your account details</p>
         </div>
         <Button icon={Save} onClick={handleSave} disabled={loading}>
           {loading ? 'Saving...' : 'Save Changes'}
         </Button>
       </div>
 
-      {/* Notification Settings */}
-      <Card title="Notification Settings" icon={Bell}>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
+      <Card
+        title="Account Settings"
+        subtitle="Your details as stored in the system"
+        icon={User}
+      >
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
             <div>
-              <p className="font-medium text-gray-800">Email Notifications</p>
-              <p className="text-sm text-gray-500">Receive notifications via email</p>
-            </div>
-            <Toggle 
-              enabled={settings.emailNotifications} 
-              onChange={() => handleToggle('emailNotifications')} 
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-800">Push Notifications</p>
-              <p className="text-sm text-gray-500">Receive push notifications in browser</p>
-            </div>
-            <Toggle 
-              enabled={settings.pushNotifications} 
-              onChange={() => handleToggle('pushNotifications')} 
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-800">Distribution Alerts</p>
-              <p className="text-sm text-gray-500">Get notified about new distributions</p>
-            </div>
-            <Toggle 
-              enabled={settings.distributionAlerts} 
-              onChange={() => handleToggle('distributionAlerts')} 
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-800">Defect Alerts</p>
-              <p className="text-sm text-gray-500">Get notified about defect reports</p>
-            </div>
-            <Toggle 
-              enabled={settings.defectAlerts} 
-              onChange={() => handleToggle('defectAlerts')} 
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-800">Return Alerts</p>
-              <p className="text-sm text-gray-500">Get notified about return requests</p>
-            </div>
-            <Toggle 
-              enabled={settings.returnAlerts} 
-              onChange={() => handleToggle('returnAlerts')} 
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <p className="font-medium text-gray-800">System Updates</p>
-              <p className="text-sm text-gray-500">Get notified about system maintenance</p>
-            </div>
-            <Toggle 
-              enabled={settings.systemUpdates} 
-              onChange={() => handleToggle('systemUpdates')} 
-            />
-          </div>
-        </div>
-      </Card>
-
-      {/* Appearance Settings */}
-      <Card title="Appearance" icon={Sun}>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-800">Theme</p>
-              <p className="text-sm text-gray-500">Choose your preferred theme</p>
-            </div>
-            <div className="flex gap-2">
-              {['light', 'dark', 'system'].map(theme => (
-                <button
-                  key={theme}
-                  onClick={() => handleThemeChange(theme)}
-                  className={`px-3 py-2 rounded-lg capitalize transition-colors ${
-                    settings.theme === theme
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {theme === 'light' && <Sun className="w-4 h-4 inline mr-1" />}
-                  {theme === 'dark' && <Moon className="w-4 h-4 inline mr-1" />}
-                  {theme}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-800">Compact Mode</p>
-              <p className="text-sm text-gray-500">Use smaller spacing and fonts</p>
-            </div>
-            <Toggle 
-              enabled={settings.compactMode} 
-              onChange={handleCompactModeChange} 
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <p className="font-medium text-gray-800">Animations</p>
-              <p className="text-sm text-gray-500">Enable interface animations</p>
-            </div>
-            <Toggle 
-              enabled={settings.animationsEnabled} 
-              onChange={() => handleToggle('animationsEnabled')} 
-            />
-          </div>
-        </div>
-      </Card>
-
-      {/* Privacy Settings */}
-      <Card title="Privacy" icon={Lock}>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div>
-              <p className="font-medium text-gray-800">Online Status</p>
-              <p className="text-sm text-gray-500">Show when you're online to other users</p>
-            </div>
-            <Toggle 
-              enabled={settings.showOnlineStatus} 
-              onChange={() => handleToggle('showOnlineStatus')} 
-            />
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <p className="font-medium text-gray-800">Share Activity Data</p>
-              <p className="text-sm text-gray-500">Help improve the system by sharing usage data</p>
-            </div>
-            <Toggle 
-              enabled={settings.shareActivityData} 
-              onChange={() => handleToggle('shareActivityData')} 
-            />
-          </div>
-        </div>
-      </Card>
-
-      {/* Admin-only System Settings */}
-      {hasRole(['super_admin']) && (
-        <Card title="System Settings (Admin Only)" icon={SettingsIcon}>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between py-3 border-b border-gray-100">
-              <div>
-                <p className="font-medium text-gray-800">Maintenance Mode</p>
-                <p className="text-sm text-gray-500">Temporarily disable the system for maintenance</p>
-              </div>
-              <Toggle 
-                enabled={settings.maintenanceMode} 
-                onChange={() => handleToggle('maintenanceMode')} 
+              <FieldLabel label="Full Name" icon={User} />
+              <input
+                type="text"
+                value={settings.name}
+                onChange={handleChange('name')}
+                placeholder="Enter full name"
+                className={fieldInputClass}
               />
             </div>
 
-            <div className="flex items-center justify-between py-3 border-b border-gray-100">
-              <div>
-                <p className="font-medium text-gray-800">Debug Mode</p>
-                <p className="text-sm text-gray-500">Enable detailed logging for troubleshooting</p>
-              </div>
-              <Toggle 
-                enabled={settings.debugMode} 
-                onChange={() => handleToggle('debugMode')} 
+            <div>
+              <FieldLabel label="Phone" icon={Phone} />
+              <input
+                type="tel"
+                value={settings.phone}
+                onChange={handleChange('phone')}
+                placeholder="Enter phone number"
+                className={fieldInputClass}
               />
             </div>
 
-            <div className="flex items-center justify-between py-3 border-b border-gray-100">
-              <div>
-                <p className="font-medium text-gray-800">Auto Backup</p>
-                <p className="text-sm text-gray-500">Automatically backup system data</p>
-              </div>
-              <Toggle 
-                enabled={settings.autoBackup} 
-                onChange={() => handleToggle('autoBackup')} 
+            <div>
+              <FieldLabel label="Designation" icon={Building} />
+              <input
+                type="text"
+                value={settings.designation}
+                onChange={handleChange('designation')}
+                placeholder="Enter designation"
+                className={fieldInputClass}
               />
             </div>
 
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <p className="font-medium text-gray-800">Backup Frequency</p>
-                <p className="text-sm text-gray-500">How often to create backups</p>
-              </div>
-              <select
-                value={settings.backupFrequency}
-                onChange={(e) => setSettings(prev => ({ ...prev, backupFrequency: e.target.value }))}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="hourly">Hourly</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
+            <div>
+              <FieldLabel label="Pincode" icon={MapPin} />
+              <input
+                type="text"
+                value={settings.pincode}
+                onChange={handleChange('pincode')}
+                placeholder="Enter pincode"
+                className={fieldInputClass}
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <FieldLabel label="Address" icon={MapPin} />
+              <textarea
+                rows={3}
+                value={settings.address}
+                onChange={handleChange('address')}
+                placeholder="Enter address"
+                className={`${fieldInputClass} resize-none leading-relaxed`}
+              />
             </div>
           </div>
-        </Card>
-      )}
 
-      {/* Regional Settings */}
-      <Card title="Regional Settings" icon={Globe}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Language</label>
-            <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-              <option value="en">English</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="ar">Arabic</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
-            <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-              <option value="UTC">UTC</option>
-              <option value="America/New_York">Eastern Time (US)</option>
-              <option value="America/Los_Angeles">Pacific Time (US)</option>
-              <option value="Europe/London">London</option>
-              <option value="Asia/Dubai">Dubai</option>
-              <option value="Asia/Tokyo">Tokyo</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date Format</label>
-            <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-              <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-              <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Time Format</label>
-            <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-              <option value="12h">12 Hour (AM/PM)</option>
-              <option value="24h">24 Hour</option>
-            </select>
+          <div className="flex justify-end pt-5 mt-6 border-t border-gray-100">
+            <Button type="button" icon={Save} onClick={handleSave} disabled={loading}>
+              {loading ? 'Saving...' : 'Save Changes'}
+            </Button>
           </div>
         </div>
       </Card>
@@ -408,4 +165,3 @@ const Settings = () => {
 };
 
 export default Settings;
-
