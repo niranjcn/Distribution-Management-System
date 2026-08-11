@@ -1,13 +1,12 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-import random
-import string
+from secrets import randbelow
 
 
-def generate_id(prefix: str, length: int = 4) -> str:
-    """Generate a unique ID with prefix (e.g., ONU-2026-0001)"""
+def generate_id(prefix: str, length: int = 8) -> str:
+    """Generate a unique ID with prefix (e.g., ONU-2026-00000001)"""
     year = datetime.now().year
-    random_num = ''.join(random.choices(string.digits, k=length))
+    random_num = f"{randbelow(10 ** length):0{length}d}"
     return f"{prefix}-{year}-{random_num}"
 
 
@@ -44,9 +43,9 @@ def generate_return_id() -> str:
 def generate_external_distribution_id() -> str:
     """Generate external inventory distribution history ID.
 
-    Unlike the generic 4-digit ``generate_id`` (only 10,000 combinations, which
-    collides on bulk isolates of 100k+ rows), this uses a long hex token, so a
-    single distribution of 150k items cannot collide on the unique
+    Unlike the generic 8-digit ``generate_id`` (100,000,000 combinations, which
+    can still collide on bulk isolates of 100k+ rows), this uses a long hex
+    token, so a single distribution of 150k items cannot collide on the unique
     ``external_device_history.history_id`` key.
     """
     from secrets import token_hex
