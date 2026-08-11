@@ -1,0 +1,4 @@
+# Shell scripts must always be checked out with LF line endings so their
+# shebang lines stay valid inside Linux containers (CRLF shebangs cause
+# "exec ...: no such file or directory" on image startup).
+*.sh text eol=lf
