@@ -5,6 +5,7 @@ from jose import JWTError
 
 from app.services.auth_service import (
     _parse_datetime,
+    blacklist_token,
     create_user_token,
     get_current_user_from_token,
     refresh_access_token,
@@ -152,6 +153,95 @@ class TestRefreshAccessToken:
 
         assert result is None
         blacklist.assert_not_awaited()
+
+    async def test_refresh_rejected_when_concurrent_rotation_wins(self, sample_user):
+        with (
+            patch("app.services.auth_service.verify_token_type", return_value=True),
+            patch(
+                "app.services.auth_service.is_token_blacklisted",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("app.services.auth_service.jwt.decode", return_value={"sub": "1"}),
+            patch(
+                "app.services.auth_service.async_session_factory",
+                return_value=_FakeSession(sample_user),
+            ),
+            patch(
+                "app.services.auth_service.blacklist_token",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            result = await refresh_access_token("contested-token")
+
+        assert result is None
+
+
+class TestBlacklistToken:
+    def _token(self):
+        return create_refresh_token(data=_token_claims())
+
+    async def test_new_blacklist_returns_true(self):
+        token = self._token()
+
+        class _Session:
+            def __init__(self):
+                self.added = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def add(self, obj):
+                self.added.append(obj)
+
+            async def execute(self, stmt, params=None):
+                return None
+
+            async def commit(self):
+                self.committed = True
+
+        session = _Session()
+        with patch("app.services.auth_service.async_session_factory", return_value=session):
+            result = await blacklist_token(token)
+
+        assert result is True
+        assert session.committed
+        assert len(session.added) == 1
+
+    async def test_duplicate_blacklist_returns_false_and_rolls_back(self):
+        from sqlalchemy.exc import IntegrityError
+
+        token = self._token()
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def add(self, obj):
+                pass
+
+            async def execute(self, stmt, params=None):
+                return None
+
+            async def commit(self):
+                raise IntegrityError("stmt", {}, Exception("Duplicate entry"))
+
+            async def rollback(self):
+                self.rolled_back = True
+
+        session = _Session()
+        with patch("app.services.auth_service.async_session_factory", return_value=session):
+            result = await blacklist_token(token)
+
+        assert result is False
+        assert session.rolled_back
 
 
 def _token_claims(**overrides):
