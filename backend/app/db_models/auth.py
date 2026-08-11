@@ -33,6 +33,17 @@ class User(Base):
     locked_until = Column(DateTime)
     created_by = Column(Integer)
 
+    def to_dict(self):
+        """Serialize for API output.
+
+        ``password_hash`` is deliberately excluded so it can never leak into
+        an API response or client-side storage. Authentication code that needs
+        the hash reads ``self.password_hash`` directly from the ORM instance.
+        """
+        d = super().to_dict()
+        d.pop("password_hash", None)
+        return d
+
 
 class TokenBlacklist(Base):
     __tablename__ = "token_blacklist"

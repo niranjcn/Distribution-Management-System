@@ -18,7 +18,7 @@ def get_password_hash(password: str) -> str:
     """Generate password hash"""
     return bcrypt.hashpw(
         password.encode('utf-8'),
-        bcrypt.gensalt()
+        bcrypt.gensalt(rounds=12)
     ).decode('utf-8')
 
 
