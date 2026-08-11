@@ -771,6 +771,7 @@ async def get_pending_dues_users(
     page_size: int = 100,
     search: Optional[str] = None,
     search_by: Optional[str] = "all",
+    sub_distributor_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     async with async_session_factory() as session:
         scope_user_ids = await _get_report_scope_user_ids(session, current_user) if current_user else None
@@ -792,6 +793,20 @@ async def get_pending_dues_users(
             for i, sid in enumerate(sorted(scope_user_ids)):
                 params[f"sr_{i}"] = sid
 
+        # Restrict the pending-dues set to users that fall under a given root
+        # sub distributor (branch + descendants). Used by the management filter.
+        if sub_distributor_id is not None:
+            sub_distributor_id = int(sub_distributor_id)
+            subtree_ids = await _get_report_scope_user_ids(
+                session, {"role": "sub_distributor", "id": str(sub_distributor_id)}
+            )
+            if len(subtree_ids) == 0:
+                subtree_ids = {str(sub_distributor_id)}
+            sd_ph = ",".join([f":sd_{i}" for i in range(len(subtree_ids))])
+            conditions.append(f"due.id IN ({sd_ph})")
+            for i, sid in enumerate(sorted(subtree_ids)):
+                params[f"sd_{i}"] = sid
+
         search_conditions: List[str] = []
         normalized_search_by = str(search_by or "all").strip().lower()
         if search:
@@ -806,6 +821,9 @@ async def get_pending_dues_users(
                 params["search_like"] = like
             elif normalized_search_by == "parent_name":
                 search_conditions.append("parent.name LIKE :search_like")
+                params["search_like"] = like
+            elif normalized_search_by == "sub_distributor_name":
+                search_conditions.append("subd.name LIKE :search_like")
                 params["search_like"] = like
             elif normalized_search_by == "digital_id":
                 search_conditions.append(
@@ -826,6 +844,7 @@ async def get_pending_dues_users(
                     "COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name, due.name) LIKE :search_like1 "
                     "OR due.role LIKE :search_like2 "
                     "OR parent.name LIKE :search_like3 "
+                    "OR subd.name LIKE :search_like7 "
                     "OR (SUM(COALESCE(d.return_amount, 0)) LIKE :search_like4) "
                     "OR EXISTS (SELECT 1 FROM digital_identities di WHERE di.user_id = due.id "
                     "  AND (di.digital_id LIKE :search_like5 OR di.broadband_id LIKE :search_like6))"
@@ -837,6 +856,7 @@ async def get_pending_dues_users(
                 params["search_like4"] = like
                 params["search_like5"] = like
                 params["search_like6"] = like
+                params["search_like7"] = like
 
         base_where_clause = " AND ".join(conditions)
 
@@ -875,6 +895,14 @@ async def get_pending_dues_users(
                     LEFT JOIN returns r ON ((r.defect_id = CAST(d.id AS CHAR)) OR r.return_id = d.auto_return_id)
                     LEFT JOIN users due ON due.id = COALESCE(d.payment_due_user_id, d.reported_by)
                     LEFT JOIN users parent ON parent.id = due.parent_id
+                    LEFT JOIN users subd ON subd.id = (
+                        CASE
+                            WHEN due.role = 'sub_distributor' THEN due.id
+                            WHEN parent.role = 'sub_distributor' THEN parent.id
+                            WHEN parent.parent_id IS NOT NULL THEN parent.parent_id
+                            ELSE NULL
+                        END
+                    )
                     WHERE {where_clause}
                     GROUP BY due.id
                 ) AS pending_due_users
@@ -892,18 +920,30 @@ async def get_pending_dues_users(
                     due.role AS user_role,
                     due.parent_id AS parent_id,
                     parent.name AS parent_name,
+                    subd.id AS sub_distributor_id,
+                    subd.name AS sub_distributor_name,
                     COUNT(*) AS due_count,
                     SUM(COALESCE(d.return_amount, 0)) AS total_due
                 FROM defects d
                 LEFT JOIN returns r ON ((r.defect_id = CAST(d.id AS CHAR)) OR r.return_id = d.auto_return_id)
                 LEFT JOIN users due ON due.id = COALESCE(d.payment_due_user_id, d.reported_by)
                 LEFT JOIN users parent ON parent.id = due.parent_id
+                LEFT JOIN users subd ON subd.id = (
+                    CASE
+                        WHEN due.role = 'sub_distributor' THEN due.id
+                        WHEN parent.role = 'sub_distributor' THEN parent.id
+                        WHEN parent.parent_id IS NOT NULL THEN parent.parent_id
+                        ELSE NULL
+                    END
+                )
                 WHERE {where_clause}
                 GROUP BY due.id,
                          COALESCE(NULLIF(d.payment_due_user_name, ''), d.reported_by_name, due.name),
                          due.role,
                          due.parent_id,
-                         parent.name
+                         parent.name,
+                         subd.id,
+                         subd.name
                 ORDER BY total_due DESC, due_count DESC
                 LIMIT :_limit OFFSET :_offset
             """),

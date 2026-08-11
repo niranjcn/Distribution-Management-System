@@ -202,6 +202,7 @@ async def get_pending_due_users(
     page_size: int = Query(100, ge=1, le=1000),
     search: Optional[str] = None,
     search_by: Optional[str] = Query("all"),
+    sub_distributor_id: Optional[int] = Query(None, description="Filter dues to users under a specific sub distributor"),
     current_user: dict = Depends(require_any_role)
 ):
     """Get hierarchy-scoped pending dues summary for returned defective devices."""
@@ -212,6 +213,7 @@ async def get_pending_due_users(
             page_size=page_size,
             search=search,
             search_by=search_by,
+            sub_distributor_id=sub_distributor_id,
         )
         return {
             "success": True,

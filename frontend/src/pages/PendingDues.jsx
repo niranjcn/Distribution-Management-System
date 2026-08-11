@@ -3,7 +3,7 @@ import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
 import Button from '../components/ui/Button';
 import StatusBadge from '../components/ui/StatusBadge';
-import { defectsAPI } from '../services/api';
+import { defectsAPI, usersAPI } from '../services/api';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { Loader2, Receipt, DollarSign, Search } from 'lucide-react';
@@ -11,6 +11,8 @@ import { Loader2, Receipt, DollarSign, Search } from 'lucide-react';
 const TABLE_PAGE_SIZE = 10;
 const TABLE_WINDOW_PAGES = 10;
 const TABLE_WINDOW_SIZE = TABLE_PAGE_SIZE * TABLE_WINDOW_PAGES;
+
+const MANAGEMENT_ROLES = ['super_admin', 'md_director', 'manager', 'pdic_staff'];
 
 const PENDING_DUES_SEARCH_BY_OPTIONS = [
   { value: 'all', label: 'All Fields' },
@@ -37,6 +39,8 @@ const PendingDues = () => {
   const [tableSearchInput, setTableSearchInput] = useState('');
   const [appliedTableSearch, setAppliedTableSearch] = useState({ by: 'all', query: '' });
   const [openingBillId, setOpeningBillId] = useState(null);
+  const [subDistributors, setSubDistributors] = useState([]);
+  const [selectedSubDistributor, setSelectedSubDistributor] = useState('');
   const loadedWindowRef = useRef(0);
   const loadingWindowsRef = useRef(new Set());
   const queryVersionRef = useRef(0);
@@ -44,13 +48,26 @@ const PendingDues = () => {
   const role = String(user?.role || '').toLowerCase();
   const isOperatorView = role === 'operator';
   const isHierarchyView = !isOperatorView;
+  const isManagement = MANAGEMENT_ROLES.includes(role);
+  const showSubDistributor = isManagement && isHierarchyView;
   const canConfirmPayment = ['super_admin', 'manager', 'pdic_staff'].includes(role);
+
+  const searchByOptions = showSubDistributor
+    ? [
+        ...PENDING_DUES_SEARCH_BY_OPTIONS.slice(0, 3),
+        { value: 'sub_distributor_name', label: 'Sub Distributor' },
+        ...PENDING_DUES_SEARCH_BY_OPTIONS.slice(3),
+      ]
+    : PENDING_DUES_SEARCH_BY_OPTIONS;
 
   const buildUsersParams = (windowPage, pageSize = TABLE_WINDOW_SIZE) => {
     const params = {
       page: windowPage,
       page_size: pageSize,
     };
+    if (selectedSubDistributor) {
+      params.sub_distributor_id = selectedSubDistributor;
+    }
     if (appliedTableSearch.query) {
       params.search = appliedTableSearch.query;
       if (appliedTableSearch.by && appliedTableSearch.by !== 'all') {
@@ -155,7 +172,31 @@ const PendingDues = () => {
 
   useEffect(() => {
     fetchUsers();
-  }, [isHierarchyView, appliedTableSearch]);
+  }, [isHierarchyView, appliedTableSearch, selectedSubDistributor]);
+
+  useEffect(() => {
+    if (!showSubDistributor) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await usersAPI.getUsers({ role: 'sub_distributor', page_size: 10000 });
+        if (!cancelled) {
+          setSubDistributors(Array.isArray(res?.data) ? res.data : []);
+        }
+      } catch {
+        if (!cancelled) setSubDistributors([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showSubDistributor]);
+
+  const handleSubDistributorChange = (value) => {
+    setSelectedSubDistributor(value);
+    setSelectedUser(null);
+    setDetails(null);
+  };
 
   const handleSearchSubmit = () => {
     setAppliedTableSearch({ by: tableSearchBy, query: tableSearchInput.trim() });
@@ -179,6 +220,15 @@ const PendingDues = () => {
       label: 'Parent',
       render: (value) => value || '-',
     },
+    ...(showSubDistributor
+      ? [
+          {
+            key: 'sub_distributor_name',
+            label: 'Sub Distributor',
+            render: (value) => value || '-',
+          },
+        ]
+      : []),
     { key: 'due_count', label: 'Pending Defects' },
     {
       key: 'total_due',
@@ -225,6 +275,21 @@ const PendingDues = () => {
                 </div>
               ) : (
                 <>
+                  {showSubDistributor && (
+                    <div className="mb-3">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Sub Distributor</label>
+                      <select
+                        value={selectedSubDistributor}
+                        onChange={(e) => handleSubDistributorChange(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      >
+                        <option value="">All Sub Distributors</option>
+                        {subDistributors.map((sd) => (
+                          <option key={sd.id} value={sd.id}>{sd.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="mb-3">
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
                       <div className="md:col-span-3">
@@ -233,7 +298,7 @@ const PendingDues = () => {
                           onChange={(e) => setTableSearchBy(e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                         >
-                          {PENDING_DUES_SEARCH_BY_OPTIONS.map((option) => (
+                          {searchByOptions.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
