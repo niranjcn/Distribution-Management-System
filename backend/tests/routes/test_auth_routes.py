@@ -54,7 +54,8 @@ class TestLogin:
         body = resp.json()
         assert body["success"] is True
         assert body["message"] == "Login successful"
-        assert body["data"]["access_token"] == "eyJfake.access.token"
+        assert "access_token" not in body["data"]
+        assert "refresh_token" not in body["data"]
         assert body["data"]["token_type"] == "bearer"
         assert body["data"]["user"]["email"] == "admin@test.com"
         assert body["data"]["user"]["role"] == "super_admin"
@@ -254,6 +255,8 @@ class TestRefresh:
 
         assert resp.status_code == 200
         assert resp.json()["success"] is True
+        assert "access_token" not in resp.json()["data"]
+        assert "refresh_token" not in resp.json()["data"]
 
     def test_internal_error_on_refresh_returns_500(self, client, mock_auth_services):
         import app.routes.auth as auth_mod

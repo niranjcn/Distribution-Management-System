@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 import asyncio
 import csv
 import io
+import logging
 
 from openpyxl import Workbook
 
@@ -11,7 +12,13 @@ from sqlalchemy import text, bindparam
 from app.utils.roles import normalize_role
 
 
+logger = logging.getLogger("report_service")
+
 REPORT_MANAGEMENT_ROLES = {"super_admin", "md_director", "manager", "pdic_staff"}
+
+#: Hard cap for full-table backup exports. Larger datasets are truncated and a
+#: warning is logged so the export stays bounded in memory and DB connection time.
+BACKUP_EXPORT_LIMIT = 100000
 
 
 async def _resolve_report_scope(current_user: Optional[dict]) -> Optional[dict]:
@@ -604,16 +611,31 @@ def _build_returns_defects_backup_file(
 async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[str, Any]:
     """Generate backup export for return requests and defect reports."""
     async with async_session_factory() as session:
-        result = await session.execute(text("SELECT * FROM returns ORDER BY created_at DESC"))
+        result = await session.execute(
+            text("SELECT * FROM returns ORDER BY created_at DESC LIMIT :max_export"),
+            {"max_export": BACKUP_EXPORT_LIMIT},
+        )
         returns_rows = [dict(r) for r in result.mappings().all()]
 
-        result = await session.execute(text("SELECT * FROM defects ORDER BY created_at DESC"))
+        result = await session.execute(
+            text("SELECT * FROM defects ORDER BY created_at DESC LIMIT :max_export"),
+            {"max_export": BACKUP_EXPORT_LIMIT},
+        )
         defects_rows = [dict(r) for r in result.mappings().all()]
 
-        result = await session.execute(text("SELECT id, device_id, model, serial_number, mac_address, nuid, device_type FROM devices"))
+        result = await session.execute(
+            text(
+                "SELECT id, device_id, model, serial_number, mac_address, nuid, device_type "
+                "FROM devices LIMIT :max_export"
+            ),
+            {"max_export": BACKUP_EXPORT_LIMIT},
+        )
         devices_rows = [dict(r) for r in result.mappings().all()]
 
-        result = await session.execute(text("SELECT id, name FROM users"))
+        result = await session.execute(
+            text("SELECT id, name FROM users LIMIT :max_export"),
+            {"max_export": BACKUP_EXPORT_LIMIT},
+        )
         users_rows = [dict(r) for r in result.mappings().all()]
 
     device_lookup: Dict[str, Dict[str, Any]] = {}
@@ -695,14 +717,27 @@ async def get_returns_defects_backup_export(file_format: str = "xlsx") -> Dict[s
         row["operator_name"] = user_name_lookup.get(str(row.get("operator_id") or "").strip(), "")
         row["sub_distributor_name"] = user_name_lookup.get(str(row.get("sub_distributor_id") or "").strip(), "")
 
+    truncated = any(
+        len(rows) >= BACKUP_EXPORT_LIMIT
+        for rows in (returns_rows, defects_rows, devices_rows, users_rows)
+    )
+    if truncated:
+        logger.warning(
+            "Returns/defects backup export truncated at %d rows per table; "
+            "some records were omitted",
+            BACKUP_EXPORT_LIMIT,
+        )
+
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
+    export_data = await loop.run_in_executor(
         None,
         _build_returns_defects_backup_file,
         returns_rows,
         defects_rows,
         file_format,
     )
+    export_data["truncated"] = truncated
+    return export_data
 
 
 def _canonical_device_type(value) -> str:

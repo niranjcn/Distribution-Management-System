@@ -352,12 +352,15 @@ async def download_returns_defects_backup(
             path="/activity/reports/returns-defects-backup",
             description=f"{actor_name} initiated returns and defects backup download ({format})",
         )
+        headers = {
+            "Content-Disposition": f"attachment; filename={export_data['filename']}"
+        }
+        if export_data.get("truncated"):
+            headers["X-Export-Truncated"] = "true"
         return Response(
             content=export_data["content"],
             media_type=export_data["media_type"],
-            headers={
-                "Content-Disposition": f"attachment; filename={export_data['filename']}"
-            },
+            headers=headers,
         )
     except ValueError as e:
         raise HTTPException(

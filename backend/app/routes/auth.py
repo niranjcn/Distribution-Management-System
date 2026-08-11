@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
-from app.models.auth import LoginRequest, RefreshTokenRequest, Token
+from app.models.auth import LoginRequest, RefreshTokenRequest
 from app.models.user import PasswordChange, ForcedCredentialUpdateRequest
 from app.services import auth_service
 from app.middleware.auth_middleware import get_current_user, security
@@ -108,10 +108,17 @@ async def login(request: Request, response: Response, credentials: LoginRequest)
             ip_address=client_ip,
         )
 
+        # Tokens are delivered exclusively via httpOnly cookies. They are
+        # intentionally omitted from the response body so a single XSS cannot
+        # exfiltrate them from the JSON payload.
         return {
             "success": True,
             "message": "Login successful",
-            "data": token_data
+            "data": {
+                "user": token_data["user"],
+                "token_type": token_data.get("token_type", "bearer"),
+                "expires_in": token_data["expires_in"],
+            }
         }
     except HTTPException:
         raise
@@ -221,10 +228,15 @@ async def refresh_token(
                 path="/",
             )
 
+        # Tokens are delivered exclusively via httpOnly cookies; the response
+        # body carries only metadata so tokens cannot be read from JSON by XSS.
         return {
             "success": True,
             "message": "Token refreshed successfully",
-            "data": token_data
+            "data": {
+                "token_type": token_data.get("token_type", "bearer"),
+                "expires_in": token_data["expires_in"],
+            }
         }
     except HTTPException:
         raise
@@ -370,10 +382,16 @@ async def complete_forced_update(
             ip_address=request.client.host if request.client else "unknown",
         )
 
+        # Tokens are delivered exclusively via httpOnly cookies; the response
+        # body carries only the user profile and metadata.
         return {
             "success": True,
             "message": "Credentials updated successfully",
-            "data": token_data,
+            "data": {
+                "user": token_data["user"],
+                "token_type": token_data.get("token_type", "bearer"),
+                "expires_in": token_data["expires_in"],
+            },
         }
     except HTTPException:
         raise

@@ -5,6 +5,7 @@ from jose import JWTError, jwt
 from fastapi import HTTPException, status
 
 from sqlalchemy import select, and_, or_, delete
+from sqlalchemy.exc import IntegrityError
 
 from app.core.cache_version import bump_cache_version
 from app.database_sqlalchemy import async_session_factory
@@ -148,8 +149,12 @@ async def refresh_access_token(refresh_token: str) -> Optional[dict]:
 
         user = _strip_user(inst.to_dict())
 
-    # Rotate: the presented refresh token can no longer be reused.
-    await blacklist_token(refresh_token)
+    # Rotate: the presented refresh token can no longer be reused. The atomic
+    # blacklist insert is the authoritative single-use guard — if a concurrent
+    # request already rotated (and blacklisted) this exact token, we lose the
+    # race here and must reject the refresh.
+    if not await blacklist_token(refresh_token):
+        return None
 
     token_data = {
         "sub": str(user["id"]),
@@ -173,8 +178,15 @@ async def refresh_access_token(refresh_token: str) -> Optional[dict]:
     }
 
 
-async def blacklist_token(token: str) -> None:
-    """Blacklist a JWT token until it expires."""
+async def blacklist_token(token: str) -> bool:
+    """Blacklist a JWT token until it expires.
+
+    Returns True if this call newly blacklisted the token, or False if it was
+    already blacklisted (e.g. a concurrent rotation or logout). The INSERT
+    relies on the ``token_hash`` primary key, so a duplicate is rejected by the
+    database instead of a separate check-then-write, closing the refresh-token
+    race where two requests could both pass the pre-check.
+    """
     now = datetime.now().replace(tzinfo=None)
     expires_at = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -192,19 +204,23 @@ async def blacklist_token(token: str) -> None:
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     async with async_session_factory() as session:
-        stmt = select(TokenBlacklist).where(TokenBlacklist.token_hash == token_hash)
-        existing = (await session.execute(stmt)).scalar_one_or_none()
-        if not existing:
+        try:
             session.add(TokenBlacklist(
                 token_hash=token_hash,
                 expires_at=expires_at,
                 created_at=now,
             ))
-
-        await session.execute(
-            delete(TokenBlacklist).where(TokenBlacklist.expires_at <= now)
-        )
-        await session.commit()
+            await session.execute(
+                delete(TokenBlacklist).where(TokenBlacklist.expires_at <= now)
+            )
+            await session.commit()
+            return True
+        except IntegrityError:
+            # Token hash already exists — a concurrent request already
+            # blacklisted this token. Expired-row cleanup will run on a
+            # future call; nothing to do here.
+            await session.rollback()
+            return False
 
 
 async def is_token_blacklisted(token: str) -> bool:
